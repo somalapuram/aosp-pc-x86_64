@@ -1,0 +1,17 @@
+<!--
+  VINTF device compatibility matrix for the bare-metal x86_64 PC target.
+
+  This declares what the VENDOR image requires of the FRAMEWORK -- the opposite
+  direction from manifest.xml, which declares what the vendor provides.
+
+  Intentionally empty: during bring-up the vendor side requires nothing
+  specific of the framework. checkvintf still needs the file to exist
+  (getDeviceCompatibilityMatrix fails with -2 if it is missing), so an empty
+  matrix is the correct answer rather than an omitted file.
+
+  Add <hal optional="false"> entries here only when a vendor component genuinely
+  cannot function without a given framework HAL.
+-->
+<compatibility-matrix version="1.0" type="device">
+
+</compatibility-matrix>

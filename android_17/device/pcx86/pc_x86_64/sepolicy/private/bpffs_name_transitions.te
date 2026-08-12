@@ -1,0 +1,88 @@
+# Name-based type transitions for the bpf filesystem.
+#
+# WHY THIS EXISTS
+#
+# Android labels /sys/fs/bpf subdirectories through genfscon path rules in
+# system/sepolicy/private/genfs_contexts:
+#
+#     genfscon bpf /            u:object_r:fs_bpf:s0
+#     genfscon bpf /net_shared  u:object_r:fs_bpf_net_shared:s0
+#     ...
+#
+# genfscon path matching only applies to filesystems whose inodes are NOT
+# labelled from xattrs. As of Linux 7.2, kernel/bpf/inode.c gained xattr
+# support and calls security_inode_init_security() when creating inodes:
+#
+#     kernel/bpf/inode.c:189
+#       ret = security_inode_init_security(inode, dir, &dentry->d_name,
+#                                          bpf_fs_initxattrs, NULL);
+#
+# So bpffs inodes now get a label computed at creation time and stored as an
+# xattr. With no matching type_transition, security_transition_sid() falls back
+# to the parent directory's type, so every directory netbpfload creates
+# inherits fs_bpf from the mount root and the genfscon rules never apply:
+#
+#     drwxrwxrwt  u:object_r:fs_bpf:s0  /sys/fs/bpf
+#     drwxrwxrwt  u:object_r:fs_bpf:s0  /sys/fs/bpf/net_shared     <-- wrong
+#     drwxrwxrwt  u:object_r:fs_bpf:s0  /sys/fs/bpf/netd_shared    <-- wrong
+#
+# That is fatal. system_server's ClatCoordinator JNI verifies these labels on
+# startup and aborts on mismatch (verifyPerms() -> ALOGF -> fatal = true in
+# packages/modules/Connectivity/service/jni/com_android_server_connectivity_
+# ClatCoordinator.cpp), which crash-loops system_server:
+#
+#     E jniClatCoordinator: context of '/sys/fs/bpf/net_shared' is
+#       'u:object_r:fs_bpf:s0' != 'u:object_r:fs_bpf_net_shared:s0'
+#     F libc: Fatal signal 6 (SIGABRT) in tid N (system_server)
+#
+# Note this is NOT bypassed by permissive: it is an explicit label comparison
+# in userspace, not a permission denial.
+#
+# THE FIX
+#
+# Give the creating domain explicit name-based type transitions, which is the
+# SELinux-native answer for an xattr-labelled filesystem. Files created inside
+# these directories then inherit the (now correct) parent type.
+#
+# This mirrors, in transition form, every genfscon bpf rule in
+# system/sepolicy/private/genfs_contexts. If that list gains an entry, add the
+# matching transition here.
+#
+# This lives in SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS rather than the vendor
+# sepolicy because bpfloader and the fs_bpf_* types are private platform types
+# and are not visible to vendor policy.
+#
+# Longer term the cleaner fix is upstream: either bpffs should not label from
+# xattrs, or Android should stop relying on genfscon for it. ACK does not hit
+# this because it predates the bpffs xattr change.
+
+type_transition bpfloader fs_bpf:dir fs_bpf_cputimeinstate "cputimeinstate";
+type_transition bpfloader fs_bpf:dir fs_bpf_dmabuf "dmabuf";
+type_transition bpfloader fs_bpf:dir fs_bpf_kernelwakelockduration "kernelwakelockduration";
+type_transition bpfloader fs_bpf:dir fs_bpf_loader "loader";
+type_transition bpfloader fs_bpf:dir fs_bpf_lock_contention "lock_contention";
+type_transition bpfloader fs_bpf:dir fs_bpf_memevents "memevents";
+type_transition bpfloader fs_bpf:dir fs_bpf_net_private "net_private";
+type_transition bpfloader fs_bpf:dir fs_bpf_net_shared "net_shared";
+type_transition bpfloader fs_bpf:dir fs_bpf_netd_readonly "netd_readonly";
+type_transition bpfloader fs_bpf:dir fs_bpf_netd_shared "netd_shared";
+type_transition bpfloader fs_bpf:dir fs_bpf_tethering "tethering";
+type_transition bpfloader fs_bpf:dir fs_bpf_uprobestats "uprobestats";
+type_transition bpfloader fs_bpf:dir fs_bpf_vendor "vendor";
+
+# The transitions above need create permission on the target types.
+allow bpfloader {
+    fs_bpf_cputimeinstate
+    fs_bpf_dmabuf
+    fs_bpf_kernelwakelockduration
+    fs_bpf_loader
+    fs_bpf_lock_contention
+    fs_bpf_memevents
+    fs_bpf_net_private
+    fs_bpf_net_shared
+    fs_bpf_netd_readonly
+    fs_bpf_netd_shared
+    fs_bpf_tethering
+    fs_bpf_uprobestats
+    fs_bpf_vendor
+}:dir { create search add_name write setattr open read getattr };

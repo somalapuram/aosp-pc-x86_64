@@ -1,0 +1,37 @@
+# Vendor file contexts for the bare-metal x86_64 PC target.
+#
+# Bring-up runs with androidboot.selinux=permissive (doc/06-boot-and-storage.md
+# section 3). Policy is built up from real denials rather than guessed at:
+#
+#   adb shell dmesg | grep avc: > denials.txt
+#   audit2allow -i denials.txt
+#
+# Do not blanket-allow. Each denial is information about a missing label or a
+# genuinely wrong access. See doc/07-hals.md section 1.
+
+/vendor/bin/hw/android\.hardware\.health-service\.example    u:object_r:hal_health_default_exec:s0
+
+# minigbm's AIDL allocator. system/sepolicy/vendor/file_contexts labels only
+# the HIDL variants (allocator@2.0-service, allocator@3.0-service), so this
+# binary lands as plain vendor_file and init REFUSES to start it:
+#     Could not start service 'vendor.graphics.allocator' as part of class 'hal':
+#     File /vendor/bin/hw/android.hardware.graphics.allocator-service.minigbm
+#     (labeled "u:object_r:vendor_file:s0") has incorrect label or no domain
+#     transition from u:r:init:s0 to another
+#
+# IMPORTANT: androidboot.selinux=permissive does NOT bypass this. The domain
+# transition check happens in init before exec, independent of enforcement
+# mode, so a missing label is fatal even in permissive. SurfaceFlinger then
+# blocks forever waiting for IAllocator and never publishes SurfaceFlingerAIDL.
+/vendor/bin/hw/android\.hardware\.graphics\.allocator-service\.minigbm    u:object_r:hal_graphics_allocator_default_exec:s0
+
+# DRM/KMS nodes. AOSP's sepolicy does not label /dev/dri at all -- it is left
+# to the device -- so without these they come up as plain 'device' and every
+# graphics component is denied access:
+#   denied { read write } name="card0"      scontext=hal_graphics_composer_default  tcontext=device
+#   denied { read write } name="renderD128" scontext=surfaceflinger                 tcontext=device
+#   denied { read write } name="renderD128" scontext=hal_graphics_allocator_default tcontext=device
+# card* is the KMS node drm_hwcomposer opens; renderD* is the render node
+# minigbm and ANGLE/SwiftShader use.
+/dev/dri/card[0-9]+          u:object_r:graphics_device:s0
+/dev/dri/renderD[0-9]+       u:object_r:gpu_device:s0

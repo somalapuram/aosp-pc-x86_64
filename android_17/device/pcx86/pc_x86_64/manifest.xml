@@ -1,0 +1,33 @@
+<!--
+  VINTF device manifest for the bare-metal x86_64 PC target.
+
+  This is intentionally empty.
+
+  Modern AIDL HAL services declare themselves through their own vintf_fragment,
+  installed to /vendor/etc/vintf/manifest/. Declaring the same HAL here as well
+  produces a conflict, because a bare <fqname> with no <version> defaults to
+  version 1 while the module's fragment carries its real version:
+
+    HAL "android.hardware.health" has a conflict:
+      IHealth/default (@1) from /vendor/etc/vintf/manifest.xml
+      vs
+      IHealth/default (@5) from .../android.hardware.health-service.example.xml
+
+  So only add entries here for HALs that do NOT ship their own fragment, and
+  always with an explicit <version>.
+
+  Only HALs this device actually provides may be listed. Declaring one that is
+  absent is worse than omitting it -- the framework will call into it and fail.
+  See doc/07-hals.md.
+
+  target-level is the Shipping FCM Version and is REQUIRED even when the
+  manifest declares no HALs. Without it checkvintf --check-compat fails with:
+      ERROR: Invalid argument: Device manifest does not specify Shipping FCM Version.
+
+  202604 matches device/google/cuttlefish/shared/config/manifest.xml, the
+  current reference device in this tree, and there is a corresponding
+  system/etc/vintf/compatibility_matrix.202604.xml.
+-->
+<manifest version="1.0" type="device" target-level="202604">
+
+</manifest>

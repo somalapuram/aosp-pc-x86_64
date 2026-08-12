@@ -1,0 +1,27 @@
+# fstab for the bare-metal x86_64 PC target.
+#
+# No dm-verity, no logical partitions, no AVB during bring-up -- see
+# BoardConfig.mk. by-name symlinks come from GPT partition labels, which
+# requires CONFIG_EFI_PARTITION=y in the kernel (doc/03-kernel.md 5.3).
+# If /dev/block/by-name/* never appears, check that first.
+#
+# The system partition mounts at /system, NOT at /.
+#
+# The generic ramdisk stays as root; first-stage init mounts /system and then
+# execs /system/bin/init for second stage. Using "/" here is the old
+# system-as-root layout, which modern AOSP no longer supports -- the mount
+# succeeds but second stage then dies with:
+#     init: execv("/system/bin/init") failed: No such file or directory
+#
+# system.img has bin/ and etc/ at its root (plus a self-referential /system
+# symlink), so mounted at /system the path /system/bin/init resolves correctly.
+#
+# <src>                      <mnt_point>  <type>  <mnt_flags>                    <fs_mgr_flags>
+/dev/block/by-name/system    /system      ext4    ro,barrier=1                   wait,first_stage_mount
+/dev/block/by-name/vendor    /vendor      ext4    ro,barrier=1                   wait,first_stage_mount
+# /metadata must be mounted in first stage: aconfigd copies flag storage into
+# it during early-init, before /data exists. Without it every feature flag
+# lookup fails with ERROR_PACKAGE_NOT_FOUND and system_server crash-loops on
+# "IllegalArgumentException: Invalid feature flag".
+/dev/block/by-name/metadata  /metadata    ext4    nodev,noatime,nosuid           wait,check,formattable,first_stage_mount
+/dev/block/by-name/userdata  /data        ext4    nodev,noatime,nosuid,errors=panic  latemount,wait,check,quota,formattable

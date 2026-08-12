@@ -1,0 +1,174 @@
+# Device init for the bare-metal x86_64 PC target.
+
+on early-init
+    # Real PC hardware enumerates over ACPI/PCI; give the kernel a moment
+    # before first-stage mount goes looking for by-name symlinks.
+    write /proc/sys/kernel/panic_on_oops 1
+
+on init
+    # zram swap. PCs have real RAM, but Android's lmkd expects swap to exist.
+    write /proc/sys/vm/page-cluster 0
+
+# Mounting the rest of the fstab is the DEVICE's job -- the generic init.rc
+# does not do it. Without these two mount_all commands /data is never mounted,
+# and every /data operation silently lands on the read-only ramdisk instead:
+#     init: Command 'chown system system /data' ... failed: Read-only file system
+#     apexd-snapshotde: Can't open /data/misc_de: No such file or directory
+# which in turn stops compressed APEXes from being decompressed, so the
+# tethering APEX never activates and the fallback bpfloader service triggers
+#     reboot: Restarting system with command 'netbpfload-missing'
+#
+# system and vendor are already up via first_stage_mount; these handle the
+# 'latemount' userdata entry. Mirrors device/google/cuttlefish/shared/config/
+# init.vendor.rc.
+on fs
+    # Everything that does not need fsck
+    mount_all --early
+
+on late-fs
+    # RW partitions that need fsck -- /data
+    mount_all --late
+
+on post-fs-data
+    mkdir /data/vendor 0771 root root
+    mkdir /data/vendor/hardware 0771 root root
+
+on boot
+    # adb over Ethernet -- most desktops have no USB device-mode controller.
+    setprop service.adb.tcp.port 5555
+
+    # Input: real evdev devices from USB HID, i2c-hid and PS/2.
+    chmod 0660 /dev/input/event0
+    chown system system /dev/input/event0
+
+# Bring-up debugging: stream logcat to the second serial port (ttyS1), which
+# the QEMU harness captures to a file. Userspace crash reasons live in logcat,
+# not dmesg -- init reports only "Service 'x' received SIGABRT" while the cause
+# is invisible on a headless boot.
+#
+# Uses a shell redirect rather than `logcat -f /dev/ttyS1`: -f performs log
+# rotation, which needs a seekable file, so it fails on a character device
+# (that attempt exited with status 1).
+#
+# Remove once adb over the network works.
+# Writes to /dev/hvc0, a virtio-console port that the QEMU harness captures to
+# a file (tools/run-qemu.sh).
+#
+# NOT a 16550 UART. Every byte written to an emulated 16550 is a port write and
+# therefore a VM exit; a full boot's logcat is 120k+ lines, which cost enough
+# exits to starve the guest and trip Android's watchdog with no real deadlock:
+#     Watchdog: *** WATCHDOG KILLING SYSTEM PROCESS:
+#               Blocked in handler on main thread (main) for 67s
+# The main thread was never deadlocked there -- its stack showed ordinary
+# ULocale/Configuration/Resources work. virtio-console carries the same data
+# over a virtqueue at negligible cost, so this can stay on by default.
+service logcat-serial /system/bin/sh -c "exec /system/bin/logcat -b all -v threadtime > /dev/hvc1"
+    class core
+    user root
+    group root system log readproc
+    seclabel u:r:shell:s0
+
+on early-boot
+    start logcat-serial
+
+# Re-start the hal class once apexd has activated all APEXes.
+#
+# init.rc issues `class_start hal` from `on boot`, but apexd is launched
+# asynchronously from `on post-fs-data` ("restart apexd") with no wait. On a
+# fast device apexd wins the race; on a slow one `on boot` runs first and any
+# HAL shipped inside a non-bootstrap APEX is never started -- its .rc is parsed
+# afterwards, so init knows the service but nothing ever starts it.
+#
+# That is what happened to the audio HAL: keymint (bootstrap APEX) was up 13s
+# before /apex/com.android.hardware.audio/etc/...rc was even parsed. The
+# service never ran, so android.hardware.audio.core.IModule/default was never
+# registered, audioserver blocked waiting for it and never published
+# IAudioFlinger, and system_server hung in AudioService's constructor until the
+# watchdog killed it:
+#     init: Control message: Could not find
+#           'aidl/android.hardware.audio.core.IModule/default' for
+#           ctl.interface_start
+#     D AudioSystem: getService: IAudioFlingerService retrieved: 0x0
+#     W Watchdog: *** WATCHDOG KILLING SYSTEM PROCESS: Blocked in handler on
+#                 main thread (main) for 65s
+#       at android.media.AudioSystem.isMicrophoneMuted(Native Method)
+#       at com.android.server.audio.AudioService.<init>
+#
+# class_start skips services that are already running, so this is idempotent
+# and simply picks up whatever arrived late.
+# Bring-up debugging: dump audio HAL service state directly.
+#
+# init's own "starting service" messages go to kmsg early and to logd once it
+# is up, so they are split across two streams and easy to miss. Asking init for
+# the service state is unambiguous: init.svc.<name> is empty if init does not
+# know the service at all, otherwise running/stopped/restarting.
+service pc-debug-dump /vendor/bin/pc_debug_dump.sh
+    class core
+    user root
+    group root system log readproc
+    oneshot
+    disabled
+    seclabel u:r:shell:s0
+
+# Bring-up: dump what SurfaceFlinger actually composited, as a PNG on hvc2.
+#
+# screencap reads SF's output directly, so it works even though nothing
+# reaches the physical framebuffer (see tools/run-qemu.sh for the virtio-gpu
+# scanout limitation) and adb over TCP is refused. Give the UI a moment to
+# draw after boot completes, then capture once.
+# Timed off audioserver rather than sys.boot_completed: that property is never
+# set here (the device reaches LOCKED_BOOT_COMPLETED but not full
+# BOOT_COMPLETED), so a trigger on it never fires. audioserver reaching
+# 'running' is early but proven, so just wait long enough for the UI to draw.
+service pc-screencap /vendor/bin/pc_screencap.sh 60
+    class core
+    user root
+    group root system graphics
+    oneshot
+    disabled
+    seclabel u:r:shell:s0
+
+# Persist logcat to /data as well. /dev/hvc1 only exists under QEMU, so on real
+# hardware the hvc1 service above produces nothing and a failing boot leaves no
+# evidence at all. Started here rather than at early-boot because /data is not
+# mounted yet then. Read it afterwards with:
+#     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/bootlog.txt
+# Kernel log to /data. On real hardware there is no virtio-console and often
+# no serial port, so the ring buffer is otherwise lost at power-off -- and it
+# is where a display that never lights up gets explained (which DRM driver
+# bound, whether firmware loaded, what connectors and modes exist).
+service pc-kmsg-file /vendor/bin/pc_kmsg_file.sh
+    class core
+    user root
+    group root system log readproc
+    seclabel u:r:shell:s0
+
+service pc-logcat-file /vendor/bin/pc_logcat_file.sh
+    class core
+    user root
+    group root system log readproc
+    seclabel u:r:shell:s0
+
+# audioserver reaching 'running' is a trigger proven to fire from this rc.
+# apexd.status=activated did NOT fire here, which is itself unexplained and
+# worth revisiting -- init's own wait_for_prop on that property does succeed
+# ("Wait for property 'apexd.status=activated' took 12805ms"), so the property
+# is set; only our trigger on it never ran.
+on property:init.svc.audioserver=running
+    class_start hal
+    start pc-debug-dump
+    start pc-screencap
+    start pc-logcat-file
+    start pc-kmsg-file
+
+service console /system/bin/sh
+    class core
+    console
+    disabled
+    user shell
+    group shell log readproc
+    seclabel u:r:shell:s0
+    setenv HOSTNAME console
+
+on property:ro.debuggable=1
+    start console

@@ -1,0 +1,48 @@
+# ueventd rules for the bare-metal x86_64 PC target.
+#
+# GPT partition labels become /dev/block/by-name/* symlinks; that is handled
+# by the kernel's EFI partition support plus ueventd's default block rules,
+# not here.
+
+# DRM/KMS node: privileged. Only SurfaceFlinger and drm_hwcomposer touch it,
+# so keep it restricted to the graphics group.
+/dev/dri/card0            0660   graphics   graphics
+
+# DRM RENDER node: must be world-accessible (0666).
+#
+# Render nodes exist precisely so unprivileged processes can open them -- that
+# is the whole distinction from card* nodes. Every app process runs minigbm's
+# gralloc mapper in-process, and the mapper opens the render node to
+# initialise. At 0660 root:graphics, DAC blocks apps (they are not in the
+# graphics group), and the mapper fails with no SELinux denial to hint at it:
+#     E <app>: Failed to importBuffer. Driver is uninitialized.
+#     E GraphicBufferAllocator: Failed to allocate (1280 x 800) layerCount 1
+#       format 1 usage b00: 5
+#     E Surface: dequeueBuffer: IGraphicBufferProducer::requestBuffer failed: -22
+#     F HWUI: drawRenderNode called on a context with no surface!
+# which crash-loops launcher3, SystemUI and Settings while system services
+# stay healthy. Matches device/google/cuttlefish/shared/config/ueventd.rc.
+/dev/dri/renderD*         0666   system     graphics
+
+# Input: evdev from USB HID, i2c-hid (laptop touchpads) and PS/2.
+/dev/input/*              0660   root       input
+
+# Audio: snd_hda_intel covers essentially all Intel and AMD PC audio.
+/dev/snd/*                0660   system     audio
+
+# Misc
+/dev/rtc0                 0640   system     system
+/dev/tty0                 0660   root       system
+/dev/ttyS0                0660   root       system
+
+# hvc0 is a virtio-console port carrying the logcat stream during bring-up
+# (see init.pc_x86_64.rc and tools/run-qemu.sh). Writable by shell so the
+# logcat-serial service can use it. virtio-console rather than a second UART
+# because 16550 byte-at-a-time I/O is slow enough to trip Android's watchdog.
+/dev/hvc1                 0660   root       shell
+
+# hvc2 carries a PNG screenshot out of the guest during bring-up. Written by
+# the pc-screencap service; the QEMU harness captures it to a file. This is
+# the only way to see what Android actually drew while the virtio-gpu scanout
+# limitation keeps the host framebuffer blank.
+/dev/hvc2                 0660   root       shell
