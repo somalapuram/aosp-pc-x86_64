@@ -105,6 +105,34 @@ CONFIG_DRM_AMD_DC_FP=y
 # so raising it here is sufficient and does not get overridden.
 CONFIG_FRAME_WARN=4096
 
+# --- GPU firmware, built into the kernel -----------------------------------
+#
+# Modern Intel GPUs cannot run without firmware, and i915 requests it during
+# probe -- which happens long before /vendor is mounted. Shipping the blobs on
+# a partition is therefore too late; they must be linked into the image.
+#
+# On Meteor Lake this is not optional. Without GuC there is no GPU submission
+# at all, so the display engine still scans out (a mouse cursor appears) while
+# nothing ever renders:
+#     i915 0000:00:02.0: [drm] *ERROR* GT0: GuC firmware i915/mtl_guc_70.bin:
+#                        fetch failed -ENOENT
+#     i915 0000:00:02.0: [drm] *ERROR* GT0: GuC initialization failed -ENOENT
+#     i915 0000:00:02.0: [drm] Failed to load DMC firmware i915/mtl_dmc.bin
+#                        (-ENOENT). Disabling runtime power management.
+#
+#   mtl_guc_70.bin   GuC  - submission; nothing renders without it
+#   mtl_dmc.bin      DMC  - display power management
+#   mtl_huc_gsc.bin  HuC  - media acceleration
+#   mtl_gsc_1.bin    GSC  - graphics system controller
+#
+# Files live in firmware/ in this project, decompressed from linux-firmware
+# (the distro ships them zstd-compressed; CONFIG_EXTRA_FIRMWARE needs plain
+# files). Add entries for other hardware -- adl_/tgl_ for older Intel,
+# amdgpu/* for AMD -- and keep the list narrow, since each blob is linked in.
+CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin"
+CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
+
+
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
