@@ -4,6 +4,7 @@
 # See doc/ for what this is building and why.
 #
 # Usage:
+#   ./build.sh sync              fetch AOSP + kernel at the pinned revisions
 #   ./build.sh deps              check host prerequisites
 #   ./build.sh kernel            configure + build bzImage
 #   ./build.sh kernel-config     configure only (no compile)
@@ -268,9 +269,11 @@ cmd_test()  { exec "$X86_ROOT/tools/test-vm.sh" "${@:2}" ; }
 cmd_usb()   { exec "$X86_ROOT/tools/write-usb.sh" "${@:2}" ; }
 cmd_logs()  { exec "$X86_ROOT/tools/collect-logs.sh" "${@:2}" ; }
 cmd_run()   { exec "$X86_ROOT/tools/run-qemu.sh" "${@:2}" ; }
+cmd_sync()  { exec "$X86_ROOT/tools/sync-sources.sh" "${@:2}" ; }
 
 # ----------------------------------------------------------------- main ----
 case "${1:-}" in
+    sync)          cmd_sync "$@" ;;
     deps)          cmd_deps ;;
     kernel)        cmd_kernel ;;
     kernel-config) cmd_kernel_config ;;
@@ -283,6 +286,9 @@ case "${1:-}" in
     run)           cmd_run "$@" ;;
     clean)         cmd_clean ;;
     *)
-        sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        # Print the header comment as the usage text, stopping at the first
+        # line that is not a comment. This used to be a hardcoded line range,
+        # which silently truncated the help every time a subcommand was added.
+        awk 'NR>2 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
         exit 1 ;;
 esac
