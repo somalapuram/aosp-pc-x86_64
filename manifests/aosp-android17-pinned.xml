@@ -414,7 +414,7 @@
   <project name="platform/external/mesa3d" path="external/mesa3d" revision="875160ed32cc5bc32777fa04870a0a57ed38c987" upstream="android17-release" dest-branch="android17-release" groups="pdk-cw-fs,pdk-fs"/>
   <project name="platform/external/mime-support" path="external/mime-support" revision="9d71d482603aac054815958c9834ae1cd036f024" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
   <project name="platform/external/minidns" path="external/minidns" revision="25200e92a0e8ff40266d2b23e6cae835fccc2274" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
-  <project name="platform/external/minigbm" path="external/minigbm" revision="b3bd51a6da95ebb3ae21f59182e765957da337aa" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
+  <project name="platform/external/minigbm" path="external/minigbm" revision="ce79bbee67b3e2ea7abb110e1415e9ceceaa6471" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
   <project name="platform/external/minijail" path="external/minijail" revision="26ff82bac9c77ef25d0a913ee09ed11ccdfdab78" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
   <project name="platform/external/mksh" path="external/mksh" revision="71d564487c9b34f65961570073f037658e07eb06" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
   <project name="platform/external/ml_dtypes" path="external/ml_dtypes" revision="5a2db782144be7906545ca5ce65518da7d6c00d0" upstream="android17-release" dest-branch="android17-release" groups="pdk"/>
