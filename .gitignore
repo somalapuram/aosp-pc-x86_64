@@ -1,0 +1,30 @@
+# Upstream source trees, fetched by repo(1) and git rather than kept here:
+# AOSP is ~350 GB across 1084 projects and the kernel another ~4 GB. Neither
+# carries local changes worth publishing -- the kernel is pristine upstream,
+# and the single AOSP delta lives in patches/ -- so both are pinned by revision
+# instead of vendored. See doc/README.md.
+/android_17/*
+/linux/
+
+# Exception: android_17/device/pcx86/ is OUR device target, not upstream.
+#
+# Re-including a path under an excluded directory requires un-excluding every
+# parent in turn, because git never descends into an excluded directory to look
+# for exceptions. Spelling it out level by level, as below, confines the walk to
+# android_17/device/ -- it does NOT make git traverse the 1084 upstream projects
+# or out/, which is what a naive '!/android_17/device/pcx86/' alone would fail
+# to achieve.
+!/android_17/device/
+/android_17/device/*
+!/android_17/device/pcx86/
+
+# Android Common Kernel, if cloned as a fallback (see doc/03-kernel.md)
+/ack/
+
+# Build artefacts
+/logs/
+/out/
+
+# Disk images and UEFI vars for the QEMU dev VM (see doc/02-host-setup.md)
+*.img
+OVMF_*.fd
