@@ -109,7 +109,7 @@ NVRAM entry. Essential for USB-stick testing and for VMs with fresh NVRAM.
 ## 4. Writing images to disk
 
 ```bash
-OUT=~/amar/x86/android_17/out/target/product/pc_x86_64
+OUT=$REPO/android_17/out/target/product/pc_x86_64
 
 sudo dd if=$OUT/system.img of=/dev/disk/by-partlabel/system bs=4M status=progress
 sudo dd if=$OUT/vendor.img of=/dev/disk/by-partlabel/vendor bs=4M status=progress

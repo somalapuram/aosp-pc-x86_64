@@ -38,7 +38,7 @@ Build this **before** writing any device code. It validates your toolchain and
 gives you the reference implementation to read and diff against.
 
 ```bash
-cd ~/amar/x86/android_17
+cd $REPO/android_17
 source build/envsetup.sh
 lunch aosp_cf_x86_64_phone-trunk_staging-userdebug
 m -j192
@@ -53,7 +53,7 @@ Soong benefits little from ccache, but the kernel builds benefit a lot:
 
 ```bash
 export USE_CCACHE=1
-export CCACHE_DIR=~/amar/x86/.ccache
+export CCACHE_DIR=$REPO/.ccache
 ccache -M 200G
 ```
 
@@ -68,7 +68,7 @@ PC boots them: UEFI firmware → GRUB → kernel → GPT disk → DRM/KMS.
 ### 3.1 Create the disk
 
 ```bash
-cd ~/amar/x86
+cd $REPO
 qemu-img create -f raw android-pc.img 32G
 
 # GPT with an ESP + system + vendor + userdata
@@ -87,8 +87,8 @@ Partition sizes are a starting point; see [06-boot-and-storage.md](06-boot-and-s
 OVMF vars must be writable per-VM:
 
 ```bash
-cp /usr/share/OVMF/OVMF_CODE.fd  ~/amar/x86/OVMF_CODE.fd
-cp /usr/share/OVMF/OVMF_VARS.fd  ~/amar/x86/OVMF_VARS.fd
+cp /usr/share/OVMF/OVMF_CODE.fd  $REPO/OVMF_CODE.fd
+cp /usr/share/OVMF/OVMF_VARS.fd  $REPO/OVMF_VARS.fd
 ```
 
 ### 3.3 Launch

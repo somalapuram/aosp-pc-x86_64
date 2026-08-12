@@ -38,7 +38,7 @@ config/pc_x86_64.fragment    kernel config delta over x86_64_defconfig
 firmware/i915/               Intel GPU firmware, linked into the kernel
 manifests/                   the AOSP tree, pinned to exact revisions
 patches/external/minigbm/    the single change needed inside an AOSP project
-tools/                       disk assembly, QEMU, USB writer, log collection
+tools/                       source sync, disk assembly, QEMU, USB writer, logs
 doc/                         how it was derived, and why each piece is there
 android_17/device/pcx86/     the device target (lives at an AOSP path, but is
                              this project's own code)
@@ -59,33 +59,43 @@ every kernel change in this project is a config symbol.
 
 ## Getting the sources
 
-Clone this repo, then populate the two upstream trees *inside* it. The clone
-already contains `android_17/device/pcx86/`; `repo` leaves it alone, because it
-is not one of the manifest's projects.
+Clone this repo, then let `./build.sh sync` populate the two upstream trees
+*inside* it. The clone already contains `android_17/device/pcx86/`; `repo`
+leaves it alone, because it is not one of the manifest's projects.
 
 ```sh
-git clone git@github.com:somalapuram/aosp-pc-x86_64.git
+git clone https://github.com/somalapuram/aosp-pc-x86_64.git
 cd aosp-pc-x86_64
-
-# AOSP, pinned to the exact revisions this was built from
-mkdir -p android_17 && cd android_17
-repo init -u https://android.googlesource.com/platform/manifest -b android17-release
-cp ../manifests/aosp-android17-pinned.xml .repo/manifests/
-repo init -m aosp-android17-pinned.xml
-repo sync -c -j"$(nproc)"
-cd ..
-
-# Mainline kernel at the revision above
-git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
-git -C linux checkout 0d8395707651
-
-# The one AOSP-project change this port needs
-git -C android_17/external/minigbm am ../../../patches/external/minigbm/*.patch
+./build.sh sync
 ```
 
-Drop `-m aosp-android17-pinned.xml` (and the `cp`) to track `android17-release`
-as it moves instead of reproducing this exact tree. Expect to fix things if you
-do.
+That does three things: `repo init`/`sync` of AOSP at the pinned revisions, a
+clone of the kernel at `0d8395707651`, and `git am` of the one out-of-tree
+patch. It is safe to interrupt and re-run — each step checks for its own
+completion first — and it can be narrowed to `sync aosp`, `sync kernel` or
+`sync patches`.
+
+Budget several hours and around 400 GB for the first run: AOSP source is ~200 GB
+and a build needs roughly that again on top.
+
+```sh
+JOBS=16 ./build.sh sync          # sync parallelism (default 8)
+PINNED=0 ./build.sh sync         # follow android17-release instead of pinning
+KERNEL_REMOTE=<url> ./build.sh sync kernel
+```
+
+Two defaults worth knowing:
+
+- **`JOBS` defaults to 8, not `nproc`.** These jobs are network-bound, and on a
+  many-core host `nproc` oversubscribes the link badly enough that the sync gets
+  *slower* and googlesource starts refusing connections.
+- **The kernel comes from `git@github.com:torvalds/linux.git`**, which is
+  markedly faster than `git.kernel.org` from most networks. Override with
+  `KERNEL_REMOTE` if you would rather use the canonical source:
+  `https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git`.
+
+`PINNED=0` tracks `android17-release` as it moves rather than reproducing the
+exact tree this port was built against. Expect to fix things if you do.
 
 ## Building
 

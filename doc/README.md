@@ -4,18 +4,29 @@ Project documentation for porting AOSP 17 to real x86_64 PC hardware with
 hardware-accelerated graphics on Intel integrated GPUs and AMD GPUs.
 
 **Not** Cuttlefish. **Not** the Android emulator. **Not** Android-x86.
-A new device port, built from the AOSP 17 tree in `~/amar/x86/android_17`.
+A new device port, built against the AOSP 17 tree.
 
 ---
 
 ## Status of the working tree
 
+Paths below are relative to the repository root. Neither upstream tree is
+committed; `./build.sh sync` fetches both at the revisions recorded here, and
+the top-level [README](../README.md) covers that.
+
+Shell snippets throughout these documents write `$REPO` for the repository
+root, so they can be pasted after:
+
+```sh
+export REPO=$(pwd)      # from the top of the clone
+```
+
 | Item | Value |
 |---|---|
-| AOSP | `~/amar/x86/android_17`, `android17-release`, sync complete, 153 GB |
-| Mainline kernel | `~/amar/x86/linux`, **v7.2-rc6** (`0d8395707651`, 2026-08-05) |
+| AOSP | `android_17/`, `android17-release`, pinned per-project in `manifests/` |
+| Mainline kernel | `linux/`, **v7.2-rc6** (`0d8395707651`, 2026-08-05), unmodified |
 | Android Common Kernel target | **android-6.18** (`kernel/configs/d/android-6.18/`) |
-| Build host | 192 cores, 246 GB RAM, 3.2 TB free, `/dev/kvm` present |
+| Build host used | 192 cores, 246 GB RAM, 3.2 TB free, `/dev/kvm` present |
 
 ---
 

@@ -1,6 +1,6 @@
 # 01 — Scope and Tree Audit
 
-Findings from a direct audit of `~/amar/x86/android_17` (android17-release).
+Findings from a direct audit of `$REPO/android_17` (android17-release).
 Every claim below has a verification command. Re-run them if the tree changes.
 
 ---

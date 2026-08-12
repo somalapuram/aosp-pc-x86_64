@@ -3,7 +3,7 @@
 Everything the kernel needs for AOSP 17 on bare-metal x86_64 with Intel iGPU
 and AMD GPU.
 
-Reference tree: `~/amar/x86/linux` at **v7.2-rc6** (`0d8395707651`, 2026-08-05).
+Reference tree: `$REPO/linux` at **v7.2-rc6** (`0d8395707651`, 2026-08-05).
 Every symbol below was checked against that tree. Verification commands are
 included so this can be re-run when you rebase.
 
@@ -53,7 +53,7 @@ treat it as the contract until Google populates the 6.18 one.
 
 ```bash
 # verify
-find ~/amar/x86/android_17/kernel/configs -name 'android-base.config' \
+find $REPO/android_17/kernel/configs -name 'android-base.config' \
   -exec sh -c 'printf "%-42s %s\n" "$1" "$(wc -l < "$1")"' _ {} \;
 ```
 
@@ -75,7 +75,7 @@ find ~/amar/x86/android_17/kernel/configs -name 'android-base.config' \
 
 ```bash
 # verify — all seven should report ABSENT
-cd ~/amar/x86/linux
+cd $REPO/linux
 for s in ASHMEM DM_DEFAULT_KEY CPU_FREQ_TIMES UID_SYS_STATS \
          NETFILTER_XT_MATCH_QUOTA2 INCREMENTAL_FS DM_USER; do
   h=$(grep -rl "^config $s\$" --include=Kconfig* . 2>/dev/null | head -1)
@@ -97,7 +97,7 @@ the ACK tree, these are not confirmed:**
 
 ```bash
 git clone --depth=1 -b android16-6.18 \
-  https://android.googlesource.com/kernel/common ~/amar/x86/ack
+  https://android.googlesource.com/kernel/common $REPO/ack
 ```
 
 Backporting incfs to 7.2 is the largest of these by far — it touches VFS
@@ -118,7 +118,7 @@ needs to be:
 
 ```bash
 # verify — all three should report ABSENT
-cd ~/amar/x86/linux
+cd $REPO/linux
 for s in SCHED_DEBUG NF_CT_PROTO_DCCP NF_CT_PROTO_UDPLITE; do
   h=$(grep -rl "^config $s\$" --include=Kconfig* . 2>/dev/null | head -1)
   printf "%-24s %s\n" "$s" "${h:-ABSENT}"
@@ -172,7 +172,7 @@ make LLVM=1 -j192
 Use AOSP's prebuilt toolchain for ABI consistency:
 
 ```bash
-export PATH=~/amar/x86/android_17/prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
+export PATH=$REPO/android_17/prebuilts/clang/host/linux-x86/clang-r*/bin:$PATH
 ```
 
 A GCC-built kernel will fail Android's config requirements and may hit
@@ -526,7 +526,7 @@ CONFIG_LEDS_CLASS_MULTICOLOR=y
 is not in §3.1 or §3.2, look up what it depends on:
 
 ```bash
-cd ~/amar/x86/linux
+cd $REPO/linux
 S=IP_NF_FILTER
 F=$(grep -rl "^config $S\$" --include=Kconfig* . | head -1)
 sed -n "/^config $S\$/,/^\$/p" "$F" | grep -E 'depends on|select'
@@ -558,7 +558,7 @@ Use `../build.sh kernel-config`, which performs the steps below.
 > external dependency.
 
 ```bash
-cd ~/amar/x86/linux
+cd $REPO/linux
 
 # 1. Base: the in-tree x86_64 defconfig
 make LLVM=1 x86_64_defconfig
@@ -566,8 +566,8 @@ make LLVM=1 x86_64_defconfig
 # 2+3. Merge Android's requirements (the POPULATED b/android-6.12 fragment,
 #      not the empty d/android-6.18 one) and the PC fragment
 ./scripts/kconfig/merge_config.sh -m -O . .config \
-  ~/amar/x86/android_17/kernel/configs/b/android-6.12/android-base.config \
-  ~/amar/x86/config/pc_x86_64.fragment
+  $REPO/android_17/kernel/configs/b/android-6.12/android-base.config \
+  $REPO/config/pc_x86_64.fragment
 
 # 4. Resolve
 make LLVM=1 olddefconfig
@@ -601,8 +601,8 @@ single most important check in this document — it is how a 6.12 fragment on a
 7.2 tree quietly loses requirements.
 
 ```bash
-cd ~/amar/x86/linux
-FRAG=~/amar/x86/android_17/kernel/configs/b/android-6.12/android-base.config
+cd $REPO/linux
+FRAG=$REPO/android_17/kernel/configs/b/android-6.12/android-base.config
 
 while read -r line; do
   case "$line" in
@@ -665,7 +665,7 @@ ruleset from a kernel that otherwise built and booted fine.
 or by hand:
 
 ```bash
-cd ~/amar/x86/linux
+cd $REPO/linux
 make LLVM=1 -j192 bzImage
 # → arch/x86/boot/bzImage
 ```
@@ -699,7 +699,7 @@ missing symbols and matches AOSP 17's expectations exactly:
 
 ```bash
 git clone -b android16-6.18 \
-  https://android.googlesource.com/kernel/common ~/amar/x86/ack
+  https://android.googlesource.com/kernel/common $REPO/ack
 ```
 
 Trade-off: older base, less new-hardware support, Google's patch stack. You
