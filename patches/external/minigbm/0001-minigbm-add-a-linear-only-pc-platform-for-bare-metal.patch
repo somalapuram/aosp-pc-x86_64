@@ -1,0 +1,172 @@
+From b3bd51a6da95ebb3ae21f59182e765957da337aa Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Mon, 10 Aug 2026 12:32:44 +0530
+Subject: [PATCH] minigbm: add a linear-only 'pc' platform for bare-metal x86
+
+Selecting platform 'intel' gets a real Intel machine most of the way up --
+i915 binds, eDP-1 connects at 60 Hz, drm_hwcomposer reaches power mode 2,
+BootAnimation starts -- and then kills SurfaceFlinger 41 times in a row:
+
+    E surfaceflinger: Mapping failed.
+    W Gralloc5: lock(0x..., ...) failed: 3            (BAD_VALUE)
+    E surfaceflinger: Buffer was not locked.
+    E skia   : ** ERROR ** Could not create EGL image, err = (0x300c)
+    F SurfaceFlinger: Failed to create a valid texture.
+                      [384,384] isProtected:0 isWriteable:1 format:1
+
+i915_add_combinations() registers the linear combinations at priority 1 and
+then overrides them with X-tiled at priority 2 and Y/4-tiled at priority 3
+for every usage that carries no explicit BO_USE_SW_* or BO_USE_LINEAR flag.
+That is exactly how SurfaceFlinger allocates a GPU texture, so it gets tiled
+memory. i915_bo_map() then refuses it:
+
+    if (bo->meta.tiling == I915_TILING_NONE) {
+            if (i915->has_mmap_offset) {
+
+A tiled buffer cannot be CPU-mapped at all, so the lock fails, the EGLImage
+import fails with EGL_BAD_PARAMETER, and SurfaceFlinger aborts.
+
+Under Mesa this is correct and desirable. This configuration has no Mesa
+yet and renders in software:
+
+    ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (LLVM 16.0.0)),
+           SwiftShader driver-5.0.0)
+
+SwiftShader reads and writes every pixel with the CPU, so every buffer it
+touches must be linear. Tiling is not a performance trade-off here, it is a
+correctness one.
+
+Add platform 'pc' -- 'intel' plus -DDRV_PC_FORCE_LINEAR -- which in both the
+i915 and xe backends points *_get_modifier_order() at a one-entry
+DRM_FORMAT_MOD_LINEAR array and returns early from *_add_combinations()
+before any tiled combination is registered. Both are needed: the first
+covers create_with_modifiers, the second the plain create path. xe is
+included so Lunar Lake and newer do not hit the identical wall.
+
+'intel' itself is untouched.
+
+This is a bring-up crutch, not a fix, and it is deliberately not proposed
+for upstream. Once Mesa (iris/anv) is shipping, the GPU does the rendering,
+the CPU stops touching these buffers, and the product should revert to
+plain 'intel' -- at which point tiling is pure gain.
+
+Change-Id: Ib3b60aa3f5f72b1cc041adcc5e47b89b06b9e9c8
+---
+ Android.bp | 10 ++++++++++
+ i915.c     | 30 ++++++++++++++++++++++++++++++
+ xe.c       | 15 +++++++++++++++
+ 3 files changed, 55 insertions(+)
+
+diff --git a/Android.bp b/Android.bp
+index 71e6c62..1929cff 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -75,6 +75,15 @@ intel_cflags = [
+     "-DDRV_I915",
+     "-DDRV_XE",
+ ]
++// Bare-metal x86_64 PC. Intel backends plus a linear-only allocation policy,
++// because this configuration renders with SwiftShader on the CPU and tiled
++// buffers cannot be CPU-mapped. Drop DRV_PC_FORCE_LINEAR once Mesa (iris/anv)
++// is shipping and the GPU does the rendering.
++pc_cflags = intel_cflags + [
++    "-DHAS_DMABUF_SYSTEM_HEAP",
++    "-DDRV_PC_FORCE_LINEAR",
++]
++
+ meson_cflags = ["-DDRV_MESON"]
+ msm_cflags = [
+     "-DDRV_MSM",
+@@ -103,6 +112,7 @@ cc_defaults {
+         "generic": generic_cflags,
+         "intel": intel_cflags,
+         "meson": meson_cflags,
++        "pc": pc_cflags,
+         "msm": msm_cflags,
+         "mt8186": mediatek_cflags + ["-DMTK_MT8186"],
+         "mt8188": mediatek_cflags + ["-DMTK_MT8188G"],
+diff --git a/i915.c b/i915.c
+index 1880972..292afa4 100644
+--- a/i915.c
++++ b/i915.c
+@@ -189,8 +189,26 @@ static void i915_info_from_device_id(struct i915_device *i915)
+ 		}
+ }
+ 
++#ifdef DRV_PC_FORCE_LINEAR
++/*
++ * Software-rendering bring-up: every buffer must be CPU-mappable.
++ *
++ * i915_bo_map() only takes the mmap path when tiling == I915_TILING_NONE, so a
++ * tiled buffer cannot be locked for CPU access at all. That is fine when Mesa
++ * drives the GPU, and fatal when the renderer is SwiftShader, which has to read
++ * and write every pixel with the CPU. See i915_add_combinations() for the
++ * matching restriction and doc/05-graphics.md section 3.2 for the whole story.
++ */
++static const uint64_t linear_only_modifier_order[] = { DRM_FORMAT_MOD_LINEAR };
++#endif
++
+ static void i915_get_modifier_order(struct i915_device *i915)
+ {
++#ifdef DRV_PC_FORCE_LINEAR
++	i915->modifier.order = linear_only_modifier_order;
++	i915->modifier.count = ARRAY_SIZE(linear_only_modifier_order);
++	return;
++#endif
+ 	if (i915->is_mtl) {
+ 		i915->modifier.order = xe_lpdp_modifier_order;
+ 		i915->modifier.count = ARRAY_SIZE(xe_lpdp_modifier_order);
+@@ -271,6 +289,18 @@ static int i915_add_combinations(struct driver *drv)
+ 				   BO_USE_HW_VIDEO_ENCODER | BO_USE_GPU_DATA_BUFFER |
+ 				   BO_USE_SENSOR_DIRECT_DATA);
+ 
++#ifdef DRV_PC_FORCE_LINEAR
++	/*
++	 * Stop here. Everything below overrides the linear combinations added
++	 * above with X-tiled (priority 2) and Y/4-tiled (priority 3) variants
++	 * for any usage that does not carry an explicit SW_ or LINEAR flag --
++	 * which is exactly what SurfaceFlinger asks for when it allocates a
++	 * GPU texture. Those buffers cannot be CPU-mapped, and under a software
++	 * renderer that is not a performance question but a correctness one.
++	 */
++	return 0;
++#endif
++
+ 	const uint64_t render_not_linear = unset_flags(render, linear_mask);
+ 	const uint64_t scanout_and_render_not_linear = render_not_linear | BO_USE_SCANOUT;
+ 
+diff --git a/xe.c b/xe.c
+index 03c019a..028ddff 100644
+--- a/xe.c
++++ b/xe.c
+@@ -105,8 +105,18 @@ static void xe_info_from_device_id(struct xe_device *xe)
+ 	}
+ }
+ 
++#ifdef DRV_PC_FORCE_LINEAR
++/* Same reasoning as the i915 backend; see i915.c and doc/05-graphics.md 3.2. */
++static const uint64_t linear_only_modifier_order[] = { DRM_FORMAT_MOD_LINEAR };
++#endif
++
+ static void xe_get_modifier_order(struct xe_device *xe)
+ {
++#ifdef DRV_PC_FORCE_LINEAR
++	xe->modifier.order = linear_only_modifier_order;
++	xe->modifier.count = ARRAY_SIZE(linear_only_modifier_order);
++	return;
++#endif
+ 	if (xe->is_mtl_or_newer) {
+ 		xe->modifier.order = xe_lpdp_modifier_order;
+ 		xe->modifier.count = ARRAY_SIZE(xe_lpdp_modifier_order);
+@@ -199,6 +209,11 @@ static int xe_add_combinations(struct driver *drv)
+ 				       BO_USE_GPU_DATA_BUFFER);
+ 	}
+ 
++#ifdef DRV_PC_FORCE_LINEAR
++	/* Keep only the linear combinations added above. See i915.c. */
++	return 0;
++#endif
++
+ 	const uint64_t render_not_linear = unset_flags(render, linear_mask);
+ 	const uint64_t scanout_and_render_not_linear = render_not_linear | BO_USE_SCANOUT;
+ 	struct format_metadata metadata_x_tiled = { .tiling = XE_TILING_X,
