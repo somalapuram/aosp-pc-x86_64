@@ -52,7 +52,7 @@ unmodified upstream code. They are reproduced from pinned revisions instead.
 | Tree | Source | Revision |
 |---|---|---|
 | AOSP | `https://android.googlesource.com/platform/manifest` | `android17-release`, pinned per-project in `manifests/aosp-android17-pinned.xml` (1084 projects, each locked to a SHA) |
-| Kernel | `https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git` | `0d8395707651` (`v7.2-rc6-59-g0d8395707651`) |
+| Kernel | `git@github.com:torvalds/linux.git` (or the canonical `https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git`) | `0d8395707651` (`v7.2-rc6-59-g0d8395707651`) |
 
 The kernel tree carries **zero local commits**. There is no fork to maintain —
 every kernel change in this project is a config symbol.
@@ -104,8 +104,9 @@ fatal: early EOF
 
 That matters more than it sounds, because **a failed `git clone` deletes its own
 partial output** — an interrupted transfer costs everything downloaded so far.
-Neither mirror is reliably faster than the other; measure rather than switch on
-faith.
+The kernel defaults to `git@github.com:torvalds/linux.git`; `git.kernel.org` is
+the canonical source and works equally well. Neither is reliably faster than the
+other, so measure rather than switch on faith.
 
 If you already have a checkout of either tree, borrow from it instead:
 

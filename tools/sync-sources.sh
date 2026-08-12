@@ -38,15 +38,17 @@ PINNED_MANIFEST="aosp-android17-pinned.xml"
 # kernel change in this project is a config symbol in config/pc_x86_64.fragment.
 KERNEL_REV="0d8395707651"
 
-# Either mirror works. Do not assume one is faster: measured on the machine this
-# was developed on, git.kernel.org and the GitHub mirror were both throttled to
-# well under 500 KB/s while the same link pulled 16 MB/s from elsewhere, and the
-# GitHub clone dropped its connection after 156 MB:
+# The GitHub mirror over SSH. git.kernel.org is the canonical source and works
+# equally well:
+#     KERNEL_REMOTE=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+#
+# Do not assume either is the fast one. Measured on the machine this was
+# developed on, both were throttled to well under 500 KB/s while the same link
+# pulled 16 MB/s from elsewhere, and the GitHub clone dropped after 156 MB:
 #     fetch-pack: unexpected disconnect while reading sideband packet
 #     fatal: early EOF
-# If either is slow for you it is worth measuring rather than switching blind --
-# and if both are, use REFERENCE.
-KERNEL_REMOTE="${KERNEL_REMOTE:-https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git}"
+# Measure before switching, and if both are slow, use REFERENCE.
+KERNEL_REMOTE="${KERNEL_REMOTE:-git@github.com:torvalds/linux.git}"
 
 # These jobs are network-bound, so this is not a core count. 32 is a reasonable
 # ceiling; going as high as nproc on a many-core host oversubscribes the link
