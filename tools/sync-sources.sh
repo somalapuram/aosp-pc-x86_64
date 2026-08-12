@@ -16,11 +16,13 @@
 # interrupt and re-run: every step checks for its own completion first.
 #
 # Environment overrides:
-#   JOBS=8              sync parallelism. 8 is deliberate -- see below.
+#   JOBS=32             sync parallelism
+#   REFERENCE=<path>    root of an existing checkout (one containing android_17/
+#                       and linux/) to read objects from instead of the network.
+#                       Turns hours or days of transfer into minutes. See below.
 #   PINNED=0            track android17-release as it moves, instead of
 #                       reproducing the exact tree this port was built from
-#   KERNEL_REMOTE=<url> default is the GitHub mirror, which is markedly faster
-#                       than git.kernel.org from most networks
+#   KERNEL_REMOTE=<url> where to clone the kernel from
 #
 set -euo pipefail
 
@@ -35,14 +37,33 @@ PINNED_MANIFEST="aosp-android17-pinned.xml"
 # The kernel is pristine upstream at this revision -- there is no fork. Any
 # kernel change in this project is a config symbol in config/pc_x86_64.fragment.
 KERNEL_REV="0d8395707651"
-KERNEL_REMOTE="${KERNEL_REMOTE:-git@github.com:torvalds/linux.git}"
 
-# Sync parallelism defaults to 8 rather than nproc. These jobs are almost
-# entirely network-bound, and on a many-core host nproc oversubscribes the link
-# badly enough that the sync gets slower, not faster, and googlesource starts
-# refusing connections.
-JOBS="${JOBS:-8}"
+# Either mirror works. Do not assume one is faster: measured on the machine this
+# was developed on, git.kernel.org and the GitHub mirror were both throttled to
+# well under 500 KB/s while the same link pulled 16 MB/s from elsewhere, and the
+# GitHub clone dropped its connection after 156 MB:
+#     fetch-pack: unexpected disconnect while reading sideband packet
+#     fatal: early EOF
+# If either is slow for you it is worth measuring rather than switching blind --
+# and if both are, use REFERENCE.
+KERNEL_REMOTE="${KERNEL_REMOTE:-https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git}"
+
+# These jobs are network-bound, so this is not a core count. 32 is a reasonable
+# ceiling; going as high as nproc on a many-core host oversubscribes the link
+# and googlesource starts refusing connections.
+JOBS="${JOBS:-32}"
 PINNED="${PINNED:-1}"
+
+# An existing checkout to borrow objects from. AOSP is ~200 GB and the kernel
+# ~5.5 GB; on a slow or unreliable route those are days of transfer, and a
+# dropped connection costs the whole clone. Pointing at a local copy reads from
+# disk instead. Objects are copied, not linked, so the result stands alone and
+# the reference can be deleted afterwards.
+REFERENCE="${REFERENCE:-}"
+if [[ -n "$REFERENCE" ]]; then
+    REFERENCE="$(cd "$REFERENCE" 2>/dev/null && pwd)" \
+        || { echo "REFERENCE path does not exist" >&2; exit 1; }
+fi
 
 if [[ -t 1 ]]; then R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'
 else R=''; G=''; Y=''; B=''; N=''; fi
@@ -75,9 +96,21 @@ sync_aosp() {
     # own code, committed to this repository, that happens to live at a path
     # inside the AOSP tree. repo leaves it alone because it is not one of the
     # manifest's projects, so initialising into a non-empty directory is fine.
-    if [[ ! -d .repo/manifests ]]; then
-        info "repo init ($AOSP_BRANCH) -- this fetches the manifest repo and is slow"
-        repo init -u "$AOSP_MANIFEST_URL" -b "$AOSP_BRANCH"
+    local ref_args=()
+    if [[ -n "$REFERENCE" && -d "$REFERENCE/android_17/.repo" ]]; then
+        info "borrowing objects from $REFERENCE/android_17"
+        ref_args=(--reference "$REFERENCE/android_17" --dissociate)
+    elif [[ -n "$REFERENCE" ]]; then
+        warn "no .repo under $REFERENCE/android_17 -- fetching AOSP from the network"
+    fi
+
+    if [[ ! -e .repo/manifest.xml ]]; then
+        info "repo init ($AOSP_BRANCH) -- fetches the manifest repo, ~59 MB"
+        # Test manifest.xml, not the manifests/ directory: an interrupted init
+        # leaves manifests.git behind without ever producing manifest.xml, and
+        # a later sync then fails with "error parsing manifest ... No such file
+        # or directory" that reads like a corrupt tree rather than a partial one.
+        repo init -u "$AOSP_MANIFEST_URL" -b "$AOSP_BRANCH" "${ref_args[@]}"
     else
         ok "already initialised"
     fi
@@ -106,8 +139,16 @@ sync_aosp() {
 sync_kernel() {
     info "kernel -> $KERNEL_SRC"
     if [[ ! -d "$KERNEL_SRC/.git" ]]; then
+        local ref_args=()
+        if [[ -n "$REFERENCE" && -d "$REFERENCE/linux/.git" ]]; then
+            info "borrowing objects from $REFERENCE/linux"
+            ref_args=(--reference "$REFERENCE/linux" --dissociate)
+        fi
         info "cloning $KERNEL_REMOTE"
-        git clone "$KERNEL_REMOTE" "$KERNEL_SRC"
+        # A failed clone deletes its own partial output, so an interrupted
+        # transfer costs everything downloaded so far -- which is why a slow or
+        # flaky route makes REFERENCE worth using rather than retrying.
+        git clone "${ref_args[@]}" "$KERNEL_REMOTE" "$KERNEL_SRC"
     else
         ok "already cloned"
     fi

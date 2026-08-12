@@ -79,20 +79,44 @@ Budget several hours and around 400 GB for the first run: AOSP source is ~200 GB
 and a build needs roughly that again on top.
 
 ```sh
-JOBS=16 ./build.sh sync          # sync parallelism (default 8)
-PINNED=0 ./build.sh sync         # follow android17-release instead of pinning
+JOBS=16 ./build.sh sync                    # sync parallelism (default 32)
+REFERENCE=/path/to/other/checkout ./build.sh sync
+PINNED=0 ./build.sh sync                   # follow android17-release
 KERNEL_REMOTE=<url> ./build.sh sync kernel
 ```
 
-Two defaults worth knowing:
+`JOBS` is network parallelism, not a core count — 32 by default. Going as high
+as `nproc` on a many-core host oversubscribes the link and googlesource starts
+refusing connections.
 
-- **`JOBS` defaults to 8, not `nproc`.** These jobs are network-bound, and on a
-  many-core host `nproc` oversubscribes the link badly enough that the sync gets
-  *slower* and googlesource starts refusing connections.
-- **The kernel comes from `git@github.com:torvalds/linux.git`**, which is
-  markedly faster than `git.kernel.org` from most networks. Override with
-  `KERNEL_REMOTE` if you would rather use the canonical source:
-  `https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git`.
+### If the transfer is slow
+
+It may well be, and not because of your bandwidth. On the machine this was
+developed on, the same link that pulled **16 MB/s** from a general CDN got
+**~35 KB/s** from `android.googlesource.com` and **under 500 KB/s** from both
+`git.kernel.org` and GitHub — with the kernel clone dropping outright after
+156 MB:
+
+```
+fetch-pack: unexpected disconnect while reading sideband packet
+fatal: early EOF
+```
+
+That matters more than it sounds, because **a failed `git clone` deletes its own
+partial output** — an interrupted transfer costs everything downloaded so far.
+Neither mirror is reliably faster than the other; measure rather than switch on
+faith.
+
+If you already have a checkout of either tree, borrow from it instead:
+
+```sh
+REFERENCE=/path/to/other/checkout ./build.sh sync
+```
+
+That expects a directory containing `android_17/` and/or `linux/`, and passes
+`--reference --dissociate` to `repo init` and `git clone`. Objects are read from
+local disk and then *copied*, so the result stands alone and the reference can
+be deleted afterwards. Minutes instead of days.
 
 `PINNED=0` tracks `android17-release` as it moves rather than reproducing the
 exact tree this port was built against. Expect to fix things if you do.
