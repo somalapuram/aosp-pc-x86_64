@@ -71,7 +71,7 @@ KMSG_FILE=${KMSG_FILE:-$X86_ROOT/out/disk/kmsg.txt}
 # nor `adb shell screencap` can show what Android actually drew. screencap
 # reads SurfaceFlinger's composited output directly, so writing it to a
 # character device sidesteps both: whatever lands here is the real UI.
-SCREENCAP_FILE=${SCREENCAP_FILE:-$X86_ROOT/out/disk/screencap.png}
+SCREENCAP_FILE=${SCREENCAP_FILE:-$X86_ROOT/out/disk/screencap.raw}
 rm -f "$SCREENCAP_FILE"
 QMP_SOCK=${QMP_SOCK:-$X86_ROOT/out/disk/qmp.sock}
 rm -f "$QMP_SOCK"

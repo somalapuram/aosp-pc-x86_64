@@ -24,6 +24,9 @@ QMP="$X86_ROOT/out/disk/qmp.sock"
 
 TIMEOUT=${TIMEOUT:-600}
 SETTLE=${SETTLE:-45}
+# The guest retries its screencap until the screen has something on it, so
+# this covers the retry window rather than a single capture.
+CAPTURE_WAIT=${CAPTURE_WAIT:-90}
 WINDOW=0
 KEEP=0
 
@@ -110,6 +113,61 @@ if (( booted )); then
     sleep "$SETTLE"
 else
     fail "launcher resumed" "not seen within ${TIMEOUT}s"
+fi
+
+# ------------------------------------------------ UI capture (screencap) ----
+# The real picture of the UI, and the only one that works in the VM: the guest
+# writes SurfaceFlinger's composited output to /dev/hvc2, which sidesteps the
+# scanout path that virtio-gpu rejects. See doc/05-graphics.md 5.1.
+#
+# Two things make this fiddlier than reading a file. The guest starts its
+# capture on an early trigger and retries until the screen has something on it,
+# so we have to wait for it rather than sample once; and OVMF writes terminal
+# escape sequences to the same character device during firmware init, so the
+# PNG has to be extracted from its signature rather than used whole -- the file
+# used to be exactly 33 bytes of "\e[2J\e[001;001H\e[=3h" and nothing else.
+capture_raw="$X86_ROOT/out/disk/screencap.raw"
+capture="$RESULTS/ui.png"
+
+# The payload is base64 between markers, because /dev/hvc2 is a tty and its
+# line discipline rewrites \n as \r\n -- which corrupted the raw PNG and even
+# split its magic bytes. Decoding tolerates the \r the tty adds to every line,
+# and the markers locate the payload amongst the OVMF escape sequences that
+# firmware writes to the same port before Android boots.
+decode() {
+    python3 - "$1" "$2" 2>/dev/null <<'PY'
+import base64, sys
+raw, out = sys.argv[1], sys.argv[2]
+d = open(raw, 'rb').read()
+b = d.find(b'---PC-SCREENCAP-BEGIN---')
+e = d.find(b'---PC-SCREENCAP-END---')
+if b < 0 or e < 0:
+    sys.exit(1)                      # not finished sending yet
+payload = d[b + len(b'---PC-SCREENCAP-BEGIN---'):e]
+img = base64.b64decode(b''.join(payload.split()), validate=False)
+if not img.startswith(b'\x89PNG\r\n\x1a\n'):
+    sys.exit(2)
+open(out, 'wb').write(img)
+PY
+}
+
+info "waiting for the guest UI capture (${CAPTURE_WAIT}s max)"
+for ((i = 0; i < CAPTURE_WAIT; i += 2)); do
+    decode "$capture_raw" "$capture" && break
+    sleep 2
+done
+
+if [[ -s "$capture" ]]; then
+    px=$(python3 - "$capture" 2>/dev/null <<'PY'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+w, h = struct.unpack('>II', d[16:24])
+print(f"{w}x{h}")
+PY
+)
+    pass "UI captured" "$capture ${px:-} ($(du -h "$capture" | cut -f1))"
+else
+    fail "UI captured" "no PNG on /dev/hvc2 -- check 'pc-screencap' lines in logcat.txt"
 fi
 
 # ------------------------------------------------------------ screenshot ----

@@ -120,7 +120,13 @@ service pc-debug-dump /vendor/bin/pc_debug_dump.sh
 # set here (the device reaches LOCKED_BOOT_COMPLETED but not full
 # BOOT_COMPLETED), so a trigger on it never fires. audioserver reaching
 # 'running' is early but proven, so just wait long enough for the UI to draw.
-service pc-screencap /vendor/bin/pc_screencap.sh 60
+# No delay argument: the script polls and decides for itself when the screen
+# has something on it. Passing one here overrides that default, and a 60s value
+# left over from the single-shot version put the capture 32s after the harness
+# had already powered the VM off -- with the service still showing [running]
+# and not one line in logcat, which looks exactly like a service that never
+# started.
+service pc-screencap /vendor/bin/pc_screencap.sh
     class core
     user root
     group root system graphics
