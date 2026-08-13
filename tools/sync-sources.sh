@@ -7,6 +7,7 @@
 #   ./build.sh sync aosp         AOSP only
 #   ./build.sh sync kernel       kernel only
 #   ./build.sh sync patches      re-apply out-of-tree patches only
+#   ./build.sh sync verify       check every project was actually checked out
 #
 # Neither tree is committed to this repository -- together they are ~350 GB of
 # unmodified upstream code. They are reproduced from pinned revisions instead,
@@ -134,7 +135,58 @@ sync_aosp() {
 
     info "repo sync -c -j$JOBS (hours on a first run)"
     repo sync -c -j"$JOBS"
+    verify_checkouts
     ok "AOSP synced"
+}
+
+# repo sync fetches and then checks out, and an interruption between the two
+# leaves projects with a populated .git and an empty working tree. Nothing
+# reports this:
+#
+#   - `repo sync` prints "repo sync has finished successfully"
+#   - `repo sync -l` also succeeds and changes nothing, because HEAD already
+#     matches the manifest, so repo considers the project done
+#   - the project directory exists, so any [ -d ] check passes
+#
+# The only symptom is `git status` listing every tracked file as deleted. It
+# surfaces much later as a wall of Soong errors naming modules that live in
+# whichever project was hit, e.g. with bionic missing:
+#
+#   error: ... "libz_defaults" depends on undefined module "bug_24465209_workaround"
+#   error: ... "py3-interp-defaults" depends on undefined module "no_bti"
+#
+# which says nothing about a bad checkout. Detect and repair it here instead.
+verify_checkouts() {
+    cd "$AOSP_ROOT" || die "no AOSP tree at $AOSP_ROOT"
+    info "verifying working trees"
+    local total=0 repaired=0 blank=0 failed=0 p
+
+    while read -r p; do
+        [[ -e "$AOSP_ROOT/$p/.git" ]] || continue
+        total=$((total + 1))
+        # Anything other than .git means the checkout happened.
+        [[ -n "$(ls -A "$AOSP_ROOT/$p" 2>/dev/null | grep -v '^\.git$' | head -1)" ]] && continue
+
+        # Empty on disk. A project with no tracked files is legitimately empty
+        # upstream -- AOSP carries a number of placeholder repos -- and must not
+        # be reported as damaged.
+        if [[ -z "$(git -C "$AOSP_ROOT/$p" ls-files 2>/dev/null | head -1)" ]]; then
+            blank=$((blank + 1)); continue
+        fi
+
+        if git -C "$AOSP_ROOT/$p" reset --hard HEAD >/dev/null 2>&1; then
+            repaired=$((repaired + 1))
+        else
+            warn "could not restore $p"; failed=$((failed + 1))
+        fi
+    done < <(repo list -p 2>/dev/null)
+
+    if (( repaired )); then
+        ok "restored $repaired project(s) that were fetched but never checked out"
+    fi
+    (( blank )) && info "$blank project(s) are empty upstream (no tracked files)"
+    (( failed )) && die "$failed project(s) could not be restored; try 'repo sync -j$JOBS' again"
+    ok "$total project(s) checked out"
 }
 
 # ------------------------------------------------------------- kernel ----
@@ -208,7 +260,8 @@ case "${1:-all}" in
     aosp)    sync_aosp ;;
     kernel)  sync_kernel ;;
     patches) apply_patches ;;
-    *)       die "unknown target: $1  (all | aosp | kernel | patches)" ;;
+    verify)  verify_checkouts ;;
+    *)       die "unknown target: $1  (all | aosp | kernel | patches | verify)" ;;
 esac
 
 echo

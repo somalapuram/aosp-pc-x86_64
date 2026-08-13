@@ -122,6 +122,37 @@ be deleted afterwards. Minutes instead of days.
 `PINNED=0` tracks `android17-release` as it moves rather than reproducing the
 exact tree this port was built against. Expect to fix things if you do.
 
+### If the build fails with undefined Soong modules
+
+An interrupted sync can leave a project with a fully populated `.git` and an
+*empty working tree* — the fetch phase completed, the checkout phase never ran.
+Nothing reports it:
+
+- `repo sync` prints "repo sync has finished successfully"
+- `repo sync -l` also succeeds and changes nothing, because HEAD already matches
+  the manifest, so repo considers the project done
+- the directory exists, so any `[ -d ]` check passes
+
+The only tell is `git status` listing every tracked file as deleted. It surfaces
+much later, and far from the cause, as a wall of Soong errors naming modules
+that live in whichever project was hit. With `bionic` empty:
+
+```
+error: external/zlib/Android.bp:100:1: "libz_defaults" depends on undefined module "bug_24465209_workaround"
+error: external/python/cpython3/Android.bp:97:1: "py3-interp-defaults" depends on undefined module "no_bti"
+```
+
+Nothing there mentions a bad checkout. `./build.sh sync` now checks for this and
+repairs it automatically, and it can be run on its own at any time:
+
+```sh
+./build.sh sync verify
+```
+
+It distinguishes a broken checkout from a project that is legitimately empty
+upstream — AOSP carries several placeholder repos with no tracked files, and
+those are reported, not "fixed".
+
 ## Building
 
 ```sh
