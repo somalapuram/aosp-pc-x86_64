@@ -108,73 +108,40 @@ fi
 
 # Graphics.
 #
-# KNOWN LIMITATION: the guest UI does not reach the screen under either
-# virtio-gpu mode. Android itself boots cleanly regardless -- zero crashes,
-# launcher resumed, LOCKED_BOOT_COMPLETED -- but the framebuffer stays blank.
-# The two modes fail on opposite sides of the same constraint:
+# The guest UI reaches the screen. This took three fixes, all in patches/:
 #
-#   GPU=virgl (default, virtio-vga-gl + egl-headless)
-#     SurfaceFlinger gets GPU-writeable buffers and composes happily, but
-#     drm_hwcomposer cannot turn them into DRM framebuffers:
-#         drmhwc: could not create drm fb -2   (ENOENT from drmModeAddFB2)
-#         drmhwc: Failed to create AtomicCommitArgs for frame composition.
-#         SurfaceFlinger: present failed ...: BAD_DISPLAY (2)
+#   1. drm/virtio accepts ABGR8888. It advertised only HOST_XRGB8888 and
+#      rejected everything else from ADDFB2 with ENOENT, so Android -- which
+#      composes into RGBA_8888 (DRM_FORMAT_ABGR8888) -- could never scan out.
+#      The errno reads as a missing GEM handle rather than a refused format,
+#      which is why it was misdiagnosed for a long time.
 #
-#   GPU=plain (virtio-vga, no virgl)
-#     Framebuffer creation succeeds -- zero drm fb errors -- but SurfaceFlinger
-#     aborts immediately:
-#         F SurfaceFlinger: output buffer not gpu writeable
-#     RenderEngine::validateOutputBufferUsage() is a LOG_ALWAYS_FATAL_IF on
-#     USAGE_HW_RENDER, so there is no property to relax it.
+#   2. minigbm creates its virgl context up front. On a context-init host the
+#      kernel does not create one in gem_object_open(), so no buffer was ever
+#      attached and every TRANSFER_TO_HOST was refused by the host with
+#      "Illegal resource N". Allocation, commits and presents all succeeded --
+#      the host just never received any pixels.
 #
-# ROOT CAUSE. An earlier version of this comment blamed minigbm's scanout
-# flags, quoting the "Virtio primary plane only allows this format" branch of
-# virtgpu_virgl.c. That was wrong twice over: the quoted branch is the non-3D
-# path, not the one virgl takes, and the guest log contains no "Strip scanout"
-# messages at all -- so the RGB formats keep BO_USE_SCANOUT. Allocation is not
-# where this fails.
+#   3. minigbm forces linear buffers (DRV_PC_FORCE_LINEAR), because the
+#      renderer is SwiftShader on the CPU and tiled buffers cannot be mapped.
 #
-# It fails in the guest kernel, in drivers/gpu/drm/virtio/virtgpu_display.c:
+# BEWARE the QMP screendump: it captures QEMU's DisplaySurface, which is NOT
+# updated for a GL/dmabuf scanout, so it reports an all-black screen no matter
+# what is really being displayed. The cursor plane takes the non-GL path and
+# does show up, which makes the capture look plausible and wrong -- a black
+# frame with a lone cursor. Use a real display backend to see the guest:
 #
-#     if (mode_cmd->pixel_format != DRM_FORMAT_HOST_XRGB8888 &&
-#         mode_cmd->pixel_format != DRM_FORMAT_HOST_ARGB8888)
-#             return ERR_PTR(-ENOENT);
+#     DISPLAY_MODE=gtk ./build.sh run          # local display
+#     ./build.sh run -vnc :1                   # then connect a VNC client
 #
-# virtio-gpu accepts exactly two framebuffer formats. SurfaceFlinger composes
-# into RGBA_8888, which minigbm maps to DRM_FORMAT_ABGR8888, so every ADDFB2 is
-# rejected. The -2 is that ENOENT, which reads like a missing GEM handle rather
-# than a refused format -- the reason this was misdiagnosed.
+# ./build.sh test still captures the UI from inside the guest with screencap,
+# which is independent of scanout and works headlessly.
 #
-# The obvious fix does not work. SurfaceFlinger's client target format is
-# hardcoded in RenderSurface::initialize(), and the only override is HWC3's
-# ClientTargetProperty, which drm_hwcomposer does not implement. Implementing
-# it (reporting BGRA_8888 -> DRM_FORMAT_ARGB8888, which virtio accepts) does
-# reach SurfaceFlinger -- it starts composing in format 5 -- and then it dies:
-#     F SurfaceFlinger: Failed to create a valid texture.
-#                       [1280,800] isWriteable:1 format:5
-#     E AndroidRuntime: Failed to initialize display event receiver. status=-32
-# 119 SIGABRTs, no boot. SwiftShader cannot render into BGRA_8888.
+# GPU=plain (virtio-vga without virgl) remains broken for an unrelated reason:
+# RenderEngine::validateOutputBufferUsage() is a LOG_ALWAYS_FATAL_IF on
+# USAGE_HW_RENDER, so SurfaceFlinger aborts with "output buffer not gpu
+# writeable". Kept only for experimentation.
 #
-# So the constraint is two-sided and cannot be satisfied by a format choice:
-# virtio-gpu scans out only ARGB8888/XRGB8888, and the software renderer only
-# produces ABGR8888. Nothing in between can be both.
-#
-# The fix is Mesa (doc/05-graphics.md section 4). A real GL driver renders into
-# whichever format the display needs, and the question disappears. Until then
-# the VM boots correctly with a blank screen, and the display is verified on
-# real hardware instead, where i915 and amdgpu take ABGR8888 happily.
-#
-# This is also why Cuttlefish does not hit it: crosvm uses gfxstream rather
-# than virgl+KMS.
-#
-# Tried and rejected: ro.surface_flinger.default_composition_pixel_format (it
-# only feeds RenderEngine's EGL config and getCompositionPreference, not the
-# client target buffer); blob=on with hostmem (no change); patching
-# drm_hwcomposer so the test_only path retries a failed seamless commit with
-# ALLOW_MODESET (the retry fails identically).
-#
-# Default stays virgl because that combination boots cleanly. GPU=plain is kept
-# for experimentation and to make the trade-off reproducible.
 GPU=${GPU:-virgl}
 GFX=()
 if [[ "$GPU" == "plain" ]]; then

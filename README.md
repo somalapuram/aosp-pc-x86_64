@@ -11,11 +11,12 @@ Boots to Launcher on Intel Meteor Lake.
 | Area | State |
 |---|---|
 | Boot to Launcher | ✅ on Intel Meteor Lake (device ID `7dd5`) |
-| Kernel | ✅ mainline 7.2, **unmodified** — all changes are a config fragment |
+| Kernel | ✅ mainline 7.2 + one 12-line virtio-gpu patch (`patches/linux/`); everything else is a config fragment |
 | Display / KMS | ✅ real scanout via drm_hwcomposer, eDP-1 at 60 Hz |
 | GPU firmware | ✅ GuC / DMC / HuC / GSC linked into the image |
 | gralloc | ✅ Intel (i915 + xe) — ❌ AMD, blocked on Mesa |
 | Rendering | ⚠️ **software only** (SwiftShader + ANGLE). Slow. See below. |
+| QEMU display | ✅ boot animation and UI render (needs `DISPLAY_MODE=gtk` or `-vnc`) |
 | Audio | ✅ AIDL HAL from the `com.android.hardware.audio` APEX |
 | SELinux | ⚠️ permissive |
 | adb over TCP | ❌ refused, though `adbd` is listening |
@@ -37,7 +38,7 @@ build.sh                     one entry point for the whole loop
 config/pc_x86_64.fragment    kernel config delta over x86_64_defconfig
 firmware/i915/               Intel GPU firmware, linked into the kernel
 manifests/                   the AOSP tree, pinned to exact revisions
-patches/external/minigbm/    the single change needed inside an AOSP project
+patches/                     out-of-tree patches: minigbm (2), kernel virtio-gpu (1)
 tools/                       source sync, disk assembly, QEMU, USB writer, logs
 doc/                         how it was derived, and why each piece is there
 android_17/device/pcx86/     the device target (lives at an AOSP path, but is
@@ -54,8 +55,11 @@ unmodified upstream code. They are reproduced from pinned revisions instead.
 | AOSP | `https://android.googlesource.com/platform/manifest` | `android17-release`, pinned per-project in `manifests/aosp-android17-pinned.xml` (1084 projects, each locked to a SHA) |
 | Kernel | `git@github.com:torvalds/linux.git` (or the canonical `https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git`) | `0d8395707651` (`v7.2-rc6-59-g0d8395707651`) |
 
-The kernel tree carries **zero local commits**. There is no fork to maintain —
-every kernel change in this project is a config symbol.
+The kernel carries **one** local patch, in `patches/linux/`: `drm/virtio`
+advertised only `XRGB8888`, so Android — which composes into `ABGR8888` — could
+never scan out in a VM. It is 12 lines, upstreamable, and affects the VM only;
+real hardware never needed it. Everything else about the kernel is a config
+symbol, so there is still no fork, just one patch applied by `./build.sh sync`.
 
 ## Getting the sources
 

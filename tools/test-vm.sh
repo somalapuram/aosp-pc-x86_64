@@ -263,7 +263,10 @@ PY
     if [[ "${colours:-0}" -gt 16 ]]; then
         pass "display renders" "$colours distinct colours"
     else
-        warn "display renders" "${colours:-0} colours (blank) -- expected headless; try --window"
+        warn "display renders" "${colours:-0} colours -- QMP screendump cannot read a GL
+       scanout (it samples QEMU's DisplaySurface), so this says nothing about what is
+       really on screen. Use DISPLAY_MODE=gtk or -vnc to look. 'UI captured' above is
+       the meaningful check."
     fi
 else
     warn "display renders" "no screenshot (normal with --window)"

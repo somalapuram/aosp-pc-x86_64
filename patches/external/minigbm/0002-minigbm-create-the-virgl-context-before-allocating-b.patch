@@ -1,0 +1,119 @@
+From fe916e68573e06c97c35061fd1fd1fed5b8a382b Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 13 Aug 2026 13:07:14 +0530
+Subject: [PATCH 2/2] minigbm: create the virgl context before allocating
+ buffers
+
+On a host advertising context-init, the kernel deliberately does not create a
+context in virtio_gpu_gem_object_open():
+
+    if (!vgdev->has_context_init)
+            virtio_gpu_create_context(obj->dev, file);
+    if (vfpriv->context_created) {
+            ... virtio_gpu_cmd_context_attach_resource(...)
+    }
+
+It expects userspace to do it. The cross_domain backend does; the virgl
+backend never has. So context_created stays false, no buffer is attached, and
+the context is finally created -- lazily -- by the first transfer ioctl, long
+after every buffer in the process was opened and missed its attach.
+
+Each TRANSFER_TO_HOST is then refused by the host:
+
+    vrend_renderer_transfer_iov: context error reported 6 "BootAnimation"
+                                 Illegal resource 9
+
+which is invisible from inside the guest. Allocation succeeds, drm_hwcomposer
+commits succeed, SurfaceFlinger presents without error -- and the host simply
+never receives any pixels. A black screen and a clean log.
+
+Call DRM_IOCTL_VIRTGPU_CONTEXT_INIT during virgl_init(), before anything is
+allocated, so the context exists when gem_object_open() runs and resources are
+attached. EEXIST-tolerant, and a no-op on hosts without context-init, where
+the kernel still creates the context itself.
+
+Measured: 95-146 "Illegal resource" errors per boot, now zero.
+Change-Id: If6e44d49a7cceccc015603c476aa5d336707d415
+---
+ virtgpu_virgl.c | 61 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 61 insertions(+)
+
+diff --git a/virtgpu_virgl.c b/virtgpu_virgl.c
+index 92f8c78..be85783 100644
+--- a/virtgpu_virgl.c
++++ b/virtgpu_virgl.c
+@@ -673,6 +673,66 @@ static void virgl_init_params_and_caps(struct driver *drv)
+ 	}
+ }
+ 
++/*
++ * Create the virgl context explicitly, before any buffer is allocated.
++ *
++ * On a host that advertises context-init, the kernel deliberately does NOT
++ * create a context for us in virtio_gpu_gem_object_open():
++ *
++ *     if (!vgdev->has_context_init)
++ *             virtio_gpu_create_context(obj->dev, file);
++ *     if (vfpriv->context_created) {
++ *             ... virtio_gpu_cmd_context_attach_resource(...)
++ *     }
++ *
++ * so context_created is false and the resource is never attached. The context
++ * then gets created lazily by the first transfer ioctl -- by which time every
++ * buffer this process opened has already missed its attach. Each subsequent
++ * TRANSFER_TO_HOST is refused by the host:
++ *
++ *     vrend_renderer_transfer_iov: context error reported 6 "BootAnimation"
++ *                                  Illegal resource 9
++ *
++ * Nothing fails in the guest. The scanout resource exists, drm_hwcomposer
++ * commits happily, and the host simply never receives any pixels -- a black
++ * screen with a clean log, which is a miserable thing to debug.
++ *
++ * The cross_domain backend already does this; the virgl backend never did.
++ * Creating the context here means it exists before the first
++ * gem_object_open(), so attach happens and transfers are accepted.
++ */
++static void virgl_init_context(struct driver *drv)
++{
++	struct drm_virtgpu_context_set_param ctx_param = { 0 };
++	struct drm_virtgpu_context_init init = { 0 };
++	uint32_t capset;
++	int ret;
++
++	/* Older host: the kernel creates the context itself, nothing to do. */
++	if (!params[param_context_init].value)
++		return;
++
++	if (params[param_supported_capset_ids].value & (1 << VIRTIO_GPU_CAPSET_VIRGL2))
++		capset = VIRTIO_GPU_CAPSET_VIRGL2;
++	else if (params[param_supported_capset_ids].value & (1 << VIRTIO_GPU_CAPSET_VIRGL))
++		capset = VIRTIO_GPU_CAPSET_VIRGL;
++	else
++		return;
++
++	ctx_param.param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID;
++	ctx_param.value = capset;
++	init.num_params = 1;
++	init.ctx_set_params = (unsigned long long)&ctx_param;
++
++	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_CONTEXT_INIT, &init);
++	if (ret && errno != EEXIST) {
++		/* Not fatal: allocation still works, transfers may not. */
++		drv_logi("CONTEXT_INIT (capset %u) failed: %s\n", capset, strerror(errno));
++		return;
++	}
++	drv_logi("virgl context initialised with capset %u\n", capset);
++}
++
+ static int virgl_init(struct driver *drv)
+ {
+ 	struct virgl_priv *priv;
+@@ -689,6 +749,7 @@ static int virgl_init(struct driver *drv)
+ 	lru_init(&priv->virgl_blob_metadata_cache, MAX_CACHED_FORMATS);
+ 
+ 	virgl_init_params_and_caps(drv);
++	virgl_init_context(drv);
+ 
+ 	if (params[param_3d].value) {
+ 		/* This doesn't mean host can scanout everything, it just means host

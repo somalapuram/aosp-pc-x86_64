@@ -231,7 +231,14 @@ apply_patches() {
 
     while IFS= read -r -d '' patch; do
         local rel="${patch#"$X86_ROOT"/patches/}"
-        local project="$AOSP_ROOT/${rel%/*}"
+        local project
+        # patches/linux/ targets the kernel, which is a plain clone rather than
+        # a manifest project, so it does not live under android_17/.
+        if [[ "$rel" == linux/* ]]; then
+            project="$KERNEL_SRC"
+        else
+            project="$AOSP_ROOT/${rel%/*}"
+        fi
         [[ -d "$project/.git" ]] || die "no such project for $rel: $project
      Run './build.sh sync aosp' first."
 

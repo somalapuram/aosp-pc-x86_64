@@ -391,21 +391,13 @@ instead of blocked behind a GPU driver.
 
 ---
 
-### 5.1 Why the QEMU display stays blank
+### 5.1 Making the QEMU display work
 
-Software rendering has one consequence worth stating plainly, because it looks
-like a bug and is not: **under QEMU the screen never shows anything**, while
-Android boots perfectly — zero crashes, launcher resumed, boot completed. Only
-`drm_hwcomposer` complains:
+The VM renders the boot animation and UI. Getting there took three fixes, all
+carried in `patches/`, and each one hid the next.
 
-```
-E drmhwc: could not create drm fb -2
-E drmhwc: Failed to create AtomicCommitArgs for frame composition.
-E SurfaceFlinger: present failed for display N: BAD_DISPLAY (2)
-```
-
-The `-2` is `ENOENT`, which suggests a missing GEM handle. It is not. It comes
-from `drivers/gpu/drm/virtio/virtgpu_display.c`:
+**1. virtio-gpu would not accept Android's format.** `drm/virtio` advertised a
+single plane format and rejected everything else:
 
 ```c
 if (mode_cmd->pixel_format != DRM_FORMAT_HOST_XRGB8888 &&
@@ -413,39 +405,60 @@ if (mode_cmd->pixel_format != DRM_FORMAT_HOST_XRGB8888 &&
         return ERR_PTR(-ENOENT);
 ```
 
-virtio-gpu accepts exactly two framebuffer formats. SurfaceFlinger composes
-into `RGBA_8888`, which minigbm maps to `DRM_FORMAT_ABGR8888`, so every
-`ADDFB2` is refused. Allocation is not the problem — the guest log shows no
-`Strip scanout` messages, so the buffers do carry `BO_USE_SCANOUT`.
+SurfaceFlinger composes into `RGBA_8888` → `DRM_FORMAT_ABGR8888`, so every
+`ADDFB2` failed. The transport could always carry it —
+`VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM` is in the uapi header and QEMU maps it — the
+driver simply never offered it. Note virtio names formats by memory byte order
+and DRM by little-endian word, so `ABGR8888 → R8G8B8A8_UNORM` looks reversed
+and is correct; swapping them compiles and shows as red/blue exchanged.
 
-**The format cannot simply be changed.** `RenderSurface::initialize()` hardcodes
-`HAL_PIXEL_FORMAT_RGBA_8888`, and the only override is HWC3's
-`ClientTargetProperty`, which drm_hwcomposer does not implement.
-`ro.surface_flinger.default_composition_pixel_format` does not do it either —
-that only feeds RenderEngine's EGL config and `getCompositionPreference()`.
-
-Implementing `ClientTargetProperty` in drm_hwcomposer *does* work as a
-mechanism — SurfaceFlinger duly starts composing in `BGRA_8888` — and then:
+**2. Pixels never reached the host.** With framebuffers finally being created,
+the screen was still black, and the host was logging:
 
 ```
-F SurfaceFlinger: Failed to create a valid texture. [1280,800] isWriteable:1 format:5
-E AndroidRuntime: Failed to initialize display event receiver. status=-32
+vrend_renderer_transfer_iov: context error reported 6 "BootAnimation" Illegal resource 9
 ```
 
-119 `SIGABRT`s and no boot: SwiftShader cannot render *into* `BGRA_8888`.
+On a context-init host the kernel does not create a virgl context in
+`gem_object_open()`, so `context_created` is false and **no buffer is ever
+attached**. The context is created later by the first transfer ioctl, after
+every buffer already missed its attach. minigbm's `cross_domain` backend calls
+`CONTEXT_INIT`; its `virgl` backend never did. Nothing fails in the guest —
+allocation, commits and presents all succeed and the host receives nothing.
 
-So the constraint is two-sided, and no choice of format satisfies both ends:
+**3. Buffers had to be linear**, since the renderer is SwiftShader on the CPU
+(§3.2).
 
-| | accepts |
-|---|---|
-| virtio-gpu scanout | `ARGB8888`, `XRGB8888` |
-| SwiftShader render target | `ABGR8888` |
+### 5.2 The screendump trap
 
-**§4 dissolves this.** A real GL driver renders into whatever the display wants,
-so the question stops existing. It is another reason Mesa is the critical path
-rather than a performance nicety. Until then, verify the display on real
-hardware — i915 and amdgpu both take `ABGR8888` — and treat the VM as a
-boot-correctness harness, which is what `./build.sh test` asserts.
+`ENOENT` for a refused format cost a lot of time — it reads as a missing GEM
+handle, so the search starts at buffer imports rather than the format list. But
+the worse trap was the measuring instrument:
+
+**QMP `screendump` cannot read a GL scanout.** It samples QEMU's
+`DisplaySurface`, which is not updated for a dmabuf/GL scanout, so it returns an
+all-black frame no matter what is genuinely on screen. Worse, the *cursor* plane
+takes the non-GL path and does appear — so the capture looks plausible and is
+wrong: a black screen with a lone cursor, which is also exactly what a real
+scanout failure looks like.
+
+This produced a false negative that survived several correct fixes and led to
+the conclusion that the display still did not work when it did. To actually
+look at the guest:
+
+```sh
+DISPLAY_MODE=gtk ./build.sh run     # local display
+./build.sh run -vnc :1              # then attach a VNC client
+```
+
+`./build.sh test` captures the UI from *inside* the guest with `screencap`
+(written base64 over a virtio-console port), which is independent of scanout and
+works headlessly. That is the check to trust.
+
+`GPU=plain` remains broken for an unrelated reason:
+`RenderEngine::validateOutputBufferUsage()` is a `LOG_ALWAYS_FATAL_IF` on
+`USAGE_HW_RENDER`, so SurfaceFlinger aborts with "output buffer not gpu
+writeable". No format change affects it.
 
 ---
 

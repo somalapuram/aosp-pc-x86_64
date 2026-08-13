@@ -1,0 +1,100 @@
+From 20e3eefc70058d880b384e9e23f31a0ae02d2338 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 13 Aug 2026 13:07:30 +0530
+Subject: [PATCH] drm/virtio: accept ABGR8888 and XBGR8888 framebuffers
+
+The driver advertises exactly one plane format, DRM_FORMAT_HOST_XRGB8888,
+and virtio_gpu_user_framebuffer_create() rejects anything but that and
+HOST_ARGB8888 with -ENOENT. Any guest that composes into ABGR8888 therefore
+cannot scan out at all.
+
+Android is such a guest: SurfaceFlinger composes into RGBA_8888, which maps
+to DRM_FORMAT_ABGR8888, so every ADDFB2 fails and the screen stays blank
+while the system boots perfectly. The errno makes it worse -- ENOENT reads
+as a missing GEM handle rather than a refused format, and sends you looking
+at buffer imports instead of the format list.
+
+The transport has always been able to carry these: VIRTIO_GPU_FORMAT_
+R8G8B8A8_UNORM and _R8G8B8X8_UNORM are in <uapi/linux/virtio_gpu.h>, and
+QEMU maps both to pixman formats. Only this driver never offered them.
+
+Add both to virtio_gpu_formats[], translate them, and accept them in the
+framebuffer check. Note virtio names formats by memory byte order while DRM
+names them by little-endian word, so the mapping reads reversed --
+DRM_FORMAT_ABGR8888 is R,G,B,A in memory and therefore R8G8B8A8_UNORM.
+Swapping those compiles cleanly and shows up only as red and blue exchanged.
+
+With this, Android's boot animation and UI render in QEMU.
+---
+ drivers/gpu/drm/virtio/virtgpu_display.c | 12 +++++++++++-
+ drivers/gpu/drm/virtio/virtgpu_plane.c   | 24 ++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/virtio/virtgpu_display.c b/drivers/gpu/drm/virtio/virtgpu_display.c
+index 44ffffec550f..565167d6d57b 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_display.c
++++ b/drivers/gpu/drm/virtio/virtgpu_display.c
+@@ -325,8 +325,18 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
+ 	struct virtio_gpu_framebuffer *virtio_gpu_fb;
+ 	int ret;
+ 
++	/*
++	 * Keep this in step with virtio_gpu_formats[] in virtgpu_plane.c.
++	 *
++	 * Rejecting a format here returns ENOENT, which surfaces to userspace as
++	 * a failed ADDFB2 and reads like a missing GEM handle rather than an
++	 * unsupported format -- a genuinely misleading errno that costs a lot of
++	 * time to chase.
++	 */
+ 	if (mode_cmd->pixel_format != DRM_FORMAT_HOST_XRGB8888 &&
+-	    mode_cmd->pixel_format != DRM_FORMAT_HOST_ARGB8888)
++	    mode_cmd->pixel_format != DRM_FORMAT_HOST_ARGB8888 &&
++	    mode_cmd->pixel_format != DRM_FORMAT_ABGR8888 &&
++	    mode_cmd->pixel_format != DRM_FORMAT_XBGR8888)
+ 		return ERR_PTR(-ENOENT);
+ 
+ 	/* lookup object associated with res handle */
+diff --git a/drivers/gpu/drm/virtio/virtgpu_plane.c b/drivers/gpu/drm/virtio/virtgpu_plane.c
+index 1d1b27ece62a..d170123b870e 100644
+--- a/drivers/gpu/drm/virtio/virtgpu_plane.c
++++ b/drivers/gpu/drm/virtio/virtgpu_plane.c
+@@ -34,8 +34,20 @@
+ 
+ #include "virtgpu_drv.h"
+ 
++/*
++ * Advertise the R-first orderings alongside the B-first one.
++ *
++ * The transport has supported these since the beginning --
++ * VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM and _R8G8B8X8_UNORM are in
++ * <uapi/linux/virtio_gpu.h> -- and QEMU maps both to pixman formats. Only this
++ * driver never offered them, so a guest that composes into ABGR8888 (which is
++ * what Android does: HAL_PIXEL_FORMAT_RGBA_8888) cannot scan out at all, and
++ * every ADDFB2 is refused by virtio_gpu_user_framebuffer_create().
++ */
+ static const uint32_t virtio_gpu_formats[] = {
+ 	DRM_FORMAT_HOST_XRGB8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_XBGR8888,
+ };
+ 
+ static const uint32_t virtio_gpu_cursor_formats[] = {
+@@ -59,6 +71,18 @@ uint32_t virtio_gpu_translate_format(uint32_t drm_fourcc)
+ 	case DRM_FORMAT_BGRA8888:
+ 		format = VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM;
+ 		break;
++	/*
++	 * virtio names formats by memory byte order, DRM by little-endian word,
++	 * so the two read reversed: DRM_FORMAT_ABGR8888 is R,G,B,A in memory and
++	 * therefore VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM. Swapping these compiles
++	 * cleanly and shows up only as red and blue exchanged on screen.
++	 */
++	case DRM_FORMAT_ABGR8888:
++		format = VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM;
++		break;
++	case DRM_FORMAT_XBGR8888:
++		format = VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM;
++		break;
+ 	default:
+ 		/*
+ 		 * This should not happen, we handle everything listed
