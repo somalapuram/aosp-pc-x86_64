@@ -183,7 +183,9 @@ fbfail=$(c 'could not create drm fb'); fbfail=${fbfail:-0}
 if [[ "$fbfail" -eq 0 ]]; then
     pass "drm framebuffers created"
 else
-    warn "drm framebuffers created" "$fbfail failures -- known virtio-gpu/virgl limitation"
+    warn "drm framebuffers created" "$fbfail failures -- expected under QEMU: virtio-gpu
+       scans out only ARGB8888/XRGB8888 while SwiftShader renders ABGR8888.
+       Not a regression, and not present on real hardware. See doc/05-graphics.md 5.1"
 fi
 
 if [[ -s "$shot" ]]; then

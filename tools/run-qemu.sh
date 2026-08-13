@@ -127,24 +127,49 @@ fi
 #     RenderEngine::validateOutputBufferUsage() is a LOG_ALWAYS_FATAL_IF on
 #     USAGE_HW_RENDER, so there is no property to relax it.
 #
-# The root cause is in minigbm and is documented in its own source. In the
-# non-3D path (virtgpu_virgl.c) only one format gets scanout:
-#     /* Virtio primary plane only allows this format. */
-#     virgl_add_combination(drv, DRM_FORMAT_XRGB8888, ...,
-#                           BO_USE_RENDER_MASK | BO_USE_SCANOUT);
-#     /* Android needs more, but they cannot be bound as scanouts anymore
-#      * after "drm/virtio: fix DRM_FORMAT_* handling" */
-#     virgl_add_combinations(drv, render_target_formats, ...,
-#                            BO_USE_RENDER_MASK);
-# So virtio-gpu's KMS primary plane accepts only XRGB8888, while the formats
-# Android composes into get RENDER without SCANOUT. A buffer can be one or the
-# other, not both.
+# ROOT CAUSE. An earlier version of this comment blamed minigbm's scanout
+# flags, quoting the "Virtio primary plane only allows this format" branch of
+# virtgpu_virgl.c. That was wrong twice over: the quoted branch is the non-3D
+# path, not the one virgl takes, and the guest log contains no "Strip scanout"
+# messages at all -- so the RGB formats keep BO_USE_SCANOUT. Allocation is not
+# where this fails.
 #
-# This is why Cuttlefish does not hit it: crosvm uses gfxstream rather than
-# virgl+KMS. It should not apply on metal either -- i915 and amdgpu advertise
-# both rendering and scanout for the usual RGBA formats.
+# It fails in the guest kernel, in drivers/gpu/drm/virtio/virtgpu_display.c:
 #
-# Tried and rejected: blob=on with hostmem (no change); patching
+#     if (mode_cmd->pixel_format != DRM_FORMAT_HOST_XRGB8888 &&
+#         mode_cmd->pixel_format != DRM_FORMAT_HOST_ARGB8888)
+#             return ERR_PTR(-ENOENT);
+#
+# virtio-gpu accepts exactly two framebuffer formats. SurfaceFlinger composes
+# into RGBA_8888, which minigbm maps to DRM_FORMAT_ABGR8888, so every ADDFB2 is
+# rejected. The -2 is that ENOENT, which reads like a missing GEM handle rather
+# than a refused format -- the reason this was misdiagnosed.
+#
+# The obvious fix does not work. SurfaceFlinger's client target format is
+# hardcoded in RenderSurface::initialize(), and the only override is HWC3's
+# ClientTargetProperty, which drm_hwcomposer does not implement. Implementing
+# it (reporting BGRA_8888 -> DRM_FORMAT_ARGB8888, which virtio accepts) does
+# reach SurfaceFlinger -- it starts composing in format 5 -- and then it dies:
+#     F SurfaceFlinger: Failed to create a valid texture.
+#                       [1280,800] isWriteable:1 format:5
+#     E AndroidRuntime: Failed to initialize display event receiver. status=-32
+# 119 SIGABRTs, no boot. SwiftShader cannot render into BGRA_8888.
+#
+# So the constraint is two-sided and cannot be satisfied by a format choice:
+# virtio-gpu scans out only ARGB8888/XRGB8888, and the software renderer only
+# produces ABGR8888. Nothing in between can be both.
+#
+# The fix is Mesa (doc/05-graphics.md section 4). A real GL driver renders into
+# whichever format the display needs, and the question disappears. Until then
+# the VM boots correctly with a blank screen, and the display is verified on
+# real hardware instead, where i915 and amdgpu take ABGR8888 happily.
+#
+# This is also why Cuttlefish does not hit it: crosvm uses gfxstream rather
+# than virgl+KMS.
+#
+# Tried and rejected: ro.surface_flinger.default_composition_pixel_format (it
+# only feeds RenderEngine's EGL config and getCompositionPreference, not the
+# client target buffer); blob=on with hostmem (no change); patching
 # drm_hwcomposer so the test_only path retries a failed seamless commit with
 # ALLOW_MODESET (the retry fails identically).
 #
