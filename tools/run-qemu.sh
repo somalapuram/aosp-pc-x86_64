@@ -142,22 +142,40 @@ fi
 # USAGE_HW_RENDER, so SurfaceFlinger aborts with "output buffer not gpu
 # writeable". Kept only for experimentation.
 #
+# Guest display resolution.
+#
+# 2560x1600 by default -- twice the old 1280x800 in each axis. Note this is
+# only half the story: Android sizes its UI in dp, so resolution alone does not
+# change how much fits on screen. dp width = xres / (ro.sf.lcd_density / 160),
+# which at density 240 gives
+#
+#     1280x800   ->  853 x 533 dp    (sw533dp, phone-ish layout)
+#     2560x1600  -> 1706 x 1066 dp   (sw1066dp, large-tablet layout)
+#
+# so doubling the resolution at a fixed density also switches Android to its
+# large-screen layouts and makes everything look smaller. To scale the picture
+# up while keeping the same layout, double ro.sf.lcd_density to 480 in
+# device.mk as well -- that is a build property, so it needs a rebuild, whereas
+# XRES/YRES here take effect on the next boot.
+XRES=${XRES:-2560}
+YRES=${YRES:-1600}
+
 GPU=${GPU:-virgl}
 GFX=()
 if [[ "$GPU" == "plain" ]]; then
     case "$DISPLAY_MODE" in
-        none|auto) GFX=(-device virtio-vga,xres=1280,yres=800 -display none) ;;
-        *)         GFX=(-device virtio-vga,xres=1280,yres=800 -display "$DISPLAY_MODE") ;;
+        none|auto) GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display none) ;;
+        *)         GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
     esac
 else
 case "$DISPLAY_MODE" in
-    none) GFX=(-device virtio-vga-gl,xres=1280,yres=800 -display egl-headless) ;;
+    none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display egl-headless) ;;
     auto) if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-              GFX=(-device virtio-vga-gl -display gtk,gl=on)
+              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display gtk,gl=on)
           else
-              GFX=(-device virtio-vga-gl,xres=1280,yres=800 -display egl-headless)
+              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display egl-headless)
           fi ;;
-    *)    GFX=(-device virtio-vga-gl -display "$DISPLAY_MODE") ;;
+    *)    GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
 esac
 fi
 

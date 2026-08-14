@@ -29,25 +29,25 @@ TMP=/data/local/tmp/screencap.png
 # so the write to $OUT never completed and the file held nothing but the OVMF
 # escape sequences that firmware had already sent to the same port.
 #
-# Instead: start early, retry, and stop as soon as the capture looks like a
-# real frame. A blank screen compresses to a few KB as PNG, a drawn UI does
-# not, so size is a good enough test for "something is on screen".
-DELAY=${1:-15}
-TRIES=${2:-12}
-INTERVAL=${3:-5}
+# Wait for the launcher, do not guess from the file size.
+#
+# An earlier version slept, captured, and accepted the first frame over 20 KB
+# on the theory that a blank screen compresses small and a drawn UI does not.
+# That is true but insufficient: the *boot animation* is also a drawn UI, and
+# at 2560x1600 its frame is 52 KB, so the check passed and the capture stopped
+# on the Android logo -- the very screen nobody wants a picture of. Resolution
+# made it worse only by slowing SwiftShader down; the flaw was always there.
+#
+# Use the same definition of "booted" the host harness uses: launcher3 gaining
+# top-resumed. Reading our own logcat for it costs nothing and cannot be fooled
+# by an intermediate screen.
+LAUNCHER_PAT=${LAUNCHER_PAT:-wm_on_top_resumed_gained_called.*[Ll]auncher}
+WAIT=${WAIT:-240}
+SETTLE=${SETTLE:-8}
+TRIES=${TRIES:-6}
+INTERVAL=${INTERVAL:-5}
 MIN_BYTES=${MIN_BYTES:-20000}
 
-# Send the PNG base64-encoded between markers, not raw.
-#
-# $OUT is a tty, so the line discipline rewrites every \n as \r\n on the way
-# out. That silently corrupts binary: a 727916-byte PNG arrived on the host as
-# 730412 bytes -- 2496 newlines expanded -- and even its magic bytes were split
-# (\x89PNG\r\n... became \x89PNG\r\r\n...), so the file was unreadable and did
-# not look like a PNG at all.
-#
-# base64 is immune to that, and the markers let the host find the payload
-# amongst the OVMF escape sequences that firmware writes to the same port
-# before Android boots.
 emit() {
     {
         echo "---PC-SCREENCAP-BEGIN---"
@@ -57,17 +57,25 @@ emit() {
     log -t pc-screencap "wrote $1 bytes (base64) to $OUT"
 }
 
-log -t pc-screencap "started, delay=${DELAY}s tries=$TRIES"
-sleep "$DELAY"
+log -t pc-screencap "started, waiting up to ${WAIT}s for the launcher"
+
+waited=0
+while [ "$waited" -lt "$WAIT" ]; do
+    if logcat -d -b all 2>/dev/null | grep -qE "$LAUNCHER_PAT"; then
+        log -t pc-screencap "launcher up after ${waited}s"
+        break
+    fi
+    waited=$((waited + 2))
+    sleep 2
+done
+[ "$waited" -ge "$WAIT" ] && log -t pc-screencap "launcher never seen; capturing anyway"
+
+# Let the first frame settle -- top-resumed fires before the window is drawn.
+sleep "$SETTLE"
 
 i=0
 last=0
 while [ "$i" -lt "$TRIES" ]; do
-    # Log before the capture, not only after, and bound it with timeout.
-    # screencap talks to SurfaceFlinger, and when the display is wedged that
-    # call can block forever -- which is indistinguishable, from the outside,
-    # from the service never having started at all. An earlier revision logged
-    # only after the capture returned and so reported nothing whatsoever.
     log -t pc-screencap "try=$i capturing"
     timeout 20 /system/bin/screencap -p "$TMP"
     rc=$?
