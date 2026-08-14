@@ -138,6 +138,13 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 
+# No lock screen. This is a bring-up device that usually has nobody sitting at
+# it, and the keyguard hides the launcher behind a swipe that a headless
+# capture can never perform -- every screenshot taken of this port so far has
+# been of the lock screen, which is not what anyone wants to look at.
+PRODUCT_PROPERTY_OVERRIDES += \
+    ro.lockscreen.disable.default=true
+
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.opengles.version=196608 \
     ro.sf.lcd_density=240

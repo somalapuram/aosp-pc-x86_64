@@ -37,9 +37,13 @@ on boot
     # adb over Ethernet -- most desktops have no USB device-mode controller.
     setprop service.adb.tcp.port 5555
 
-    # Input: real evdev devices from USB HID, i2c-hid and PS/2.
-    chmod 0660 /dev/input/event0
-    chown system system /dev/input/event0
+    # Input device permissions are ueventd's job, not init's -- see
+    # ueventd.pc_x86_64.rc, which sets /dev/input/* to 0660 root:input for
+    # every node as it appears. An earlier chmod/chown of /dev/input/event0
+    # lived here: it ran once at boot, covered exactly one node out of the
+    # eight a real PC enumerates, could not apply to anything hotplugged
+    # afterwards, and replaced group 'input' with 'system' on whichever
+    # device happened to be event0.
 
 # Bring-up debugging: stream logcat to the second serial port (ttyS1), which
 # the QEMU harness captures to a file. Userspace crash reasons live in logcat,
