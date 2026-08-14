@@ -1,0 +1,21 @@
+# drm_hwcomposer listens for DRM hotplug events on a netlink uevent socket.
+#
+# It opens one on itself to learn about connector changes -- a monitor being
+# plugged in or out, a mode change -- and without it the composer simply never
+# hears about them. Nothing crashes; displays just stop appearing and
+# disappearing, which is exactly the kind of fault that gets blamed on the
+# driver rather than on policy.
+#
+#     avc: denied { create } for comm="android.hardwar"
+#          scontext=u:r:hal_graphics_composer_default:s0
+#          tcontext=u:r:hal_graphics_composer_default:s0
+#          tclass=netlink_kobject_uevent_socket permissive=1
+#
+# Invisible while this port runs permissive -- the socket is created anyway and
+# hotplug works -- so it costs nothing today and breaks display hotplug on the
+# day SELinux goes enforcing. Roughly 24 of these per boot.
+#
+# 'self' rather than a separate type: the socket belongs to the composer's own
+# domain, which is why source and target contexts are identical above.
+allow hal_graphics_composer_default self:netlink_kobject_uevent_socket
+    { create read write bind getattr setopt };
