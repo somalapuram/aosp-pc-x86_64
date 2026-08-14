@@ -38,6 +38,7 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/ueventd.pc_x86_64.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
     device/pcx86/pc_x86_64/pc_debug_dump.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_debug_dump.sh \
     device/pcx86/pc_x86_64/pc_screencap.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_screencap.sh \
+    device/pcx86/pc_x86_64/pc_stay_awake.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_stay_awake.sh \
     device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_logcat_file.sh \
     device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_file.sh
 

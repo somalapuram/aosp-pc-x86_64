@@ -110,6 +110,26 @@ service pc-debug-dump /vendor/bin/pc_debug_dump.sh
     disabled
     seclabel u:r:shell:s0
 
+# Keep the display on and the machine out of suspend during bring-up.
+#
+# Android's power policy assumes a battery-powered device with someone touching
+# it. On a dev box nobody is, so PowerManagerService blanks the screen about ten
+# seconds after the UI appears and the kernel then deep-suspends:
+#     PowerManagerService: Going to sleep due to timeout
+#                          (screenOffTimeout=60000, activityTimeoutWM=10000)
+#     SurfaceFlinger: Setting power mode 0 on physical display
+#     PM: suspend entry (deep)
+# What that looks like is the boot animation playing and then a black screen
+# that never comes back -- which reads as a broken display stack rather than
+# power management working exactly as designed.
+service pc-stay-awake /vendor/bin/pc_stay_awake.sh
+    class core
+    user root
+    group root system
+    oneshot
+    disabled
+    seclabel u:r:shell:s0
+
 # Bring-up: dump what SurfaceFlinger actually composited, as a PNG on hvc2.
 #
 # screencap reads SF's output directly, so it works even though nothing
@@ -163,6 +183,7 @@ service pc-logcat-file /vendor/bin/pc_logcat_file.sh
 on property:init.svc.audioserver=running
     class_start hal
     start pc-debug-dump
+    start pc-stay-awake
     start pc-screencap
     start pc-logcat-file
     start pc-kmsg-file
