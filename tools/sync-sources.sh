@@ -232,12 +232,25 @@ apply_patches() {
     while IFS= read -r -d '' patch; do
         local rel="${patch#"$X86_ROOT"/patches/}"
         local project
-        # patches/linux/ targets the kernel, which is a plain clone rather than
-        # a manifest project, so it does not live under android_17/.
+        # The directory a patch sits in IS its destination, so nothing here has
+        # to guess or maintain a lookup table:
+        #
+        #   patches/linux/*.patch                  -> the kernel clone
+        #   patches/android/<project>/*.patch      -> android_17/<project>
+        #
+        # <project> is the repo manifest project path verbatim, e.g.
+        # patches/android/external/minigbm/ applies to external/minigbm. The
+        # kernel is separate because it is a plain clone rather than a manifest
+        # project, so it does not live under android_17/.
         if [[ "$rel" == linux/* ]]; then
             project="$KERNEL_SRC"
+        elif [[ "$rel" == android/*/* ]]; then
+            local sub="${rel#android/}"
+            project="$AOSP_ROOT/${sub%/*}"
         else
-            project="$AOSP_ROOT/${rel%/*}"
+            die "patch in an unexpected place: patches/$rel
+     Expected patches/linux/<patch> or patches/android/<project path>/<patch>,
+     where <project path> is the repo manifest path (e.g. external/minigbm)."
         fi
         [[ -d "$project/.git" ]] || die "no such project for $rel: $project
      Run './build.sh sync aosp' first."

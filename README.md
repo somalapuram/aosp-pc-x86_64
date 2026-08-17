@@ -38,7 +38,9 @@ build.sh                     one entry point for the whole loop
 config/pc_x86_64.fragment    kernel config delta over x86_64_defconfig
 firmware/i915/               Intel GPU firmware, linked into the kernel
 manifests/                   the AOSP tree, pinned to exact revisions
-patches/                     out-of-tree patches: minigbm (2), kernel virtio-gpu (1)
+patches/                     out-of-tree patches, filed under the project they
+                             patch: patches/android/<manifest path>/ and
+                             patches/linux/. minigbm (2), virtio-gpu (1)
 tools/                       source sync, disk assembly, QEMU, USB writer, logs
 doc/                         how it was derived, and why each piece is there
 android_17/device/pcx86/     the device target (lives at an AOSP path, but is
@@ -233,5 +235,5 @@ Apache 2.0 — see `LICENSE`.
 under the terms in `firmware/LICENSE.i915`, which permits redistribution in
 binary form provided that licence accompanies it.
 
-`patches/` contains a change to `external/minigbm`, which is BSD-3-Clause and
-remains so.
+`patches/android/external/minigbm/` contains a change to `external/minigbm`,
+which is BSD-3-Clause and remains so.
