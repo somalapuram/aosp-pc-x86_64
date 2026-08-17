@@ -39,6 +39,7 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/pc_debug_dump.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_debug_dump.sh \
     device/pcx86/pc_x86_64/pc_screencap.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_screencap.sh \
     device/pcx86/pc_x86_64/pc_stay_awake.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_stay_awake.sh \
+    device/pcx86/pc_x86_64/pc_select_egl.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_select_egl.sh \
     device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_logcat_file.sh \
     device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_file.sh
 
@@ -148,10 +149,13 @@ PRODUCT_PACKAGES += \
 # deliberately omitted it on the grounds that real i915/amdgpu present fences
 # are reliable -- true, but irrelevant while the test platform is virtio-gpu.
 # Re-evaluate when running on real hardware.
+# ro.hardware.egl is NOT set here on purpose. One image runs on virtio-gpu
+# (where Mesa/virgl works) and on i915 (where it does not, because iris needs
+# LLVM). pc_select_egl.sh picks the right one from the DRM driver at boot,
+# before any GL client starts. See that script.
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
     vendor.hwc.drm.device=/dev/dri/card0 \
-    ro.hardware.egl=mesa \
     ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 

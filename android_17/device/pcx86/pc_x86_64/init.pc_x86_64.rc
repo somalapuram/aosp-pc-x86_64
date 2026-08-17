@@ -29,6 +29,25 @@ on late-fs
     # RW partitions that need fsck -- /data
     mount_all --late
 
+# Pick the GL implementation from the DRM driver before anything loads libEGL.
+#
+# exec_start rather than a bare 'exec': it blocks init until the oneshot
+# finishes -- which matters, because ro.* can only be set once and the first GL
+# client to load libEGL fixes the choice -- while still running the script in
+# u:r:shell:s0 like every other pc_* helper here. A plain 'exec' runs in init's
+# own domain and produced nothing at all: no property, no log line, and
+# SurfaceFlinger then aborting on "couldn't find an OpenGL ES implementation".
+service pc-select-egl /vendor/bin/pc_select_egl.sh
+    class core
+    user root
+    group root system
+    oneshot
+    disabled
+    seclabel u:r:shell:s0
+
+on post-fs
+    exec_start pc-select-egl
+
 on post-fs-data
     mkdir /data/vendor 0771 root root
     mkdir /data/vendor/hardware 0771 root root
