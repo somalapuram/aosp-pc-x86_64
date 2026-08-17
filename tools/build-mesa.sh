@@ -175,8 +175,16 @@ EOF
     cp "$found" "$INSTALL/$LIBDIR/libgallium_dri.so"
 }
 
-rm -rf "$INSTALL"
+# Stage into a temporary directory and swap at the end. An earlier version
+# wiped $INSTALL up front, so a configure failure -- iris needing LLVM, say --
+# left no libraries at all and broke the product build too, turning one failed
+# experiment into a broken tree.
+STAGE="$WORK/stage"
+rm -rf "$STAGE"
+INSTALL_REAL="$INSTALL"; INSTALL="$STAGE"
 for abi in $ABIS; do build_abi "$abi"; done
+INSTALL="$INSTALL_REAL"
+rm -rf "$INSTALL"; mkdir -p "$(dirname "$INSTALL")"; mv "$STAGE" "$INSTALL"
 
 # The android_stub/*.so are link-time stubs for liblog, libcutils,
 # libnativewindow and friends. They are deliberately NOT shipped: the real
