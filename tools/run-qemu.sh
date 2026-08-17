@@ -251,8 +251,43 @@ if [[ "$GPU" == "plain" ]]; then
         *)         GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
     esac
 else
+# Resolve 'auto' to a concrete mode first, so the vnc branch below -- and the
+# connection instructions it prints -- is shared rather than duplicated.
+#
+# A set DISPLAY is NOT on its own a reason to open a GTK window: over SSH X11
+# forwarding (MobaXterm, PuTTY) it is a forwarded display, and gtk,gl=on is the
+# wrong answer there twice over. gl=on wants a local GL context, and GTK cannot
+# find a GdkMonitor for a window it does not really own, so QEMU's per-frame
+# refresh-rate query fails on every frame:
+#
+#     qemu: Gdk: gdk_monitor_get_refresh_rate: assertion 'GDK_IS_MONITOR (monitor)' failed
+#
+# Harmless in itself -- a g_return_if_fail that yields a 0 refresh rate -- but
+# it floods stdout, which -serial mon:stdio shares, so it interleaves with and
+# chops up the guest console:
+#
+#     [    6.699643] servicemanager: Notifying media.codeclist.genqemu: Gdk: ...
+#     erator they don't (previously: do) have clients ...
+#
+# VNC is the right remote answer anyway: QEMU renders with egl-headless on the
+# host GPU and ships finished frames, instead of pushing X11 traffic per frame.
+if [[ "$DISPLAY_MODE" == auto ]]; then
+    if [[ -n "${SSH_CONNECTION:-}" && -z "${WAYLAND_DISPLAY:-}" && -n "${DISPLAY:-}" ]]; then
+        echo "note: X11 forwarded over SSH -- using VNC rather than a GTK window." >&2
+        echo "      Force it with DISPLAY_MODE=gtk if you really want X11." >&2
+        DISPLAY_MODE=vnc
+    elif [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        DISPLAY_MODE=gtk
+    else
+        DISPLAY_MODE=none
+    fi
+fi
+
 case "$DISPLAY_MODE" in
     none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
+    # gl=on is not optional: the plain GTK path takes the non-GL scanout, which
+    # is the black-screen-with-a-cursor failure described in doc/05-graphics.md.
+    gtk)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display gtk,gl=on) ;;
     vnc)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
                -display egl-headless -vnc "127.0.0.1:$VNC_DISPLAY")
           cat >&2 <<VNCMSG
@@ -270,11 +305,6 @@ case "$DISPLAY_MODE" in
 
 VNCMSG
           ;;
-    auto) if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display gtk,gl=on)
-          else
-              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless)
-          fi ;;
     *)    GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display "$DISPLAY_MODE") ;;
 esac
 fi
