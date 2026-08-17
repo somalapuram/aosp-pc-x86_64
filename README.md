@@ -172,6 +172,31 @@ those are reported, not "fixed".
 
 `./build.sh all` does kernel + android + image.
 
+### Viewing the UI over SSH
+
+X11 forwarding cannot carry `gtk,gl=on` -- there is no direct rendering over
+the wire, so QEMU reports `DRI3 error: Could not get DRI3 device` and you get
+nothing accelerated. Use VNC, which renders locally and ships finished frames:
+
+```sh
+DISPLAY_MODE=vnc ./build.sh run
+```
+
+It prints the exact tunnel command. The server binds to **127.0.0.1 only** and
+has no password, so reach it through your existing SSH session rather than
+exposing it:
+
+```sh
+ssh -L 5901:127.0.0.1:5901 user@host      # then VNC to localhost:5901
+```
+
+MobaXterm has a VNC client built in (Sessions -> VNC, host `localhost`, port
+`5901`).
+
+Do not judge the display by `./build.sh test`'s screendump warning: QMP
+`screendump` cannot read a GL scanout and reports a black frame regardless of
+what is really on screen. See `doc/05-graphics.md` 5.2.
+
 ## On real hardware
 
 Disable Secure Boot — the GRUB build here is unsigned. The image installs to

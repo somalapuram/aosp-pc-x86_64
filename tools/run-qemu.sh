@@ -76,8 +76,21 @@ rm -f "$SCREENCAP_FILE"
 QMP_SOCK=${QMP_SOCK:-$X86_ROOT/out/disk/qmp.sock}
 rm -f "$QMP_SOCK"
 mkdir -p "$(dirname "$LOGCAT_FILE")"
-# 'gtk' needs a display; fall back to headless with serial only.
+# 'gtk' needs a local display; fall back to headless with serial only.
+#
+# DISPLAY_MODE=vnc is the one to use over SSH -- MobaXterm, PuTTY and friends.
+# X11 forwarding cannot carry gtk,gl=on: there is no direct rendering over the
+# wire, so QEMU reports
+#     libEGL warning: DRI3 error: Could not get DRI3 device
+# and you get no accelerated output. VNC sidesteps that: QEMU renders locally
+# with egl-headless and serves finished frames, which is exactly what a remote
+# client wants.
+#
+# Bound to 127.0.0.1 deliberately. QEMU's VNC has no password here, and
+# binding it to every interface would expose an unauthenticated view of the
+# machine to the network. Reach it through the SSH tunnel you already have.
 DISPLAY_MODE=${DISPLAY_MODE:-auto}
+VNC_DISPLAY=${VNC_DISPLAY:-1}
 
 [[ -f "$DISK" ]] || { echo "no disk image: $DISK  (run ./build.sh image)" >&2; exit 1; }
 
@@ -201,6 +214,23 @@ if [[ "$GPU" == "plain" ]]; then
 else
 case "$DISPLAY_MODE" in
     none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
+    vnc)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
+               -display egl-headless -vnc "127.0.0.1:$VNC_DISPLAY")
+          cat >&2 <<VNCMSG
+
+  VNC ready on 127.0.0.1:$((5900 + VNC_DISPLAY))  (display :$VNC_DISPLAY)
+
+  From MobaXterm (or any SSH client), forward the port:
+      ssh -L $((5900 + VNC_DISPLAY)):127.0.0.1:$((5900 + VNC_DISPLAY)) $USER@$(hostname)
+  then point a VNC client at:
+      localhost:$((5900 + VNC_DISPLAY))
+
+  MobaXterm has a VNC client built in: Sessions -> VNC, host localhost,
+  port $((5900 + VNC_DISPLAY)). Tunnelling is required -- the server is bound to
+  loopback on purpose, because it has no password.
+
+VNCMSG
+          ;;
     auto) if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
               GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display gtk,gl=on)
           else
