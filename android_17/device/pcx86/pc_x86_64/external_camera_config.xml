@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configuration for the external (V4L2/UVC) camera HAL.
+
+  A PC has no built-in camera sensor; what it has is USB ports, and a webcam is
+  a UVC device that shows up as /dev/video*. So the external camera provider is
+  the honest HAL for this target rather than an emulated one, and it needs this
+  file: ExternalCameraUtils.cpp reads /vendor/etc/external_camera_config.xml and
+  falls back to built-in defaults if it is missing.
+
+  The <ignore> list is for internal video nodes that are not cameras. It is
+  empty here deliberately: on a PC every /dev/video* really is a capture device
+  as far as this target is concerned. Note that a single webcam often exposes
+  TWO nodes (one capture, one metadata); the HAL probes and skips the ones
+  that cannot stream, so they do not need listing.
+
+  The FpsList bounds are conservative and mirror the other AOSP boards that use
+  this HAL (device/linaro/dragonboard, device/amlogic/yukawa). They cap the
+  advertised frame rate per resolution rather than the resolution itself: a
+  webcam that cannot sustain 1080p30 over USB 2.0 bandwidth advertises 10fps
+  there instead of dropping frames.
+-->
+<ExternalCamera>
+    <Provider>
+        <ignore> <!-- Internal video devices to be ignored by external camera HAL -->
+        </ignore>
+    </Provider>
+    <!-- See ExternalCameraUtils.cpp for default values of Device configurations below -->
+    <Device>
+        <!-- Max JPEG buffer size in bytes-->
+        <MaxJpegBufferSize bytes="3145728"/> <!-- 3MB (~= 1080p YUV420) -->
+        <!-- Size of v4l2 buffer queue when streaming >= 30fps -->
+        <!-- Larger value: more request can be cached pipeline (less janky)  -->
+        <!-- Smaller value: use less memory -->
+        <NumVideoBuffers count="4"/>
+        <!-- Size of v4l2 buffer queue when streaming < 30fps -->
+        <NumStillBuffers count="2"/>
+
+        <!-- List of maximum fps for various output sizes -->
+        <!-- Any image size smaller than the size listed in Limit row will report
+            fps (as minimum frame duration) up to the fpsBound value. -->
+        <FpsList>
+            <!-- width/height must be increasing, fpsBound must be decreasing-->
+            <Limit width="640" height="480" fpsBound="30.0"/>
+            <Limit width="1280" height="720" fpsBound="15.0"/>
+            <Limit width="1920" height="1080" fpsBound="10.0"/>
+            <!-- image size larger than the last entry will not be supported-->
+        </FpsList>
+    </Device>
+</ExternalCamera>

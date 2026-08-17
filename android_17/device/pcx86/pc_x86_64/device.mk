@@ -224,12 +224,49 @@ PRODUCT_COPY_FILES += \
 #       at CustomWidgetManager.<init>(CustomWidgetManager.java:88)
 #
 # Declared individually rather than via handheld_core_hardware.xml: that file
-# also asserts camera, bluetooth, microphone, compass, accelerometer and
-# location, none of which this device has. Declaring a feature that is absent
-# is worse than omitting it -- apps then call into it and fail. Add entries
-# here as the corresponding HALs land (doc/07-hals.md).
+# also asserts bluetooth, microphone, compass, accelerometer, location and
+# android.hardware.camera -- the last meaning a built-in sensor, which is still
+# not true here even with the external camera HAL below (that declares
+# camera.external, a different and accurate claim). Declaring a feature that is
+# absent is worse than omitting it -- apps then call into it and fail. Add
+# entries here as the corresponding HALs land (doc/07-hals.md).
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml
+
+# Camera: USB webcams, via the external (V4L2/UVC) provider.
+#
+# Without a camera feature the Camera app is built and installed but has no
+# icon, which reads as "the app is missing from the build" and is not:
+#     dumpsys package com.android.camera2
+#       disabledComponents:
+#         com.android.camera.CameraLauncher
+# Camera2 ships SetActivitiesCameraReceiver, which runs on BOOT_COMPLETED and
+# disables its own launcher alias unless the device declares one of
+# android.hardware.camera, .camera.front or .camera.external. So the icon is
+# governed by the feature, not by PRODUCT_PACKAGES.
+#
+# camera.external is the honest declaration for this target rather than a
+# workaround for that check. A PC has no built-in sensor; it has USB ports, and
+# the feature means exactly "external cameras can be connected". That keeps
+# faith with the rule stated above for handheld_core_hardware.xml -- do not
+# declare hardware the device does not have -- because this hardware is real
+# and simply hot-pluggable. android.hardware.camera.external.xml also declares
+# camera.any, so apps that ask the generic question get a true answer.
+#
+# The HAL enumerates /dev/video* (ueventd.pc_x86_64.rc grants cameraserver
+# access) and reports no cameras when none is plugged in, which is the correct
+# answer rather than a failure. Under QEMU that is the normal state unless a
+# host webcam is passed through with -device usb-host.
+#
+# SELinux needs nothing extra: system/sepolicy/vendor/file_contexts already
+# labels android.hardware.camera.provider-V[0-9]+-external-service as
+# hal_camera_default_exec.
+PRODUCT_PACKAGES += \
+    android.hardware.camera.provider-V1-external-service
+
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.camera.external.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.external.xml \
+    device/pcx86/pc_x86_64/external_camera_config.xml:$(TARGET_COPY_OUT_VENDOR)/etc/external_camera_config.xml
 
 # Ethernet. This device really does have a wired NIC, and without the feature
 # EthernetService never configures eth0, so the guest has no IP at all:

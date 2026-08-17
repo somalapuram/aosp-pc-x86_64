@@ -30,6 +30,14 @@
 # Audio: snd_hda_intel covers essentially all Intel and AMD PC audio.
 /dev/snd/*                0660   system     audio
 
+# V4L2 video nodes -- USB webcams, which is what a PC's camera actually is.
+# The external camera HAL runs as cameraserver in group 'camera' and enumerates
+# these by opening them, so it needs read/write. Hotplug is the normal case
+# here (a webcam is plugged in whenever), which is exactly what ueventd rules
+# handle and a one-shot chmod in init.rc would not.
+# Matches device/google/cuttlefish/shared/config/ueventd.rc.
+/dev/video*               0660   system     camera
+
 # Misc
 /dev/rtc0                 0640   system     system
 /dev/tty0                 0660   root       system

@@ -1,0 +1,31 @@
+# Label the external camera provider's binder service.
+#
+# AOSP's system/sepolicy/private/service_contexts labels only two of the three
+# ICameraProvider instances:
+#
+#     android.hardware.camera.provider.ICameraProvider/internal/0  hal_camera_service
+#     android.hardware.camera.provider.ICameraProvider/virtual/0   virtual_camera_service
+#
+# external/0 is missing upstream, so it falls back to default_android_service
+# and both ends of the connection are denied:
+#
+#     avc: denied { add }  ... name=...ICameraProvider/external/0
+#          scontext=u:r:hal_camera_default:s0
+#          tcontext=u:object_r:default_android_service:s0 tclass=service_manager
+#     avc: denied { find } ... scontext=u:r:cameraserver:s0
+#
+# Both are currently permissive=1, so the camera works anyway and this is easy
+# to miss -- but it would break the moment SELinux goes enforcing
+# (doc/08-roadmap.md), and a HAL that cannot register is a camera that does not
+# exist.
+#
+# hal_camera_service is the right type rather than a new one: the connection
+# this needs is already granted by system/sepolicy/private/hal_camera.te,
+#     hal_attribute_service(hal_camera, hal_camera_service)
+# which gives hal_camera_server 'add' and hal_camera_client 'find', plus
+#     allow cameraserver hal_camera_service:service_manager find;
+# in cameraserver.te. That is exactly the two denials above and nothing more.
+#
+# It is a protected_service, which only bars untrusted apps from finding it
+# (app_neverallows.te); labelling it here is unrestricted.
+android.hardware.camera.provider.ICameraProvider/external/0    u:object_r:hal_camera_service:s0

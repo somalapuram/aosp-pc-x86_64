@@ -30,4 +30,22 @@
 -->
 <manifest version="1.0" type="device" target-level="202604">
 
+    <!-- External (V4L2/UVC) camera provider: USB webcams.
+         Declared here because this HAL is one of the exceptions above: it
+         ships no vintf_fragment of its own (see
+         camera_external_service_defaults in
+         hardware/interfaces/camera/provider/default/Android.bp), so without
+         this entry the service starts and then nothing can reach it.
+         Version 1 is what the -V1- service implements; the framework matrix
+         accepts 1-4 with regex-instance [^/]+/[0-9]+, which 'external/0'
+         matches. -->
+    <hal format="aidl">
+        <name>android.hardware.camera.provider</name>
+        <version>1</version>
+        <interface>
+            <name>ICameraProvider</name>
+            <instance>external/0</instance>
+        </interface>
+    </hal>
+
 </manifest>
