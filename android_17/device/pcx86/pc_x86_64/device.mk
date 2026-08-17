@@ -233,6 +233,25 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml
 
+# --- Apps ------------------------------------------------------------------
+# The AOSP app suite already arrives through aosp_product.mk -> handheld_
+# product.mk (Camera2, Calendar, Contacts, DeskClock, Gallery2, Browser2,
+# QuickSearchBox, messaging, Music) and handheld_system_ext.mk (Settings,
+# Launcher3QuickStep, SystemUI). Nothing there needs adding; a survey of every
+# AndroidManifest.xml in the tree carrying category.LAUNCHER turned up only
+# automotive apps, test harnesses, library samples, and apps superseded by what
+# is already installed (Gallery by Gallery2, LegacyCamera by Camera2, Launcher3
+# by Launcher3QuickStep).
+#
+# UniversalMediaPlayer is the one genuine omission. It is a real media player
+# for both audio and video, and it matters here because the Music app that
+# handheld_product.mk installs has NO launcher activity at all -- its manifest
+# declares only MusicPicker and MediaPlaybackService, so it can be invoked to
+# pick a track but never appears on the home screen. Without this the device
+# has no way to play a media file from the UI.
+PRODUCT_PACKAGES += \
+    UniversalMediaPlayer
+
 # Camera: USB webcams, via the external (V4L2/UVC) provider.
 #
 # Without a camera feature the Camera app is built and installed but has no
