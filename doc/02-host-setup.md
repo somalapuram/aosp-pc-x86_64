@@ -143,17 +143,42 @@ dedicate.
 
 ---
 
-## 4. VirtualBox — secondary only
+## 4. VirtualBox — does not work on this host
 
-VirtualBox does emulate a plain PC, so it is more defensible here than it was
-for Cuttlefish. But:
+VirtualBox emulates a plain PC, so in principle it is a useful second opinion:
+different firmware, different device set. In practice it cannot boot anything
+here, and that was measured rather than assumed.
 
-- Weak DRM/KMS support (VBoxSVGA / vmwgfx) — poor for graphics work
-- No VFIO passthrough
-- Slower than KVM
+VirtualBox 7.2.14 installs, loads `vboxdrv`, and initialises the hypervisor —
+`VBox.log` reports `HM: HMR3Init: AMD-V w/ nested paging`, and `VBoxManage
+startvm` reports success with `VMState="running"`. None of that means the guest
+runs. Every guest sits at a 0x0 framebuffer and executes nothing:
 
-**Use it as an occasional "does it boot under different firmware and a
-different device set" smoke test.** Not as your primary loop.
+```
+ERROR [COM]: Unsupported resolution for screen shot: 0x0 (screen 0)
+```
+
+Tested with this image under EFI+VBoxVGA, EFI+VMSVGA and BIOS+VBoxVGA, with
+`console=ttyS0` captured to a file: **zero bytes of serial output** in every
+case, so the kernel never started. The control that settles it is a stock
+Alpine 3.21 ISO — nothing to do with this project — which fails identically.
+Even the BIOS never paints its own boot screen.
+
+So `VMState="running"` is not evidence of a working VM here, and neither is a
+successful `startvm`. Check for a non-zero framebuffer or actual serial output.
+
+**Use QEMU/KVM.** `tools/run-qemu.sh` is the supported loop, and DISPLAY_MODE=vnc
+covers the remote case.
+
+This is why the kernel does not enable `CONFIG_DRM_VBOXVIDEO`. The driver binds
+to `PCI_DEVICE(0x80ee, 0xbeef)` and neither supported target presents it —
+QEMU is virtio-gpu, bare metal is i915/amdgpu — so it would compile in and
+never bind. A `drm/vboxvideo` patch to accept ABGR8888 (the analogue of the
+virtio-gpu one in `patches/linux/`) was written and then dropped for the same
+reason, plus one of its own: VirtualBox's `struct vbva_infoscreen` carries only
+`bits_per_pixel` and no byte order, so the host assumes BGRA and colours come
+out with red and blue exchanged regardless. It could not have fixed VirtualBox
+even if VirtualBox ran.
 
 ---
 

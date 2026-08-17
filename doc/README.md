@@ -86,7 +86,8 @@ analysis in [03-kernel.md](03-kernel.md).
 UEFI, GPT disk, GRUB, `virtio-vga-gl` for a real DRM/KMS node, `intel-hda` for
 real ALSA. Exercises the true boot and DRM paths at seconds-per-iteration.
 VFIO GPU passthrough for real i915/amdgpu testing without leaving the desk.
-VirtualBox is a secondary smoke test only. See [02-host-setup.md](02-host-setup.md).
+VirtualBox cannot boot any guest on this host, tested including a stock Alpine
+ISO. See [02-host-setup.md](02-host-setup.md).
 
 ---
 
