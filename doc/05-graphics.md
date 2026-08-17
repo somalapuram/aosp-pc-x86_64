@@ -447,9 +447,15 @@ the conclusion that the display still did not work when it did. To actually
 look at the guest:
 
 ```sh
-DISPLAY_MODE=gtk ./build.sh run     # local display
-./build.sh run -vnc :1              # then attach a VNC client
+./build.sh run                      # over SSH: picks VNC on 127.0.0.1:5901
+DISPLAY_MODE=gtk ./build.sh run     # force a GTK window on a local display
 ```
+
+Over an SSH session with X11 forwarding, plain `./build.sh run` resolves to VNC
+by itself and prints the tunnel command, because `gtk,gl=on` onto a forwarded
+display floods stdout with `GDK_IS_MONITOR` assertions and corrupts the serial
+console (§5.4). Verified end-to-end with an RFB client: a full 2560x1600 frame
+of the launcher, wallpaper and all.
 
 `./build.sh test` captures the UI from *inside* the guest with `screencap`
 (written base64 over a virtio-console port), which is independent of scanout and
@@ -513,6 +519,35 @@ the backtrace directly. Ubuntu ships no `qemu-system-x86-dbgsym` matching the
 writeable". No format change affects it.
 
 ---
+
+### 5.4 GTK onto a forwarded X display
+
+`DISPLAY_MODE=auto` used to treat any set `DISPLAY` as a local screen and pick
+`gtk,gl=on`. Over SSH X11 forwarding (MobaXterm, PuTTY) that display is
+forwarded, and `gtk,gl=on` is wrong twice over: `gl=on` wants a local GL
+context, and GTK cannot find a `GdkMonitor` for a window it does not really
+own, so QEMU's per-frame refresh-rate query fails on every frame:
+
+```
+qemu: Gdk: gdk_monitor_get_refresh_rate: assertion 'GDK_IS_MONITOR (monitor)' failed
+```
+
+The assertion is harmless in itself — a `g_return_if_fail` yielding a 0 refresh
+rate — but it floods stdout, which `-serial mon:stdio` shares, so it interleaves
+with the guest console and cuts log lines in half:
+
+```
+[    6.699643] servicemanager: Notifying media.codeclist.genqemu: Gdk: ...
+erator they don't (previously: do) have clients ...
+```
+
+`auto` now detects the forwarded case (`SSH_CONNECTION` set, X11 rather than
+Wayland) and resolves to VNC, which is the better remote answer regardless:
+QEMU renders with `egl-headless` on the host GPU and ships finished frames
+instead of pushing X11 traffic per frame. `DISPLAY_MODE=gtk` still forces the
+window, and `gtk` carries `gl=on` explicitly — without it the plain GTK path
+takes the non-GL scanout and shows the black-screen-with-a-cursor failure
+of §5.2.
 
 ## 6. drm_hwcomposer
 
