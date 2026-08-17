@@ -81,6 +81,19 @@ DISPLAY_MODE=${DISPLAY_MODE:-auto}
 
 [[ -f "$DISK" ]] || { echo "no disk image: $DISK  (run ./build.sh image)" >&2; exit 1; }
 
+# A VM left running from a previous session holds the 5555 hostfwd, and QEMU
+# then refuses to start with a message that names the port and not the cause:
+#     qemu-system-x86_64: -netdev user,id=n0,hostfwd=tcp::5555-:5555:
+#         Could not set up host forwarding rule 'tcp::5555-:5555'
+# ./build.sh test kills stale VMs itself; this path did not, so 'run' simply
+# failed and left you guessing. Say what is wrong and how to fix it.
+if pgrep -f '[q]emu-system-x86_64' >/dev/null 2>&1; then
+    echo "A VM is already running (pid $(pgrep -f '[q]emu-system-x86_64' | head -1))." >&2
+    echo "It holds the 5555 host-forward, so this one cannot start." >&2
+    echo "Stop it with:  pkill -f qemu-system-x86_64" >&2
+    exit 1
+fi
+
 # OVMF vars must be writable per-VM. The 4M build is the current Debian/Ubuntu
 # layout; fall back to the legacy name.
 mkdir -p "$(dirname "$VARS")"
