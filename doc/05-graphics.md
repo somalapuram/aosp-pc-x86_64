@@ -455,6 +455,58 @@ DISPLAY_MODE=gtk ./build.sh run     # local display
 (written base64 over a virtio-console port), which is independent of scanout and
 works headlessly. That is the check to trust.
 
+### 5.3 Blob resources segfault QEMU 10.2.1
+
+`blob=on` lets the guest and host share buffers instead of copying every frame
+through the virtqueue, so it looks like the obvious win at 2560x1600. It is off
+by default anyway, for two reasons: it made no measurable difference — Mesa's
+virgl already keeps the heavy buffers host-side — and it crashes the host.
+
+Three crashes, all byte-identical, and all in the same place:
+
+```
+qemu-system-x86[189101]: segfault at 0 ip ... error 4 in libc.so.6[1aa362]
+
+#0  __strcmp_evex          rsi = 0x0
+#1  cpr_delete_fd ()
+#2  qemu_ram_free ()       <- a virtio-gpu worker thread, not the main loop
+```
+
+`error 4` is a userspace *read* of address 0, and the faulting instruction is
+the second load of `strcmp` — so this is `strcmp(valid, NULL)`, a plain missing
+NULL check rather than memory corruption. `qemu_ram_free()` does:
+
+```
+mov  0x10(%r12),%rdi      ; block->mr
+call <memory_region_name>
+mov  %rax,%rdi            ; name -- NULL here
+call <cpr_delete_fd>      ; -> strcmp(elem->name, NULL)
+```
+
+The block being freed is a 1 MiB `RAMBlock` with an empty `idstr` — a
+host-visible blob resource — and its `MemoryRegion` has a NULL QOM parent
+(`Object::parent` at `mr+0x20` reads 0). `memory_region_name()` falls back to
+`object_get_canonical_path_component()`, which returns NULL for an unparented
+object. So the name is NULL and `cpr_delete_fd()` walks its list comparing
+against it. That is a QEMU bug, not a misconfiguration.
+
+It needs *both* halves of what `blob=on` turns on, which is why it appeared only
+once Mesa started driving virgl for real:
+
+- `blob=on` — so blob resources are allocated and freed at all. SwiftShader
+  never created one, which is why this was invisible for the whole bring-up.
+- `-object memory-backend-memfd` — so `cpr_state.fds` is non-empty. The first
+  thing `cpr_delete_fd()` does is `test %rbx,%rbx; je <ret>` on the list head,
+  so with an empty list the NULL name is never dereferenced.
+
+Set `BLOB=on` to opt back in once the host QEMU carries a fix.
+
+Worth repeating the method, because guessing was losing: the crash would not
+reproduce under load, and what settled it was the core dump apport had already
+written to `/var/crash` — `apport-unpack` plus `libvirglrenderer1-dbgsym` gave
+the backtrace directly. Ubuntu ships no `qemu-system-x86-dbgsym` matching the
+`-updates` point release, but the frames that mattered were exported symbols.
+
 `GPU=plain` remains broken for an unrelated reason:
 `RenderEngine::validateOutputBufferUsage()` is a `LOG_ALWAYS_FATAL_IF` on
 `USAGE_HW_RENDER`, so SurfaceFlinger aborts with "output buffer not gpu

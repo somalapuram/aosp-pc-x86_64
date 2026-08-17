@@ -195,7 +195,46 @@ YRES=${YRES:-1600}
 # eight vCPUs sit idle. It is not short of CPU; it is waiting on copies.
 #
 # blob=on needs shareable guest memory, hence the memfd backend.
-BLOB=${BLOB:-on}
+#
+# DEFAULT OFF: it crashes QEMU 10.2.1, and it never bought anything measurable.
+#
+# The theory above is sound but never showed up in a measurement: enabling it
+# made no difference we could detect, apparently because Mesa's virgl already
+# keeps the heavy buffers host-side. What it did do is segfault the host, three
+# times, always identically:
+#
+#     qemu-system-x86[189101]: segfault at 0 ip ...  error 4 in libc.so.6[1aa362]
+#
+#     #0  __strcmp_evex           rsi = 0x0
+#     #1  cpr_delete_fd ()
+#     #2  qemu_ram_free ()        <- virtio-gpu worker thread, not the main loop
+#
+# qemu_ram_free() does, with no NULL check:
+#
+#     mov  0x10(%r12),%rdi        ; block->mr
+#     call <memory_region_name>
+#     mov  %rax,%rdi              ; name -- NULL here
+#     call <cpr_delete_fd>        ; -> strcmp(elem->name, NULL)
+#
+# The block being freed is a 1 MiB RAMBlock with an empty idstr -- a
+# host-visible blob resource -- and its MemoryRegion has a NULL QOM parent
+# (Object::parent at mr+0x20 reads 0). memory_region_name() falls back to
+# object_get_canonical_path_component(), which returns NULL for an unparented
+# object, so the name is NULL and cpr_delete_fd() walks its list strcmp'ing
+# against it. That is a QEMU bug, not a configuration error.
+#
+# It needs BOTH halves of what this block turns on, which is why it appeared
+# only once Mesa started driving virgl for real:
+#
+#   - blob=on           so blob resources get allocated and freed at all;
+#                       SwiftShader never created one.
+#   - memory-backend-memfd
+#                       so cpr_state.fds is non-empty. cpr_delete_fd's first
+#                       act is 'test %rbx,%rbx; je <ret>' on the list head, so
+#                       with an empty list the NULL name is never dereferenced.
+#
+# Set BLOB=on to opt back in once the host QEMU carries the fix.
+BLOB=${BLOB:-off}
 MEMOPTS=()
 BLOBOPT=""
 if [[ "$BLOB" == "on" ]]; then
