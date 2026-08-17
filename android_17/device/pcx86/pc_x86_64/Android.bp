@@ -1,0 +1,74 @@
+// Mesa, cross-built out of tree by ./build.sh mesa.
+//
+// These have to be cc_prebuilt_library_shared rather than PRODUCT_COPY_FILES:
+// the build refuses ELF binaries copied that way and says so plainly --
+//
+//     error: found ELF prebuilt in PRODUCT_COPY_FILES,
+//            use cc_prebuilt_binary / cc_prebuilt_library_shared instead
+//
+// The sources live under mesa/, which is gitignored: the recipe
+// (tools/build-mesa.sh) is version-controlled, the ~20 MB of .so is not. Run
+// ./build.sh mesa before building the product, or Soong fails on missing srcs.
+//
+// AOSP cannot produce these itself. external/mesa3d/Android.bp builds only
+// gfxstream/virtio guest modules -- grep it for any gallium driver name and it
+// returns nothing -- while the full upstream source sits in
+// external/mesa3d/src/gallium/drivers. See doc/05-graphics.md section 4.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_defaults {
+    name: "mesa_prebuilt_defaults",
+    vendor: true,
+    // Both ABIs. Android forks a 32-bit zygote (app_process32) unless the
+    // product is 64-bit-only, and each process loads its own EGL driver. With
+    // 64-bit Mesa alone SurfaceFlinger renders fine on virgl while every app
+    // process aborts with "couldn't find an OpenGL ES implementation".
+    compile_multilib: "both",
+    strip: { none: true },
+
+    // These were linked by the NDK against Mesa's own android_stub shims for
+    // liblog/libcutils/libnativewindow/libsync, not against AOSP's real
+    // libraries, so Soong's ELF checker sees dependencies it cannot account
+    // for. The real libraries provide those symbols at runtime; the stubs are
+    // deliberately not shipped, which is exactly why the check cannot pass.
+    check_elf_files: false,
+}
+
+// Android's EGL loader resolves libEGL_${ro.hardware.egl}.so under lib64/egl,
+// so the _mesa suffix must be in the SONAME as well as the filename -- Mesa's
+// -Degl-lib-suffix / -Dgles-lib-suffix options do that. Without it the SONAME
+// stays libEGL.so and collides with Android's own loader.
+cc_prebuilt_library_shared {
+    name: "libEGL_mesa",
+    defaults: ["mesa_prebuilt_defaults"],
+    relative_install_path: "egl",
+    arch: {
+        x86_64: { srcs: ["mesa/lib64/egl/libEGL_mesa.so"] },
+        x86:    { srcs: ["mesa/lib/egl/libEGL_mesa.so"] },
+    },
+}
+
+cc_prebuilt_library_shared {
+    name: "libGLESv2_mesa",
+    defaults: ["mesa_prebuilt_defaults"],
+    relative_install_path: "egl",
+    arch: {
+        x86_64: { srcs: ["mesa/lib64/egl/libGLESv2_mesa.so"] },
+        x86:    { srcs: ["mesa/lib/egl/libGLESv2_mesa.so"] },
+    },
+}
+
+// The gallium driver itself, containing virgl. This is a direct NEEDED of
+// libEGL_mesa.so rather than something dlopened out of a dri/ directory, so it
+// belongs on the plain vendor library path.
+cc_prebuilt_library_shared {
+    name: "libgallium_dri",
+    defaults: ["mesa_prebuilt_defaults"],
+    arch: {
+        x86_64: { srcs: ["mesa/lib64/libgallium_dri.so"] },
+        x86:    { srcs: ["mesa/lib/libgallium_dri.so"] },
+    },
+}

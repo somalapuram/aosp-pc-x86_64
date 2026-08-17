@@ -5,6 +5,7 @@
 #
 # Usage:
 #   ./build.sh sync              fetch AOSP + kernel at the pinned revisions
+#   ./build.sh mesa              cross-build Mesa (GL driver) for the guest
 #   ./build.sh deps              check host prerequisites
 #   ./build.sh kernel            configure + build bzImage
 #   ./build.sh kernel-config     configure only (no compile)
@@ -270,10 +271,12 @@ cmd_usb()   { exec "$X86_ROOT/tools/write-usb.sh" "${@:2}" ; }
 cmd_logs()  { exec "$X86_ROOT/tools/collect-logs.sh" "${@:2}" ; }
 cmd_run()   { exec "$X86_ROOT/tools/run-qemu.sh" "${@:2}" ; }
 cmd_sync()  { exec "$X86_ROOT/tools/sync-sources.sh" "${@:2}" ; }
+cmd_mesa()  { exec "$X86_ROOT/tools/build-mesa.sh" "${@:2}" ; }
 
 # ----------------------------------------------------------------- main ----
 case "${1:-}" in
     sync)          cmd_sync "$@" ;;
+    mesa)          cmd_mesa "$@" ;;
     deps)          cmd_deps ;;
     kernel)        cmd_kernel ;;
     kernel-config) cmd_kernel_config ;;

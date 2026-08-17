@@ -1,8 +1,8 @@
 # Upstream source trees, fetched by repo(1) and git rather than kept here:
 # AOSP is ~350 GB across 1084 projects and the kernel another ~4 GB. Neither
-# carries local changes worth publishing -- the kernel is pristine upstream,
-# and the single AOSP delta lives in patches/ -- so both are pinned by revision
-# instead of vendored. See doc/README.md.
+# carries local changes worth publishing -- the kernel has one small patch, and
+# the AOSP delta lives in patches/ -- so both are pinned by revision instead of
+# vendored. See doc/README.md.
 /android_17/*
 /linux/
 
@@ -12,11 +12,16 @@
 # parent in turn, because git never descends into an excluded directory to look
 # for exceptions. Spelling it out level by level, as below, confines the walk to
 # android_17/device/ -- it does NOT make git traverse the 1084 upstream projects
-# or out/, which is what a naive '!/android_17/device/pcx86/' alone would fail
-# to achieve.
+# or out/.
 !/android_17/device/
 /android_17/device/*
 !/android_17/device/pcx86/
+
+# ...except the cross-built Mesa libraries, which live inside the device tree
+# but are build output: ~20 MB of .so produced by ./build.sh mesa. The recipe
+# is in git (tools/build-mesa.sh), the artefacts are not -- the same rule the
+# kernel and AOSP trees follow.
+/android_17/device/pcx86/pc_x86_64/mesa/
 
 # Android Common Kernel, if cloned as a fallback (see doc/03-kernel.md)
 /ack/

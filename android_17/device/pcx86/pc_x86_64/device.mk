@@ -42,6 +42,23 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_logcat_file.sh \
     device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_file.sh
 
+# --- Mesa (real GL driver) -------------------------------------------------
+# Built out of tree by ./build.sh mesa -- AOSP's external/mesa3d/Android.bp
+# compiles only gfxstream/virtio guest modules and no gallium driver at all, so
+# Soong cannot produce these. See doc/05-graphics.md section 4.3.
+#
+# Declared as cc_prebuilt_library_shared in Android.bp, NOT PRODUCT_COPY_FILES:
+# the build rejects ELF binaries copied that way --
+#     error: found ELF prebuilt in PRODUCT_COPY_FILES,
+#            use cc_prebuilt_binary / cc_prebuilt_library_shared instead
+#
+# Generated, not committed: mesa/ is gitignored. Run ./build.sh mesa first or
+# Soong fails on missing srcs.
+PRODUCT_PACKAGES += \
+    libEGL_mesa \
+    libGLESv2_mesa \
+    libgallium_dri
+
 # --- Graphics --------------------------------------------------------------
 # drm_hwcomposer composites over a real DRM/KMS node, which is what both
 # virtio-gpu (QEMU dev VM) and i915/amdgpu (metal) present. Deliberately NOT
@@ -134,7 +151,7 @@ PRODUCT_PACKAGES += \
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
     vendor.hwc.drm.device=/dev/dri/card0 \
-    ro.hardware.egl=angle \
+    ro.hardware.egl=mesa \
     ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 

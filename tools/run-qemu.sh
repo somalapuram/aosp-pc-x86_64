@@ -160,6 +160,24 @@ fi
 XRES=${XRES:-2560}
 YRES=${YRES:-1600}
 
+# Blob resources: let the guest and host SHARE buffers instead of copying.
+#
+# Without this the guest negotiates "-resource_blob" and every single frame is
+# copied guest->host through the virtqueue with a TRANSFER_TO_HOST round trip.
+# At 2560x1600 that is 16.4 MB per frame -- about 1 GB/s of memcpy at 60fps --
+# on a serialised path, which is why the VM feels sluggish while six of its
+# eight vCPUs sit idle. It is not short of CPU; it is waiting on copies.
+#
+# blob=on needs shareable guest memory, hence the memfd backend.
+BLOB=${BLOB:-on}
+MEMOPTS=()
+BLOBOPT=""
+if [[ "$BLOB" == "on" ]]; then
+    MEMOPTS=(-object "memory-backend-memfd,id=vmem,size=$MEM,share=on"
+             -machine memory-backend=vmem)
+    BLOBOPT=",blob=on,hostmem=1G"
+fi
+
 GPU=${GPU:-virgl}
 GFX=()
 if [[ "$GPU" == "plain" ]]; then
@@ -169,18 +187,19 @@ if [[ "$GPU" == "plain" ]]; then
     esac
 else
 case "$DISPLAY_MODE" in
-    none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display egl-headless) ;;
+    none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
     auto) if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display gtk,gl=on)
+              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display gtk,gl=on)
           else
-              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display egl-headless)
+              GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless)
           fi ;;
-    *)    GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
+    *)    GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display "$DISPLAY_MODE") ;;
 esac
 fi
 
 exec qemu-system-x86_64 \
     "${ACCEL[@]}" \
+    "${MEMOPTS[@]}" \
     -smp "$CPUS" -m "$MEM" \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,unit=1,file="$VARS" \

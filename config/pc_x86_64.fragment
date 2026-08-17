@@ -136,6 +136,17 @@ CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
+# VirtualBox guest display, for running this image under VirtualBox instead.
+#
+# Works, but expect red and blue to be exchanged. VirtualBox's display
+# protocol carries only a bit depth -- struct vbva_infoscreen has
+# bits_per_pixel and nothing else -- so a guest cannot tell the host which
+# byte order its framebuffer uses, and the host assumes BGRA. virtio-gpu by
+# contrast has explicit format enums (VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM etc.),
+# which is why the equivalent patch there produces correct colours and this
+# one cannot. See patches/linux/.
+CONFIG_DRM_VBOXVIDEO=y
+
 # dma-buf heaps -- minigbm's HAS_DMABUF_SYSTEM_HEAP path
 CONFIG_DMABUF_HEAPS=y
 CONFIG_DMABUF_HEAPS_SYSTEM=y
