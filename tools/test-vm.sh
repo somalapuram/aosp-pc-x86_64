@@ -94,6 +94,25 @@ fi
 # ------------------------------------------------------- wait for markers ----
 # "Boot is finished" comes from SurfaceFlinger; the launcher gaining top-resumed
 # is the real sign the framework got all the way up.
+# Wait for QEMU to actually appear before treating its absence as death.
+#
+# The loop below checks 'has qemu exited?' every iteration, and the first
+# iteration runs immediately after launching it in the background -- so if
+# QEMU has not finished starting yet, the harness declares
+#     FAIL  VM alive  exited early after 0s
+# breaks out, and reports the launcher as never resuming, while the boot in
+# fact goes on to complete perfectly. The race was always present and simply
+# used to be won; adding -object memory-backend-memfd,size=8G for blob
+# resources made QEMU slow enough to start that it began losing.
+for _ in $(seq 1 60); do
+    pgrep -f qemu-system-x86_64 >/dev/null 2>&1 && break
+    sleep 1
+done
+if ! pgrep -f qemu-system-x86_64 >/dev/null 2>&1; then
+    fail "VM alive" "never started -- see $RESULTS/console.log"
+    tail -5 "$RESULTS/console.log" 2>/dev/null | sed 's/^/       /' >&2
+fi
+
 deadline=$(( SECONDS + TIMEOUT ))
 booted=0
 while (( SECONDS < deadline )); do
