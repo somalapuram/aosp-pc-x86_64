@@ -29,3 +29,13 @@
 # It is a protected_service, which only bars untrusted apps from finding it
 # (app_neverallows.te); labelling it here is unrestricted.
 android.hardware.camera.provider.ICameraProvider/external/0    u:object_r:hal_camera_service:s0
+
+# minigbm's AIDL graphics mapper. Unlabeled it falls back to
+# default_android_service, which every graphics client is then denied 'find' on.
+mapper/minigbm    u:object_r:hal_graphics_mapper_service:s0
+
+# The gatekeeper HAL's ISharedSecret instance. Its own type because
+# hal_sharedsecret_service may only be added by hal_keymint -- see
+# sepolicy/hal_gatekeeper_default.te, which also explains why leaving this
+# unlabelled stops the device booting.
+android.hardware.security.sharedsecret.ISharedSecret/gatekeeper    u:object_r:pc_sharedsecret_service:s0

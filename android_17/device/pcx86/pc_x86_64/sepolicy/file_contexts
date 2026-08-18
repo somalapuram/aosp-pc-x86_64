@@ -1,37 +1,82 @@
-# Vendor file contexts for the bare-metal x86_64 PC target.
-#
-# Bring-up runs with androidboot.selinux=permissive (doc/06-boot-and-storage.md
-# section 3). Policy is built up from real denials rather than guessed at:
-#
-#   adb shell dmesg | grep avc: > denials.txt
-#   audit2allow -i denials.txt
-#
-# Do not blanket-allow. Each denial is information about a missing label or a
-# genuinely wrong access. See doc/07-hals.md section 1.
-
+# HAL services
 /vendor/bin/hw/android\.hardware\.health-service\.example    u:object_r:hal_health_default_exec:s0
-
-# minigbm's AIDL allocator. system/sepolicy/vendor/file_contexts labels only
-# the HIDL variants (allocator@2.0-service, allocator@3.0-service), so this
-# binary lands as plain vendor_file and init REFUSES to start it:
-#     Could not start service 'vendor.graphics.allocator' as part of class 'hal':
-#     File /vendor/bin/hw/android.hardware.graphics.allocator-service.minigbm
-#     (labeled "u:object_r:vendor_file:s0") has incorrect label or no domain
-#     transition from u:r:init:s0 to another
-#
-# IMPORTANT: androidboot.selinux=permissive does NOT bypass this. The domain
-# transition check happens in init before exec, independent of enforcement
-# mode, so a missing label is fatal even in permissive. SurfaceFlinger then
-# blocks forever waiting for IAllocator and never publishes SurfaceFlingerAIDL.
 /vendor/bin/hw/android\.hardware\.graphics\.allocator-service\.minigbm    u:object_r:hal_graphics_allocator_default_exec:s0
 
-# DRM/KMS nodes. AOSP's sepolicy does not label /dev/dri at all -- it is left
-# to the device -- so without these they come up as plain 'device' and every
-# graphics component is denied access:
-#   denied { read write } name="card0"      scontext=hal_graphics_composer_default  tcontext=device
-#   denied { read write } name="renderD128" scontext=surfaceflinger                 tcontext=device
-#   denied { read write } name="renderD128" scontext=hal_graphics_allocator_default tcontext=device
-# card* is the KMS node drm_hwcomposer opens; renderD* is the render node
-# minigbm and ANGLE/SwiftShader use.
+# DRM/KMS nodes. card* is privileged (SurfaceFlinger and drm_hwcomposer);
+# renderD* is the unprivileged render node every app's gralloc mapper opens.
 /dev/dri/card[0-9]+          u:object_r:graphics_device:s0
 /dev/dri/renderD[0-9]+       u:object_r:gpu_device:s0
+
+# ---------------------------------------------------------------------------
+# Same-process HAL libraries.
+#
+# These are loaded INTO every GL client -- zygote, SurfaceFlinger, and each app
+# process -- rather than being called over binder, so they have to be mappable
+# and executable by all of them. Left at the default vendor_file they are not,
+# and the boot fills with denials from every domain that touches graphics:
+#
+#     avc: denied { map }   scontext=u:r:zygote        path=".../mapper.minigbm.so"
+#     avc: denied { execute} scontext=u:r:surfaceflinger path=".../libgallium_dri.so"
+#
+# That single mislabel accounted for 136 of the 453 denials on a boot -- by far
+# the largest group. AOSP labels its own equivalents this way
+# (system/sepolicy/vendor/file_contexts, gralloc.default.so and the
+# graphics.mapper@N-impl libraries); these are this device's.
+#
+# libgallium_dri.so is Mesa's actual driver and is a direct NEEDED of
+# libEGL_mesa.so, so it sits on the plain library path rather than under egl/,
+# which is why the blanket egl/ rule does not cover it.
+/vendor/lib(64)?/hw/mapper\.minigbm\.so      u:object_r:same_process_hal_file:s0
+/vendor/lib(64)?/libminigbm_gralloc\.so      u:object_r:same_process_hal_file:s0
+/vendor/lib(64)?/libgallium_dri\.so          u:object_r:same_process_hal_file:s0
+/vendor/lib(64)?/libdrm\.so                  u:object_r:same_process_hal_file:s0
+
+# SwiftShader's Vulkan driver, which ANGLE loads in-process. Same story as the
+# minigbm/Mesa libraries above: at plain vendor_file even SurfaceFlinger cannot
+# read it, and EGL then fails with "no suitable EGLConfig found, giving up".
+/vendor/lib(64)?/hw/vulkan\.pastel\.so       u:object_r:same_process_hal_file:s0
+
+# virtio-console ports used during bring-up: kmsg on hvc0, logcat on hvc1, and
+# the screencap PNG on hvc2 (see init.pc_x86_64.rc and tools/run-qemu.sh).
+# Unlabeled they fall back to the generic 'device' type, which shell may not
+# write, so the log streams silently produce nothing under enforcing.
+/dev/hvc[0-9]+                               u:object_r:pc_console_device:s0
+
+
+# pc_select_egl.sh runs as our own early service in vendor_shell (see
+# init.pc_x86_64.rc), so it lives on /vendor and is labelled vendor_shell_exec.
+#
+# It was init's init_dev_config hook first, labelled init_dev_config_exec. That
+# is the documented slot for "per-SKU settings or sysprops" and it is simply
+# never invoked on this device: the service is defined, the property points at
+# this file, the file is 0755 with the right label -- and init logs no
+# "starting service 'init_dev_config'" and a breadcrumb property the script
+# sets comes back empty after a full boot.
+/vendor/bin/pc_select_egl\.sh                u:object_r:vendor_shell_exec:s0
+
+# init.rc's init_dev_config service is 'service init_dev_config
+# ${ro.vendor.init_dev_config.path}' -- with the property unset init cannot
+# expand the path, which takes ueventd and apexd-bootstrap down with it and
+# reboots the device. So it still needs to point at something, and that
+# something must carry init_dev_config_exec: /vendor/bin/true is toybox_vendor,
+# labelled vendor_toolbox_exec, which init_dev_config may not entrypoint.
+/vendor/bin/pc_noop\.sh                      u:object_r:init_dev_config_exec:s0
+
+# The /dev/dri DIRECTORY, not just the nodes in it. Every GL client loads
+# mapper.minigbm.so in-process and that enumerates the directory, so leaving it
+# at the generic 'device' type denies the listing to SurfaceFlinger, bootanim,
+# system_server and every app.
+/dev/dri                                     u:object_r:gpu_device:s0
+
+# Partition nodes. Without these they are the generic block_device type, and
+# fsck is refused on its own filesystem:
+#     avc: denied { read write } comm="tune2fs" name="nvme0n1p5"
+#          scontext=u:r:fsck:s0 tcontext=u:object_r:block_device:s0
+# Widening fsck is not an option -- domain.te neverallows it against
+# block_device -- so the nodes have to carry their real types.
+#
+# The layout is fixed by tools/mkdisk.sh (1 esp, 2 system, 3 vendor,
+# 4 metadata, 5 userdata); both spellings appear because the QEMU disk is NVMe
+# and a USB/SATA install is sd*.
+/dev/block/(nvme0n1p4|sd[a-z]4)              u:object_r:metadata_block_device:s0
+/dev/block/(nvme0n1p5|sd[a-z]5)              u:object_r:userdata_block_device:s0

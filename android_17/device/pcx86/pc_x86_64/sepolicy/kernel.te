@@ -1,0 +1,9 @@
+# kdevtmpfs creates device nodes in /dev as the kernel populates devtmpfs.
+# Denied, ueventd never sees some nodes at all:
+#     avc: denied { write } comm="kdevtmpfs" name="/" dev="devtmpfs"
+#          scontext=u:r:kernel:s0 tcontext=u:object_r:device:s0 tclass=dir
+allow kernel device:dir { write add_name remove_name };
+allow kernel device:chr_file { create setattr };
+# Deliberately not granted: kernel device:blk_file { setattr unlink } on the
+# dm-* nodes. coredomain.te neverallows it, and the nodes in question belong to
+# APEX loop mounts that are torn down anyway.

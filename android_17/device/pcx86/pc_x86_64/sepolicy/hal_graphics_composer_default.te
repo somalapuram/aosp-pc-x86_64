@@ -19,3 +19,15 @@
 # domain, which is why source and target contexts are identical above.
 allow hal_graphics_composer_default self:netlink_kobject_uevent_socket
     { create read write bind getattr setopt };
+
+# drm_hwcomposer allocates its own buffers through minigbm, so it is an
+# allocator/mapper CLIENT. Spelling that out with the macro rather than a bare
+# 'allow ... service_manager find' matters: hal_graphics_allocator.te carries
+#     hal_attribute_service(hal_graphics_allocator, hal_graphics_allocator_service)
+# whose neverallow admits only hal_graphics_allocator_client, so the bare rule
+# fails the build. The macro grants the find, the binder call and the memfd
+# passing in one go, and is what the attribute exists for.
+hal_client_domain(hal_graphics_composer_default, hal_graphics_allocator)
+
+# Reads /sys/class/backlight to find a panel to dim.
+allow hal_graphics_composer_default sysfs:dir r_dir_perms;

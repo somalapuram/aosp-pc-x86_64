@@ -1,0 +1,24 @@
+# pc_select_egl.sh runs here (see init.pc_x86_64.rc). It reads which DRM driver
+# claimed the GPU and publishes the answer as vendor.pc.gpu, which init then
+# turns into ro.hardware.egl -- see sepolicy/property.te for why the script
+# cannot set that itself.
+#
+# This is the whole of what it needs. The five other pc_*.sh helpers do far
+# more (screencap, logcat, settings, ip) and for that reason live on system_ext
+# and run in shell instead; a vendor domain may not execute system files.
+
+# init execs the script via 'seclabel u:r:vendor_shell:s0', which is not covered
+# by shell.te's domain_auto_trans(shell, vendor_shell_exec, vendor_shell).
+allow vendor_shell vendor_shell_exec:file entrypoint;
+
+# #!/system/bin/sh plus the ls, grep, log and setprop applets. setprop is a
+# symlink to toolbox and log to toybox; domain.te carves both out of the
+# "vendor components may not execute system files" neverallow by name.
+allow vendor_shell shell_exec:file rx_file_perms;
+allow vendor_shell toolbox_exec:file rx_file_perms;
+
+# Detection lists the driver bind directories under /sys/bus/*/drivers/*/.
+allow vendor_shell sysfs:dir r_dir_perms;
+allow vendor_shell sysfs:file r_file_perms;
+
+set_prop(vendor_shell, vendor_pc_gpu_prop)

@@ -1,0 +1,9 @@
+# Carries the GL driver that pc_select_egl.sh detected, from init_dev_config
+# (which may set this) to vendor_init (which may set ro.hardware.egl).
+#
+# The relay exists because ro.hardware.egl has exactly two permitted writers:
+#     neverallow { domain -init -vendor_init } exported_default_prop:property_service set;
+# so no script of ours can set it directly, in any domain, at build time. But
+# init.pc_x86_64.rc is a VENDOR rc, and property sets in it run as vendor_init,
+# which is on that list. So the script reports what it found and init decides.
+vendor_internal_prop(vendor_pc_gpu_prop)

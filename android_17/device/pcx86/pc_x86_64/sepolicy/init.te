@@ -1,0 +1,9 @@
+# init execs pc_select_egl.sh into vendor_shell via the service's seclabel.
+#
+# Without this the service simply never runs, silently: init logs nothing, no
+# denial names the script, and the only visible symptom is SurfaceFlinger
+# aborting with "couldn't find an OpenGL ES implementation" because the
+# detection that sets ro.hardware.egl never happened.
+#     avc: denied { transition } scontext=u:r:init:s0 tcontext=u:r:vendor_shell:s0
+# noatsecure is deliberately absent -- init.te neverallows it.
+allow init vendor_shell:process { transition siginh rlimitinh };

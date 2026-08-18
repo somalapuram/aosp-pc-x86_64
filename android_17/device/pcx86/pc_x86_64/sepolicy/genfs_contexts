@@ -1,0 +1,4 @@
+# See device.te for why the PCI subtree is labelled rather than granted as
+# plain sysfs. The path is the same on QEMU and on a real PC -- PCI segment 0
+# is where both put the GPU.
+genfscon sysfs /devices/pci0000:00 u:object_r:sysfs_pci:s0

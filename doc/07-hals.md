@@ -220,3 +220,74 @@ adb shell dumpsys package features
 Copy `device/google/cuttlefish/shared/permissions/` and prune to what the
 hardware actually has. Declaring a feature you do not have is worse than
 omitting it — apps will call into it and crash.
+
+---
+
+## SELinux enforcing
+
+The default GRUB entry boots `androidboot.selinux=enforcing`. The verbose entry
+stays permissive on purpose: if a policy change makes the default unbootable,
+pick it at the GRUB menu and the denials are logged instead of enforced, which
+is the only way to see what the new policy broke.
+
+Denials went 453 -> 378, but the count is the least interesting number. Almost
+none of the original 453 were missing *rules*; they were this device's own files
+carrying no label. One mislabel accounted for 136 of them: `mapper.minigbm.so`
+and `libgallium_dri.so` are same-process HALs loaded INTO every GL client, and
+at plain `vendor_file` nobody could map or execute them. `vulkan.pastel.so` was
+the same story on the ANGLE path -- SurfaceFlinger could not read it and EGL
+failed with "no suitable EGLConfig found, giving up".
+
+### What the platform refuses, and why that is the useful signal
+
+Most of the work was not writing `allow` rules but discovering that the design
+was wrong, because neverallows fail the **build**, not the boot:
+
+| Attempt | Refused by |
+|---|---|
+| `shell` entrypointing a `/vendor` script | `neverallow coredomain { file_type -system_file_type }:file entrypoint` |
+| moving the helpers to `vendor_shell` | 9 neverallows: vendor domains may not execute system files or touch core properties |
+| labelling them on `/system` from device sepolicy | `Vendor's file_contexts must not label files in platform partitions` |
+| `/system_ext` + `shell_exec` | builds |
+
+The same happened with `ro.hardware.egl`. It is a `system_vendor_config_prop`,
+and `neverallow { domain -init -vendor_init } exported_default_prop:property_service set`
+admits nobody a script can run as -- `persist.graphics.egl` is no better
+(init, vendor_init, gpuservice only). So detection and assignment are split:
+`pc_select_egl.sh` runs early in `vendor_shell`, publishes `vendor.pc.gpu`, and
+`init.pc_x86_64.rc` maps that to `ro.hardware.egl` -- property sets in a vendor
+rc run as `vendor_init`, which is on the permitted list.
+
+And `coredomain.te` states the principle behind half the remaining work
+outright: *"Core domains are not permitted to use kernel interfaces which are
+not explicitly labeled."* The GPU's PCI uevent, which libdrm needs, could not be
+granted as plain `sysfs` at any price; labelling the subtree `sysfs_pci` made it
+grantable.
+
+### Known-good residue
+
+378 denials remain and the device boots clean -- 13/13 in `./build.sh test`,
+Mesa/virgl on the host GPU, no crashes, no restart loops. They are left in place
+deliberately:
+
+- **`system_suspend -> sysfs_pci` (300)** -- reads a wakeup source's name.
+  `system_suspend` is a private type so vendor policy cannot name it, and
+  system_ext private policy cannot see `sysfs_pci`, which is declared in vendor
+  policy. Neither half is worth relocating for an informational read.
+- **`system_server -> vendor_default_prop`** -- a coredomain reading a vendor
+  property, which Treble restricts by design.
+- **`shell`, `mediaprovider_app`, `platform_app` odds and ends** -- probes that
+  fail closed and are retried or ignored.
+
+### Traps worth remembering
+
+- **`user root` in the `shell` domain does not work.** Root's DAC bypass *is*
+  `CAP_DAC_OVERRIDE`, and `app_neverallows.te` forbids an appdomain every
+  capability, so the helpers restart-looped (33 times in one boot) until they
+  were changed to `user shell`.
+- **`/dev/kmsg` cannot be read from the shell domain at all**, whatever the node
+  permissions: `kernel.dmesg_restrict` gates it behind `CAP_SYSLOG`. The kernel
+  log is on ttyS0 and hvc0 instead.
+- **Leaving a denial in place is a decision, not a default.** The gatekeeper
+  HAL's `ISharedSecret` instance looked cosmetic and was left unlabelled; it
+  took down `BiometricService`, and with it system_server, on every boot.

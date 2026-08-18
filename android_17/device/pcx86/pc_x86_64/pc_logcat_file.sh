@@ -17,8 +17,8 @@
 # Keeps the previous boot's log as bootlog.prev.txt so a failed boot is not
 # overwritten by the retry that follows it.
 
-OUT=/data/bootlog.txt
-PREV=/data/bootlog.prev.txt
+OUT=/data/local/tmp/bootlog.txt
+PREV=/data/local/tmp/bootlog.prev.txt
 
 [ -f "$OUT" ] && mv -f "$OUT" "$PREV"
 

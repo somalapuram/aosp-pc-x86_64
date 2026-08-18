@@ -17,8 +17,8 @@
 #     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/kmsg.txt
 # or use tools/collect-logs.sh, which does that and summarises the result.
 
-OUT=/data/kmsg.txt
-PREV=/data/kmsg.prev.txt
+OUT=/data/local/tmp/kmsg.txt
+PREV=/data/local/tmp/kmsg.prev.txt
 
 [ -f "$OUT" ] && mv -f "$OUT" "$PREV"
 
@@ -37,4 +37,25 @@ PREV=/data/kmsg.prev.txt
     echo "=== kernel log follows ==="
 } > "$OUT"
 
-exec /system/bin/dmesg -w >> "$OUT"
+# Follow the kernel log if we are allowed to, and do not spin if we are not.
+#
+# Neither route works from the shell domain on a stock kernel. `dmesg -w` reads
+# the ring buffer via syslog(2), which wants CAP_SYS_ADMIN/CAP_SYSLOG; reading
+# /dev/kmsg directly wants CAP_SYSLOG too, because kernel.dmesg_restrict gates
+# it regardless of the node being root:log and shell being in that group. And
+# shell is an appdomain, which app_neverallows.te forbids any capability at all.
+#
+# Running as root instead is not a way out: root in the shell domain needs
+# CAP_DAC_OVERRIDE for its usual bypass, which is refused the same way.
+#
+# So take it if it is there, and otherwise exit cleanly. Exiting non-zero made
+# init restart the service forever -- 33 times in one boot -- which is noise
+# that buries the real log. The header above is the useful part on a device
+# with no serial console anyway; the kernel log itself is on ttyS0 and hvc0.
+if cat /dev/kmsg >> "$OUT" 2>/dev/null; then
+    :
+else
+    echo "=== /dev/kmsg unreadable (dmesg_restrict, needs CAP_SYSLOG) ===" >> "$OUT"
+    echo "=== see ttyS0 or hvc0 for the kernel log ===" >> "$OUT"
+fi
+exit 0

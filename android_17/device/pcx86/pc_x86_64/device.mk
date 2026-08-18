@@ -36,12 +36,13 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/fstab.pc_x86_64:$(TARGET_COPY_OUT_RAMDISK)/first_stage_ramdisk/fstab.pc_x86_64 \
     device/pcx86/pc_x86_64/init.pc_x86_64.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.pc_x86_64.rc \
     device/pcx86/pc_x86_64/ueventd.pc_x86_64.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
-    device/pcx86/pc_x86_64/pc_debug_dump.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_debug_dump.sh \
-    device/pcx86/pc_x86_64/pc_screencap.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_screencap.sh \
-    device/pcx86/pc_x86_64/pc_stay_awake.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_stay_awake.sh \
+    device/pcx86/pc_x86_64/pc_debug_dump.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_debug_dump.sh \
+    device/pcx86/pc_x86_64/pc_screencap.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_screencap.sh \
+    device/pcx86/pc_x86_64/pc_stay_awake.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_stay_awake.sh \
     device/pcx86/pc_x86_64/pc_select_egl.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_select_egl.sh \
-    device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_logcat_file.sh \
-    device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_file.sh
+    device/pcx86/pc_x86_64/pc_noop.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_noop.sh \
+    device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_logcat_file.sh \
+    device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_kmsg_file.sh
 
 # --- Mesa (real GL driver) -------------------------------------------------
 # Built out of tree by ./build.sh mesa -- AOSP's external/mesa3d/Android.bp
@@ -163,10 +164,10 @@ PRODUCT_VENDOR_PROPERTIES += \
 # it, and the keyguard hides the launcher behind a swipe that a headless
 # capture can never perform -- every screenshot taken of this port so far has
 # been of the lock screen, which is not what anyone wants to look at.
-PRODUCT_PROPERTY_OVERRIDES += \
+PRODUCT_SYSTEM_PROPERTIES += \
     ro.lockscreen.disable.default=true
 
-PRODUCT_PROPERTY_OVERRIDES += \
+PRODUCT_SYSTEM_PROPERTIES += \
     ro.opengles.version=196608 \
     ro.sf.lcd_density=240
 
@@ -205,7 +206,10 @@ PRODUCT_PROPERTY_OVERRIDES += \
 #
 # Re-enable (drop this) once the platform is fast enough and the boot is clean;
 # StrictMode is genuinely useful. See StrictMode.DISABLE_PROPERTY.
-PRODUCT_PROPERTY_OVERRIDES += \
+# PRODUCT_SYSTEM_PROPERTIES: PRODUCT_PROPERTY_OVERRIDES lands in
+# vendor/build.prop on this product, so vendor_init applies it, and
+# persist.sys.* is system_prop which vendor_init may not set.
+PRODUCT_SYSTEM_PROPERTIES += \
     persist.sys.strictmode.disable=true
 
 PRODUCT_COPY_FILES += \
@@ -404,13 +408,23 @@ PRODUCT_PACKAGES += \
     tune2fs \
 
 # adb over Ethernet: most desktops have no USB device-mode controller.
-PRODUCT_VENDOR_PROPERTIES += \
+# adb over TCP. PRODUCT_SYSTEM_PROPERTIES, not PRODUCT_VENDOR_PROPERTIES:
+# anything in vendor/build.prop is applied by vendor_init, and these are core
+# property types it may not write --
+#     avc: denied { set } for property=persist.adb.tcp.port
+#          scontext=u:r:vendor_init:s0 tcontext=u:object_r:default_prop:s0
+# which is harmless while permissive and silently drops the setting under
+# enforcing, leaving no adb at all.
+PRODUCT_SYSTEM_PROPERTIES += \
     service.adb.tcp.port=5555 \
     persist.adb.tcp.port=5555
 
 # Serial console is the primary debugging tool during bring-up.
-PRODUCT_VENDOR_PROPERTIES += \
-    ro.boot.console=ttyS0
+#
+# NOT set here: ro.boot.console is bootloader_prop, which vendor_init may not
+# write, so from vendor/build.prop it is only ever a denial. It already arrives
+# from the kernel command line -- tools/mkdisk.sh puts console=ttyS0 in
+# grub.cfg, and init derives ro.boot.* from androidboot/cmdline itself.
 
 # init.rc:83 runs `exec_start init_dev_config` during early-init, before apexd
 # bootstrap. The service is `service init_dev_config ${ro.vendor.init_dev_config.path}`,
@@ -420,13 +434,23 @@ PRODUCT_VENDOR_PROPERTIES += \
 #     Service 'ueventd' failed to start due to a fatal error
 #     reboot: ... 'bootloader,bootstrap-apexd-failed'
 #
-# The hook exists for per-SKU settings and conditional APEX activation. This
-# device needs neither, so point it at a no-op. Cuttlefish ships a real
-# implementation at /vendor/bin/init_dev_config
-# (device/google/cuttlefish/guest/commands/init_dev_config) if we ever need one.
+# The hook exists for per-SKU settings and conditional APEX activation, and
+# this device turns out to need exactly that: pc_select_egl.sh picks Mesa or
+# ANGLE from the DRM driver that actually bound.
 #
-# NOTE: the binary is expected to carry the init_dev_config_exec SELinux label.
-# toybox_vendor does not, which is fine while booting permissive but must be
-# revisited before switching to enforcing. See doc/07-hals.md section 1.
+# It used to point at /vendor/bin/true, with a note that the no-op was fine
+# only while permissive -- /vendor/bin/true is a symlink to toybox_vendor,
+# labelled vendor_toolbox_exec, which init_dev_config may not entrypoint:
+#     avc: denied { entrypoint } scontext=u:r:init_dev_config:s0
+#          path="/vendor/bin/toybox_vendor" tclass=file
+# So enforcing needed this replaced either way.
+#
+# This is also the ONLY domain that can set ro.hardware.egl. The property is a
+# system_vendor_config_prop, and te_macros expands that to
+#     neverallow { domain -init -vendor_init -init_dev_config } $(1):property_service set;
+# so a shell or vendor_shell service of ours is refused at BUILD time, not just
+# denied at runtime. Running before apexd bootstrap also puts it comfortably
+# ahead of zygote, which matters because ro.* can only be set once and the
+# first client to load libEGL fixes the choice.
 PRODUCT_VENDOR_PROPERTIES += \
-    ro.vendor.init_dev_config.path=/vendor/bin/true
+    ro.vendor.init_dev_config.path=/vendor/bin/pc_noop.sh

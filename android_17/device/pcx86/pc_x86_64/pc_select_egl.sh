@@ -64,6 +64,20 @@ fi
 # beats a boot loop.
 [ -z "$why" ] && why="none"
 
-setprop ro.hardware.egl "$egl"
+# Report the finding; init.pc_x86_64.rc turns it into ro.hardware.egl.
+#
+# Setting ro.hardware.egl here is impossible, not merely denied:
+#     neverallow { domain -init -vendor_init } exported_default_prop:property_service set;
+# admits only init and vendor_init, and the same is true of
+# persist.graphics.egl (gpuservice.te allows only init, vendor_init,
+# gpuservice). Property sets in a vendor .rc run as vendor_init, so the one
+# workable split is: this script detects, init.pc_x86_64.rc assigns.
+#
+# No waiting for the result: this runs as 'exec_start init_dev_config', which
+# blocks init, so polling for ro.hardware.egl here would deadlock -- init
+# cannot process the trigger until we exit. It fires immediately after, still
+# far ahead of zygote.
+setprop vendor.pc.gpu "$egl"
 
-log -t "$TAG" "gpu=$why -> ro.hardware.egl=$(getprop ro.hardware.egl)"
+log -t "$TAG" "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
+

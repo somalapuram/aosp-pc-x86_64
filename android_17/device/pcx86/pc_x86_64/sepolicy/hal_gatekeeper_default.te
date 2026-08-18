@@ -1,0 +1,20 @@
+# The gatekeeper HAL also serves ISharedSecret under the "gatekeeper" instance.
+#
+# This is load-bearing, not cosmetic: without it gatekeeperd never publishes,
+# BiometricService's constructor throws "Gatekeeper service not available", and
+# system_server dies in a loop --
+#     FATAL EXCEPTION IN SYSTEM PROCESS: main
+#     java.lang.RuntimeException: Failed to create service
+#         com.android.server.biometrics.BiometricService
+#     Caused by: java.lang.IllegalStateException: Gatekeeper service not available
+# so the device never reaches the launcher at all.
+#
+# Its own type rather than hal_sharedsecret_service, which is the obvious label
+# and is refused: system/sepolicy/vendor/hal_keymint_default.te neverallows
+# anything but hal_keymint from adding that one.
+allow hal_gatekeeper_default pc_sharedsecret_service:service_manager add;
+allow keystore pc_sharedsecret_service:service_manager find;
+
+# keystore drives gatekeeper directly for auth-bound key operations.
+binder_call(keystore, hal_gatekeeper_default)
+binder_call(hal_gatekeeper_default, keystore)

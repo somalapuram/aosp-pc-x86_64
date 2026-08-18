@@ -1,0 +1,1 @@
+type pc_sharedsecret_service, hal_service_type, service_manager_type;

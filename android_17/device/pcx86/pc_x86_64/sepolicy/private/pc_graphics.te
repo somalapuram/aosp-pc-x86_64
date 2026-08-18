@@ -1,0 +1,27 @@
+# minigbm's gralloc mapper is a same-process HAL: it is loaded INTO
+# SurfaceFlinger, bootanim, system_server and every app process, and on init it
+# enumerates /dev/dri. That is why the same denial appears for a dozen
+# unrelated domains -- it is not "graphics services need graphics access", it is
+# every GL client doing device enumeration in-process.
+allow { appdomain surfaceflinger bootanim system_server } gpu_device:dir r_dir_perms;
+allow { appdomain surfaceflinger bootanim system_server } graphics_device:chr_file getattr;
+
+# The GPU's PCI uevent read that libdrm needs is handled by labelling the
+# subtree sysfs_pci -- see sepolicy/device.te, genfs_contexts and
+# surfaceflinger.te. Apps keep the denial: extending any sysfs read to
+# appdomain is refused by five separate neverallows (sdk_sandbox_all,
+# isolated_app, ephemeral_app, pcc_component, coredomain), and libdrm falls
+# back to its ioctl probe there.
+
+# FMQ over memfd: the message queues audio and power HALs share with their
+# clients are memfds, which carry the plain tmpfs label.
+allow { audioserver system_server } tmpfs:file { read write map };
+
+# SwiftShader JITs its shaders, so SurfaceFlinger needs execmem whenever ANGLE
+# is the GL implementation (i.e. on real hardware, where Mesa has no driver).
+# PRODUCT_REQUIRES_INSECURE_EXECMEM_FOR_SWIFTSHADER only reaches system_server.te
+# -- policy.go passes it as target_requires_insecure_execmem_for_swiftshader and
+# nothing in surfaceflinger.te consults it -- so SF needs this spelled out:
+#     avc: denied { execmem } scontext=u:r:surfaceflinger:s0  (956 times)
+allow surfaceflinger self:process execmem;
+

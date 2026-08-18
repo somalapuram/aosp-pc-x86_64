@@ -1,0 +1,34 @@
+# libdrm reads the GPU's PCI uevent to identify the driver. See device.te.
+allow surfaceflinger sysfs_pci:file r_file_perms;
+allow surfaceflinger sysfs_pci:dir r_dir_perms;
+allow bootanim sysfs_pci:file r_file_perms;
+allow bootanim sysfs_pci:dir r_dir_perms;
+
+# system_server and vold read the same PCI attributes (display info and block
+# device topology). These live here rather than in private/ because sysfs_pci is
+# declared in this directory's device.te -- system_ext private policy cannot see
+# a vendor-declared type and fails with "unknown type sysfs_pci".
+allow system_server sysfs_pci:file r_file_perms;
+allow system_server sysfs_pci:dir r_dir_perms;
+allow vold sysfs_pci:file rw_file_perms;
+allow vold sysfs_pci:dir r_dir_perms;
+
+# Apps too. minigbm's mapper is a same-process HAL, so every app process runs
+# the same libdrm probe that SurfaceFlinger does -- 4346 denials from priv_app
+# alone in one boot. This is why the subtree got its own type: coredomain.te
+# objects to unlabelled kernel interfaces, not to labelled ones, so sysfs_pci is
+# grantable where plain sysfs was not.
+# Named app domains rather than the appdomain attribute. 'appdomain' pulls in
+# isolated_app, which isolated_app_all.te neverallows every sysfs_type bar a
+# short allowlist; and writing '{ appdomain -isolated_app }' to exclude it makes
+# sepolicy_test fail on an attribute this tree does not define
+# ("isolated_compute_allowed_property_type" does not exist). These three are the
+# ones that actually appear in the denial log.
+allow { priv_app platform_app system_app } sysfs_pci:file r_file_perms;
+allow { priv_app platform_app system_app } sysfs_pci:dir r_dir_perms;
+
+# system_suspend also reads a wakeup name under here, and is left denied:
+# it is a PRIVATE type, so vendor policy cannot name it ("unknown type
+# system_suspend"), and system_ext private policy cannot see sysfs_pci, which is
+# declared here. The read is informational -- a wakeup source's name -- so
+# neither half is worth relocating for.

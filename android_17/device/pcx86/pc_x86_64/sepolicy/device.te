@@ -1,0 +1,18 @@
+# virtio-console ports carrying the bring-up log streams (hvc0 kmsg, hvc1
+# logcat, hvc2 screencap). Their own type so the shell-domain helper services
+# can write them without opening up the generic 'device' type, which would
+# grant access to every unlabeled node on the system.
+type pc_console_device, dev_type;
+
+# The PCI device tree in sysfs. libdrm reads /sys/devices/pci*/*/uevent to get
+# the vendor/device IDs of the GPU, and Mesa cannot choose an EGLConfig without
+# it -- SurfaceFlinger aborts with "no suitable EGLConfig found, giving up".
+#
+# It needs its own type rather than an allow on plain sysfs. coredomain.te is
+# explicit about why:
+#     # Core domains are not permitted to use kernel interfaces which are not
+#     # explicitly labeled.
+#     neverallow { coredomain ... } sysfs:file read;
+# and SurfaceFlinger is a coredomain, so granting generic sysfs fails the build.
+# Labelling the subtree is the sanctioned answer.
+type sysfs_pci, fs_type, sysfs_type;

@@ -38,6 +38,13 @@
 # Matches device/google/cuttlefish/shared/config/ueventd.rc.
 /dev/video*               0660   system     camera
 
+# Kernel log. Default is 0600 root:root, which makes pc-kmsg-file (running as
+# shell) ask for CAP_DAC_OVERRIDE -- and shell is an appdomain, which
+# app_neverallows.te forbids any capability at all. Widening to the log group
+# it already belongs to removes the need:
+#     avc: denied { dac_override } comm="pc_kmsg_file.sh" scontext=u:r:shell:s0
+/dev/kmsg                 0640   root       log
+
 # Misc
 /dev/rtc0                 0640   system     system
 /dev/tty0                 0660   root       system

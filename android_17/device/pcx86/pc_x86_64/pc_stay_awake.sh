@@ -58,11 +58,9 @@ else
     log -t "$TAG" "screen_off_timeout=$(settings get system screen_off_timeout) sleep_timeout=$(settings get secure sleep_timeout)"
 fi
 
-# Belt and braces: a kernel wakelock blocks deep suspend regardless of what
-# the framework decides. Without this the box can still drop into S3 and stop
-# responding to everything except a power button.
-if echo "$TAG" > /sys/power/wake_lock 2>/dev/null; then
-    log -t "$TAG" "holding kernel wakelock"
-else
-    log -t "$TAG" "could not take a kernel wakelock (CONFIG_PM_WAKELOCKS?)"
-fi
+# The kernel wakelock is taken by init, not here: /sys/power/wake_lock needs
+# CAP_BLOCK_SUSPEND, and shell is an appdomain --
+#     neverallow { appdomain -bluetooth -network_stack -nfc } self:capability_class_set *;
+# forbids it any capability at all. init already holds rw on sysfs_wake_lock
+# (system/sepolicy/private/system_suspend.te), so init.pc_x86_64.rc does it in
+# one line at 'on boot'.

@@ -1,0 +1,4 @@
+# vendor.pc.gpu  - the GL driver pc_select_egl.sh detected
+# vendor.pc.boot - set by init at 'on boot' to key late-boot work off
+# vendor.pc.ran  - breadcrumb proving the detection script executed
+vendor.pc.    u:object_r:vendor_pc_gpu_prop:s0 prefix string

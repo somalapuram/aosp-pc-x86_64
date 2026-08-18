@@ -1,0 +1,26 @@
+# Bring-up helper scripts (pc-stay-awake, pc-screencap, pc-debug-dump,
+# pc-kmsg-file, pc-logcat-file).
+#
+# On system_ext, labelled shell_exec, so init's services run them in the shell
+# domain -- init.te already carries domain_trans(init, shell_exec, shell), so no
+# transition rule is needed.
+#
+# They cannot live on /vendor. They run screencap, logcat and ip, and a vendor
+# domain may neither entrypoint from a coredomain nor execute system files:
+#
+#     neverallow coredomain { file_type -system_file_type ... }:file entrypoint;
+#     # Do not allow vendor components to execute files from system
+#     neverallow { domain -shell -ueventd ... } system_file:file execute;
+#
+# Nor can they sit on /system with the label declared in the device's vendor
+# sepolicy, which is where this entry started:
+#
+#     ERROR: Vendor's file_contexts must not label files in platform partitions.
+#     Violations: /system/bin/pc_[a-z_]+\.sh
+#
+# system_ext is the partition a device may add platform components to, and this
+# file is its private policy (SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS). Both spellings
+# are matched because system_ext is folded into system/ on this product.
+# device/google/cuttlefish/.../system_ext/private/file_contexts labels its own
+# set_adb.sh the same way.
+/(system_ext|system/system_ext)/bin/pc_[a-z_]+\.sh    u:object_r:shell_exec:s0

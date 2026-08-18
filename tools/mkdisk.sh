@@ -121,11 +121,15 @@ menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=permissive \\
+           androidboot.selinux=enforcing \\
            console=ttyS0,115200 loglevel=7
     initrd /ramdisk.img
 }
 
+# The verbose entry stays PERMISSIVE on purpose. It is the escape hatch: if a
+# policy change makes the default entry unbootable, pick this one at the GRUB
+# menu and the denials are logged instead of enforced, which is the only way to
+# see what the new policy actually broke.
 menuentry "Android pc_x86_64 (verbose, serial only)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\

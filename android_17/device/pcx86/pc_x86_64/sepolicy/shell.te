@@ -1,0 +1,13 @@
+# What the bring-up helpers (init.pc_x86_64.rc) need beyond stock shell.
+# Everything else they do -- screencap, logcat, getprop, settings, ip, toybox --
+# shell can already do, which is the point of running them here rather than in
+# a vendor domain.
+
+# pc-logcat-file, pc-kmsg-file and pc-screencap stream to the virtio-console
+# ports. Unlabeled these fall back to the generic 'device' type and the streams
+# silently produce nothing.
+allow shell pc_console_device:chr_file rw_file_perms;
+
+# pc-kmsg-file streams the kernel ring buffer from /dev/kmsg. See the script for
+# why it does not use dmesg(1).
+allow shell kmsg_device:chr_file r_file_perms;

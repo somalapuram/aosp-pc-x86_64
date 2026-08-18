@@ -1,0 +1,7 @@
+# init.pc_x86_64.rc is a vendor rc, so every command in it runs as vendor_init:
+# the vendor.pc.gpu -> ro.hardware.egl relay, and 'setprop vendor.pc.boot 1'
+# that keys late-boot work.
+set_prop(vendor_init, vendor_pc_gpu_prop)
+
+# 'write /proc/sys/kernel/panic_on_oops 1' from 'on early-init'.
+allow vendor_init proc_panic:file w_file_perms;

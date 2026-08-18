@@ -1,0 +1,3 @@
+# FMQ over memfd: the message queues the audio and power HALs share with their
+# clients are memfds, which carry the plain tmpfs label.
+allow hal_audio_default tmpfs:file { read write map };
