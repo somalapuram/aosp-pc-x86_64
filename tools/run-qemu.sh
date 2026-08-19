@@ -272,12 +272,27 @@ else
 # VNC is the right remote answer anyway: QEMU renders with egl-headless on the
 # host GPU and ships finished frames, instead of pushing X11 traffic per frame.
 if [[ "$DISPLAY_MODE" == auto ]]; then
-    if [[ -n "${SSH_CONNECTION:-}" && -z "${WAYLAND_DISPLAY:-}" && -n "${DISPLAY:-}" ]]; then
-        echo "note: X11 forwarded over SSH -- using VNC rather than a GTK window." >&2
-        echo "      Force it with DISPLAY_MODE=gtk if you really want X11." >&2
-        DISPLAY_MODE=vnc
-    elif [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    # What matters is the SHAPE of DISPLAY, not whether this is an SSH session.
+    #
+    #   :0            a local X server, reached over a unix socket -- the window
+    #                 opens on the monitor physically attached to this machine,
+    #                 and that works perfectly well even when you are sshed in.
+    #   localhost:10  a FORWARDED display, tunnelled back to your client. This
+    #                 is the one that cannot carry gtk,gl=on: there is no direct
+    #                 rendering over the wire.
+    #
+    # An earlier version keyed off SSH_CONNECTION and sent anyone with a DISPLAY
+    # to VNC, which took the local monitor away from an ssh session for no
+    # reason. A bare leading ':' is the reliable tell -- no host part means a
+    # unix socket, which means local.
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
         DISPLAY_MODE=gtk
+    elif [[ "${DISPLAY:-}" == :* ]]; then
+        DISPLAY_MODE=gtk
+    elif [[ -n "${DISPLAY:-}" ]]; then
+        echo "note: DISPLAY=$DISPLAY looks forwarded -- using VNC, which does not" >&2
+        echo "      need direct rendering. Force X11 with DISPLAY_MODE=gtk." >&2
+        DISPLAY_MODE=vnc
     else
         DISPLAY_MODE=none
     fi

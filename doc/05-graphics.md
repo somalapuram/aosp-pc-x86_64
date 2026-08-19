@@ -451,10 +451,11 @@ look at the guest:
 DISPLAY_MODE=gtk ./build.sh run     # force a GTK window on a local display
 ```
 
-Over an SSH session with X11 forwarding, plain `./build.sh run` resolves to VNC
-by itself and prints the tunnel command, because `gtk,gl=on` onto a forwarded
-display floods stdout with `GDK_IS_MONITOR` assertions and corrupts the serial
-console (§5.4). Verified end-to-end with an RFB client: a full 2560x1600 frame
+Over an SSH session whose `DISPLAY` is *forwarded* (`localhost:10`), plain
+`./build.sh run` resolves to VNC by itself and prints the tunnel command. A
+local `DISPLAY=:0` still opens a GTK window on the attached monitor, sshed in or
+not -- keying off `SSH_CONNECTION` instead of the display shape took that away
+for no reason (§5.4). Verified end-to-end with an RFB client: a full 2560x1600 frame
 of the launcher, wallpaper and all.
 
 `./build.sh test` captures the UI from *inside* the guest with `screencap`
@@ -541,8 +542,11 @@ with the guest console and cuts log lines in half:
 erator they don't (previously: do) have clients ...
 ```
 
-`auto` now detects the forwarded case (`SSH_CONNECTION` set, X11 rather than
-Wayland) and resolves to VNC, which is the better remote answer regardless:
+`auto` distinguishes the two by the SHAPE of `DISPLAY`, not by whether this is
+an SSH session. A bare leading `:` (`:0`) is a local X server on a unix socket,
+so the window opens on the monitor attached to the machine and GTK is right --
+even when you are sshed in. A host part (`localhost:10`) means a forwarded
+display, and that resolves to VNC, which is the better remote answer regardless:
 QEMU renders with `egl-headless` on the host GPU and ships finished frames
 instead of pushing X11 traffic per frame. `DISPLAY_MODE=gtk` still forces the
 window, and `gtk` carries `gl=on` explicitly — without it the plain GTK path
