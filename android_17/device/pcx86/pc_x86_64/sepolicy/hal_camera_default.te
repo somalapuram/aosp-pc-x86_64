@@ -1,0 +1,9 @@
+# The camera HAL shares a fast message queue with cameraserver, and an FMQ is a
+# memfd, which carries the plain tmpfs label. Denied, the session cannot be set
+# up and the device is dropped even though the node is there and readable:
+#     avc: denied { write } name="memfd:MessageQueue"
+#          scontext=u:r:hal_camera_default:s0 tcontext=u:object_r:tmpfs:s0
+#     Attempt to init camera device /dev/video2 failed!
+#     Camera provider ...external/0 ready with 0 camera devices
+# Same rule the audio and power HALs already needed.
+allow hal_camera_default tmpfs:file { read write map };

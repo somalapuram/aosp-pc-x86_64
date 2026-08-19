@@ -164,6 +164,41 @@ CONFIG_VIDEOBUF2_V4L2=y
 CONFIG_IGC=y
 CONFIG_IGB=y
 
+# --- Touchpad --------------------------------------------------------------
+# The bring-up laptop came up with a working built-in keyboard ("AT Translated
+# Set 2 keyboard") and a USB mouse, and NO touchpad of any kind in the input
+# list. i2c-hid was already enabled; what was missing is the I2C controller it
+# sits on. On Intel laptops that is the Synopsys DesignWare block, and without
+# I2C_DESIGNWARE_CORE the bus never appears, so i2c-hid has nothing to attach
+# to and the touchpad is invisible rather than broken.
+# COMMON_CLK first: I2C_DESIGNWARE_PLATFORM is
+#     depends on (ACPI && COMMON_CLK) || !ACPI
+# so with ACPI on and COMMON_CLK off the option is not even offered -- it
+# silently vanishes from .config rather than failing, which is how the first
+# attempt at this shipped a kernel that still had no touchpad.
+CONFIG_COMMON_CLK=y
+
+# The Intel LPSS bridge is what actually exposes those I2C controllers on a
+# laptop; the DesignWare driver binds to what LPSS enumerates.
+CONFIG_MFD_INTEL_LPSS=y
+CONFIG_MFD_INTEL_LPSS_ACPI=y
+CONFIG_MFD_INTEL_LPSS_PCI=y
+
+CONFIG_I2C_DESIGNWARE_CORE=y
+CONFIG_I2C_DESIGNWARE_PLATFORM=y
+
+# Touchpads report as HID multitouch devices; without this they enumerate as a
+# plain mouse at best.
+CONFIG_HID_MULTITOUCH=y
+
+# The PS/2 fallback for laptops that still use it. Synaptics and ALPS were
+# already on; Elantech is common and was not.
+CONFIG_MOUSE_PS2_ELANTECH=y
+CONFIG_MOUSE_PS2_ELANTECH_SMBUS=y
+CONFIG_MOUSE_ELAN_I2C=y
+CONFIG_MOUSE_ELAN_I2C_I2C=y
+CONFIG_MOUSE_ELAN_I2C_SMBUS=y
+
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
