@@ -133,6 +133,37 @@ CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin
 CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
 
 
+# --- Camera: V4L2 + UVC ----------------------------------------------------
+# The external camera HAL enumerates /dev/video*, and without MEDIA_SUPPORT
+# there is no V4L2 core at all -- so no /dev/video* node can ever appear, with
+# or without a webcam plugged in. On real hardware that shows up as the Camera
+# app crashing rather than saying "no camera":
+#     FATAL EXCEPTION: main  (com.android.camera2)
+#     java.lang.ArrayIndexOutOfBoundsException: length=0; index=0
+#         at com.android.camera.app.CameraController.getCharacteristics
+# Camera2 asks for camera[0] against an empty list. The HAL itself was already
+# correct -- "external webcam service is starting" and cameraserver connects to
+# it -- it simply had nothing to enumerate.
+#
+# UVC covers essentially every USB webcam and every laptop's built-in camera,
+# which on a PC is a USB device internally. No firmware blob is needed.
+CONFIG_MEDIA_SUPPORT=y
+CONFIG_MEDIA_SUPPORT_FILTER=y
+CONFIG_MEDIA_CAMERA_SUPPORT=y
+CONFIG_MEDIA_USB_SUPPORT=y
+CONFIG_VIDEO_DEV=y
+CONFIG_USB_VIDEO_CLASS=y
+CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV=y
+CONFIG_V4L2_MEM2MEM_DEV=y
+CONFIG_VIDEOBUF2_V4L2=y
+
+# --- Ethernet: Intel I225/I226 ---------------------------------------------
+# e1000e and r8169 are already on, and the bring-up machine still came up with
+# no eth0 at all -- only lo, dummy0 and tunnels. Recent Intel desktop/laptop
+# boards use I225/I226, which is igc, a separate driver from e1000e.
+CONFIG_IGC=y
+CONFIG_IGB=y
+
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
