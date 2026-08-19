@@ -237,6 +237,37 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml
 
+# --- WiFi / Bluetooth firmware ---------------------------------------------
+# AOSP ships these itself in external/linux-firmware; they just have to be
+# asked for. Staging blobs from the host's linux-firmware by hand was the wrong
+# instinct -- it duplicated what Soong already installs and collided with it:
+#     error: overriding commands for target
+#            .../vendor/firmware/iwlwifi-QuZ-a0-hr-b0-77.ucode
+#
+# Each module installs to intel/iwlwifi/ AND creates the flat symlink the
+# driver actually requests -- iwlwifi builds a bare name with no directory
+# part, while btintel asks for "intel/ibt-...". ueventd already searches
+# /vendor/firmware.
+#
+# This is the Intel set, since the bring-up machine is an Intel laptop:
+#   QuZ  AX201 / 9560      so-a0-gf-a0  AX210 / AX211
+#   gl   BE200             sc-a0-wh-b0  BE201 / BE202
+# Add more from external/linux-firmware/ if a machine turns up with something
+# else; the list is deliberately narrow rather than all 249 MB of iwlwifi.
+PRODUCT_PACKAGES += \
+    linux_firmware_iwlwifi-QuZ-a0-hr-b0-77 \
+    linux_firmware_iwlwifi-so-a0-gf-a0-89 \
+    linux_firmware_iwlwifi-so-a0-gf-a0-pnvm \
+    linux_firmware_iwlwifi-gl-c0-fm-c0-101 \
+    linux_firmware_iwlwifi-gl-c0-fm-c0-c101 \
+    linux_firmware_iwlwifi-gl-c0-fm-c0-pnvm \
+    linux_firmware_iwlwifi-sc-a0-wh-b0-c101 \
+    linux_firmware_iwlwifi-sc-a0-wh-b0-c102 \
+    linux_firmware_btusb-ibt_ax201 \
+    linux_firmware_btusb-ibt_ax211 \
+    linux_firmware_btusb-ibt_be200 \
+    linux_firmware_btpci-ibt_be211
+
 # --- Desktop windowing -----------------------------------------------------
 # This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
 # off because the reference devices are phones, so they have to be turned on
