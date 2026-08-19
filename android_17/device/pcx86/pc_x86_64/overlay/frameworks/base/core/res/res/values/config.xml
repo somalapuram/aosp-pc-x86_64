@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Framework config overrides for the bare-metal x86_64 PC target.
+
+  Desktop windowing. AOSP ships every one of these off by default because the
+  reference devices are phones; a PC with a keyboard, a mouse and a 2560x1600
+  panel is the case they exist for. device/generic/goldfish/tablet does the same
+  two, and this adds the ones that only make sense when the device really is a
+  desktop.
+-->
+<resources>
+    <!-- Desktop mode itself. Without this the whole feature is inert no matter
+         what else is set. -->
+    <bool name="config_isDesktopModeSupported">true</bool>
+
+    <!-- The built-in panel can host desktop sessions. On a phone this is false
+         because the small screen only hosts desktops when an external monitor
+         is attached; here the internal display IS the desktop. -->
+    <bool name="config_canInternalDisplayHostDesktops">true</bool>
+
+    <!-- Expose the developer-options toggle too, so desktop mode can be turned
+         off at runtime without a rebuild while this is being brought up. -->
+    <bool name="config_isDesktopModeDevOptionSupported">true</bool>
+
+    <!-- Enter desktop mode by default rather than starting fullscreen and
+         waiting to be asked. This is the difference between "a tablet that can
+         do windows" and "a desktop". -->
+    <bool name="config_enterDesktopByDefaultOnFreeformDisplay">true</bool>
+
+    <!-- Show the home screen (and its wallpaper) behind floating windows, which
+         is what makes it read as a desktop rather than a blank void. -->
+    <bool name="config_showHomeBehindDesktop">true</bool>
+</resources>

@@ -237,6 +237,30 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml
 
+# --- Desktop windowing -----------------------------------------------------
+# This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
+# off because the reference devices are phones, so they have to be turned on
+# explicitly here.
+#
+# Three parts, and all three are needed -- any one alone does nothing:
+#   1. the framework config booleans, in overlay/ (config_isDesktopModeSupported
+#      and friends);
+#   2. android.software.freeform_window_management, without which the window
+#      manager will not put a task in freeform at all;
+#   3. window_extensions, via large_screen_common.mk, which is what activity
+#      embedding and the large-screen settings layout key off.
+DEVICE_PACKAGE_OVERLAYS += device/pcx86/pc_x86_64/overlay
+
+# Put the built-in panel in WINDOWING_MODE_FREEFORM. Without this desktop mode
+# is available but never entered -- see the file's own comment.
+PRODUCT_COPY_FILES += \
+    device/pcx86/pc_x86_64/display_settings.xml:$(TARGET_COPY_OUT_VENDOR)/etc/display_settings.xml
+
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.software.freeform_window_management.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.freeform_window_management.xml
+
+$(call inherit-product, $(SRC_TARGET_DIR)/product/large_screen_common.mk)
+
 # --- Apps ------------------------------------------------------------------
 # The AOSP app suite already arrives through aosp_product.mk -> handheld_
 # product.mk (Camera2, Calendar, Contacts, DeskClock, Gallery2, Browser2,

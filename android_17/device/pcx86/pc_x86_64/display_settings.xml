@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<!--
+  Per-display window manager settings, read from /vendor/etc/display_settings.xml
+  (DisplayWindowSettingsProvider.VENDOR_DISPLAY_SETTINGS_FILE_PATH).
+
+  windowingMode="5" is WINDOWING_MODE_FREEFORM on the built-in panel. Setting
+  the display's root task display area to freeform is what makes
+  config_enterDesktopByDefaultOnFreeformDisplay (overlay/) actually fire; with
+  the display left fullscreen, desktop mode is available but nothing enters
+  it, and the Desk root task sits there with visible=false forever.
+
+  identifier="1" selects displays by physical port rather than by local id, so
+  "port:0" is the first connected output whatever the GPU calls it. Same shape
+  as device/generic/goldfish/display_settings_freeform.xml.
+-->
+<display-settings>
+    <config identifier="1" />
+    <display name="port:0" windowingMode="5" />
+</display-settings>
