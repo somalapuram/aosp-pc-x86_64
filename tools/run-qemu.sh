@@ -309,6 +309,24 @@ VNCMSG
 esac
 fi
 
+# Drop GTK's per-frame GdkMonitor assertion, and nothing else.
+#
+# Over forwarded X, GTK cannot find a GdkMonitor for a window it does not really
+# own, so QEMU's refresh-rate query fails on every single frame:
+#     qemu: Gdk: gdk_monitor_get_refresh_rate: assertion 'GDK_IS_MONITOR (monitor)' failed
+# The window itself is fine -- this is a g_return_if_fail yielding a 0 refresh
+# rate -- but thousands of them bury the guest console.
+#
+# They go to stderr while '-serial mon:stdio' puts the guest console on stdout,
+# so one grep on stderr alone removes the flood and keeps everything else:
+# real QEMU errors still print, and the console is untouched. Matching the exact
+# assertion text rather than silencing stderr wholesale is deliberate -- a VM
+# that fails to start must still say why.
+if [[ "$DISPLAY_MODE" == gtk ]]; then
+    exec 2> >(grep --line-buffered -v \
+        "gdk_monitor_get_refresh_rate: assertion 'GDK_IS_MONITOR (monitor)' failed" >&2)
+fi
+
 exec qemu-system-x86_64 \
     "${ACCEL[@]}" \
     "${MEMOPTS[@]}" \
