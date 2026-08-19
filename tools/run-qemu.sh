@@ -279,7 +279,7 @@ if [[ "$DISPLAY_MODE" == auto ]]; then
     # be clever about WHICH display it is. First it keyed off SSH_CONNECTION and
     # sent every ssh session to VNC -- which took away the monitor attached to
     # this machine, since a graphical session on seat0 gives an sshed-in shell a
-    # perfectly usable DISPLAY=:0. Then it keyed off the shape of DISPLAY and
+    # perfectly usable local display. Then it keyed off the shape of DISPLAY and
     # sent forwarded displays to VNC instead -- which took away the MobaXterm
     # window, and that works too: qemu -display gtk on localhost:10.0 opens a
     # window on the client's X server, gl=on included.
@@ -294,28 +294,6 @@ if [[ "$DISPLAY_MODE" == auto ]]; then
     fi
 fi
 
-# Say where the window is going. X11 sends it wherever DISPLAY points and gives
-# no clue which screen that is, so "I don't see the window" and "the window is
-# on the wrong screen" look identical from the terminal. One line removes the
-# guesswork:
-#   DISPLAY=localhost:10.0  -> your SSH client's X server (MobaXterm, PuTTY)
-#   DISPLAY=:0              -> the monitor attached to this machine
-#   unset                   -> headless, there is no window to see
-if [[ "$DISPLAY_MODE" == gtk ]]; then
-    if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
-        echo "note: opening a window on WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >&2
-    else
-        echo "note: opening a window on DISPLAY=$DISPLAY" >&2
-        case "$DISPLAY" in
-            :*) echo "      (a bare ':' is this machine's own screen, NOT your SSH client)" >&2 ;;
-            *)  echo "      (forwarded -- it should appear in your SSH client)" >&2 ;;
-        esac
-    fi
-elif [[ "$DISPLAY_MODE" == none ]]; then
-    echo "note: DISPLAY is unset, so this runs headless -- there is no window." >&2
-    echo "      Check 'echo \$DISPLAY'; if it is empty your SSH session has no" >&2
-    echo "      X11 forwarding, and nothing graphical can reach you." >&2
-fi
 
 
 case "$DISPLAY_MODE" in
