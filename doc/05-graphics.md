@@ -451,11 +451,10 @@ look at the guest:
 DISPLAY_MODE=gtk ./build.sh run     # force a GTK window on a local display
 ```
 
-Over an SSH session whose `DISPLAY` is *forwarded* (`localhost:10`), plain
-`./build.sh run` resolves to VNC by itself and prints the tunnel command. A
-local `DISPLAY=:0` still opens a GTK window on the attached monitor, sshed in or
-not -- keying off `SSH_CONNECTION` instead of the display shape took that away
-for no reason (§5.4). Verified end-to-end with an RFB client: a full 2560x1600 frame
+Trying to guess which display the user *meant* got this wrong twice, in
+opposite directions: keying off `SSH_CONNECTION` took away the attached monitor,
+and then keying off the shape of `DISPLAY` took away the forwarded window. Both
+work. Do not guess (§5.4). Verified end-to-end with an RFB client: a full 2560x1600 frame
 of the launcher, wallpaper and all.
 
 `./build.sh test` captures the UI from *inside* the guest with `screencap`
@@ -542,11 +541,12 @@ with the guest console and cuts log lines in half:
 erator they don't (previously: do) have clients ...
 ```
 
-`auto` distinguishes the two by the SHAPE of `DISPLAY`, not by whether this is
-an SSH session. A bare leading `:` (`:0`) is a local X server on a unix socket,
-so the window opens on the monitor attached to the machine and GTK is right --
-even when you are sshed in. A host part (`localhost:10`) means a forwarded
-display, and that resolves to VNC, which is the better remote answer regardless:
+`auto` is deliberately simple: if `DISPLAY` or `WAYLAND_DISPLAY` is set, open a
+GTK window on it, wherever it points. Both a local `:0` (the monitor attached to
+this machine, which an sshed-in shell can still use) and a forwarded
+`localhost:10` (your MobaXterm/PuTTY X server) work -- `qemu -display gtk` opens
+on either, `gl=on` included. VNC is opt-in via `DISPLAY_MODE=vnc`, because it
+costs a client and a tunnel every time:
 QEMU renders with `egl-headless` on the host GPU and ships finished frames
 instead of pushing X11 traffic per frame. `DISPLAY_MODE=gtk` still forces the
 window, and `gtk` carries `gl=on` explicitly — without it the plain GTK path

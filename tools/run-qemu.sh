@@ -272,31 +272,28 @@ else
 # VNC is the right remote answer anyway: QEMU renders with egl-headless on the
 # host GPU and ships finished frames, instead of pushing X11 traffic per frame.
 if [[ "$DISPLAY_MODE" == auto ]]; then
-    # What matters is the SHAPE of DISPLAY, not whether this is an SSH session.
+    # If there is a display of any kind, show the window on it. That is the
+    # whole rule.
     #
-    #   :0            a local X server, reached over a unix socket -- the window
-    #                 opens on the monitor physically attached to this machine,
-    #                 and that works perfectly well even when you are sshed in.
-    #   localhost:10  a FORWARDED display, tunnelled back to your client. This
-    #                 is the one that cannot carry gtk,gl=on: there is no direct
-    #                 rendering over the wire.
+    # This has been wrong twice, in both directions, and both times by trying to
+    # be clever about WHICH display it is. First it keyed off SSH_CONNECTION and
+    # sent every ssh session to VNC -- which took away the monitor attached to
+    # this machine, since a graphical session on seat0 gives an sshed-in shell a
+    # perfectly usable DISPLAY=:0. Then it keyed off the shape of DISPLAY and
+    # sent forwarded displays to VNC instead -- which took away the MobaXterm
+    # window, and that works too: qemu -display gtk on localhost:10.0 opens a
+    # window on the client's X server, gl=on included.
     #
-    # An earlier version keyed off SSH_CONNECTION and sent anyone with a DISPLAY
-    # to VNC, which took the local monitor away from an ssh session for no
-    # reason. A bare leading ':' is the reliable tell -- no host part means a
-    # unix socket, which means local.
-    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    # Both were solving a problem the user did not have. VNC is worth having for
+    # a headless host or a slow link, but it is an extra client and an extra
+    # tunnel every time, so it is opt-in: DISPLAY_MODE=vnc.
+    if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
         DISPLAY_MODE=gtk
-    elif [[ "${DISPLAY:-}" == :* ]]; then
-        DISPLAY_MODE=gtk
-    elif [[ -n "${DISPLAY:-}" ]]; then
-        echo "note: DISPLAY=$DISPLAY looks forwarded -- using VNC, which does not" >&2
-        echo "      need direct rendering. Force X11 with DISPLAY_MODE=gtk." >&2
-        DISPLAY_MODE=vnc
     else
         DISPLAY_MODE=none
     fi
 fi
+
 
 case "$DISPLAY_MODE" in
     none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
