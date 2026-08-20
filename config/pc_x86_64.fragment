@@ -394,3 +394,58 @@ CONFIG_SERIAL_8250_CONSOLE=y
 CONFIG_MAGIC_SYSRQ=y
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
+
+# --- Audio: SOF (Sound Open Firmware) --------------------------------------
+# The HDA controller binds but finds nothing on the link:
+#     snd_hda_intel 0000:00:1f.3: Cannot probe codecs, giving up
+#     ALSA device list:   No soundcards found.
+#
+# That is not a missing codec driver -- it is the wrong stack entirely. This is
+# a Meteor Lake machine (GPU 8086:7dd5, audio 8086:7e28), where the codec sits
+# behind the audio DSP rather than on the legacy HDA link, so legacy probing
+# has nothing to find no matter which SND_HDA_CODEC_* are built. The DSP has to
+# be driven by SOF, which loads firmware into it and then enumerates the codec.
+#
+# Android's side is already in place -- the AIDL audio HAL starts and registers
+# IModule/default -- so this is purely kernel plus firmware.
+CONFIG_SPI=y
+
+CONFIG_SOUNDWIRE=y
+CONFIG_SOUNDWIRE_INTEL=y
+
+CONFIG_SND_SOC_SOF_TOPLEVEL=y
+CONFIG_SND_SOC_SOF_PCI=y
+CONFIG_SND_SOC_SOF_INTEL_TOPLEVEL=y
+CONFIG_SND_SOC_SOF_METEORLAKE=y
+CONFIG_SND_SOC_SOF_INTEL_SOUNDWIRE=y
+# HDA_LINK gates HDA_AUDIO_CODEC, and it is a plain bool defaulting to n --
+# setting only HDA_AUDIO_CODEC silently dropped it from .config on the first
+# build. It carries the HDA and HDMI links under SOF, so without it there is no
+# display audio and no analog codec on the HDA link; the SoundWire path would
+# still have worked, which is exactly what would have made this hard to spot.
+CONFIG_SND_SOC_SOF_HDA_LINK=y
+CONFIG_SND_SOC_SOF_HDA_AUDIO_CODEC=y
+
+# Which codec this laptop actually has is not knowable from here -- it is
+# reported by ACPI at runtime, and the machine was not introspectable while
+# powered down. SND_SOC_INTEL_SOUNDWIRE_SOF_MACH resolves that: it is the
+# generic SoundWire machine driver and it 'select's essentially every codec a
+# Meteor Lake laptop might carry (rt711/rt712/rt715/rt721/rt722, cs42l43 with
+# its MFD, cs35l56, max98373, DMIC and more), letting the right one match by
+# ACPI at boot. That is why the codecs are not listed individually below.
+#
+# Its four dependencies are all satisfied: I2C and ACPI were already on,
+# MFD_INTEL_LPSS came in with the touchpad work, SOUNDWIRE is enabled just
+# above, and SPI -- which was NOT set -- is enabled above too. Miss any one and
+# the option does not error, it silently vanishes from .config, exactly as
+# I2C_DESIGNWARE_PLATFORM did when COMMON_CLK was off.
+CONFIG_SND_SOC_INTEL_MACH=y
+CONFIG_SND_SOC_INTEL_USER_FRIENDLY_LONG_NAMES=y
+CONFIG_SND_SOC_INTEL_HDA_DSP_COMMON=y
+CONFIG_SND_SOC_INTEL_SOUNDWIRE_SOF_MACH=y
+
+# Legacy HDA codecs as well, for the case where the analog codec really is on
+# the HDA link behind the DSP, and for display audio over HDMI/DP.
+CONFIG_SND_HDA_GENERIC=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_HDA_CODEC_HDMI=y

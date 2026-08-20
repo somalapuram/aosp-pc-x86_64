@@ -308,6 +308,42 @@ PRODUCT_COPY_FILES += \
     $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/intel/*), \
         $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/intel/$(notdir $(f)))
 
+# --- Audio firmware: SOF for Meteor Lake -----------------------------------
+# See config/pc_x86_64.fragment for why this machine needs SOF at all rather
+# than legacy HDA codec probing.
+#
+# The paths matter and are NOT the ones the host filesystem suggests. The
+# driver builds them from mtl_desc in sound/soc/sof/intel/pci-mtl.c:
+#     .default_fw_path  [SOF_IPC_TYPE_4] = "intel/sof-ipc4/mtl"
+#     .default_tplg_path[SOF_IPC_TYPE_4] = "intel/sof-ipc4-tplg"
+#     .default_fw_filename                = "sof-mtl.ri"
+# On a distro, /lib/firmware/intel/sof-ace-tplg is a directory of symlinks
+# pointing into sof-ipc4-tplg; copying from the name that shows up first would
+# have shipped the topologies to a directory the driver never looks in.
+#
+# Both files are copied with `cp -L` from the host's linux-firmware, since
+# sof-mtl.ri is itself a symlink (to intel-signed/sof-mtl.ri) -- the signed
+# build, which is what a retail machine's DSP will accept.
+#
+# The WHOLE topology set is shipped (189 files, 9.3 MB), not just sof-mtl-*.
+# Shipping only the platform-prefixed ones was wrong, and the driver said so by
+# name:
+#     using HDA machine driver skl_hda_dsp_generic now
+#     SOF firmware and/or topology file not found.
+#       Topology file: intel/sof-ipc4-tplg/sof-hda-generic-2ch.tplg
+#     error: sof_probe_work failed err: -2
+# The topology filename comes from the MACHINE driver, not the platform: this
+# machine's codec turned out to be on the HDA link ("hda codecs found, mask 5"),
+# so the generic HDA machine driver was selected and it asks for
+# sof-hda-generic-*.tplg -- a name with no "mtl" in it anywhere. Since the
+# machine driver is itself chosen at runtime from ACPI/NHLT, the only way to be
+# sure the right topology is present is to ship them all.
+PRODUCT_COPY_FILES += \
+    $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/sof-ipc4/mtl/*), \
+        $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/intel/sof-ipc4/mtl/$(notdir $(f))) \
+    $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/sof-ipc4-tplg/*), \
+        $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/intel/sof-ipc4-tplg/$(notdir $(f)))
+
 # --- WiFi: supplicant + wificond, no vendor HAL ----------------------------
 # See BoardConfig.mk for why there is no android.hardware.wifi vendor HAL and
 # why that is a supported configuration rather than a missing piece.
