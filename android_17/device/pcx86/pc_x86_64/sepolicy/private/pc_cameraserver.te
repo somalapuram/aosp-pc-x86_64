@@ -35,3 +35,33 @@ allow cameraserver tmpfs:file { read write map };
 # cameraserver_tmpfs is simply missing from that list upstream. Nothing
 # neverallows it -- app_neverallows.te says nothing about tmpfs.
 allow appdomain cameraserver_tmpfs:file { getattr map read write };
+
+# The allow rule above is necessary but not sufficient, and the audit log says
+# so precisely: before it the denial was { read write }, after it { write }.
+# Type enforcement is satisfied; what still refuses the write is the MLS/MCS
+# constraint, which no allow rule can override.
+#
+# The app is u:r:untrusted_app:s0:c71,c256,c512,c768 and the memfd is plain
+# u:object_r:cameraserver_tmpfs:s0. Reading needs the source level to dominate
+# the target, which a categorised app does over s0 -- so read/getattr/map went
+# through. Writing needs it the other way round, and s0 does not dominate
+# s0:c71,..., so every app with MCS categories is refused. That is the whole
+# point of per-app categories, and it applies to any app, not just this one.
+#
+# An FMQ is bidirectional -- the app writes capture requests into the queue and
+# reads results back -- so read-only access leaves the session just as dead.
+#
+# mlstrustedobject exempts the object from those constraints. AOSP marks the
+# equivalent queues the same way: system_server_tmpfs and app_zygote_tmpfs
+# carry it in their type declarations, and where the declaration cannot be
+# touched it is added exactly like this, from private policy --
+#     system/sepolicy/private/traced.te:10    typeattribute traced_tmpfs mlstrustedobject;
+#     system/sepolicy/private/heapprofd.te:10 typeattribute heapprofd_tmpfs mlstrustedobject;
+# cameraserver_tmpfs is declared in public/cameraserver.te without it, so the
+# attribute is added here rather than by editing the platform.
+#
+# What this gives up: MCS no longer isolates these memfds between apps. The
+# queue is created per camera session and handed to the one client that opened
+# the device, so the exposure is narrow -- and it is the same trade AOSP
+# already makes for the tracing and zygote queues.
+typeattribute cameraserver_tmpfs mlstrustedobject;
