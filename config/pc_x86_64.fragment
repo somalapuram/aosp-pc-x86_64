@@ -444,6 +444,18 @@ CONFIG_SND_SOC_INTEL_USER_FRIENDLY_LONG_NAMES=y
 CONFIG_SND_SOC_INTEL_HDA_DSP_COMMON=y
 CONFIG_SND_SOC_INTEL_SOUNDWIRE_SOF_MACH=y
 
+# The HDA generic machine driver -- the one this machine actually needs, and
+# the piece missing from the first attempt. SOF got all the way to
+#     hda codecs found, mask 5
+#     using HDA machine driver skl_hda_dsp_generic now
+#     Booted firmware version: 2.14.1.1
+# and then went silent with no card: SOF creates the platform device for that
+# machine driver, but nothing was built to bind it. The SoundWire machine
+# driver above cannot serve it -- this codec is on the HDA link, not SoundWire,
+# which is exactly what "hda codecs found" was reporting. Its only dependency,
+# SND_HDA_CODEC_HDMI, is already set above.
+CONFIG_SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH=y
+
 # Legacy HDA codecs as well, for the case where the analog codec really is on
 # the HDA link behind the DSP, and for display audio over HDMI/DP.
 CONFIG_SND_HDA_GENERIC=y
