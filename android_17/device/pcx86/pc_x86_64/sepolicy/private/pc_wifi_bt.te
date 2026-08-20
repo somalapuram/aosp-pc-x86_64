@@ -1,0 +1,30 @@
+# WiFi and Bluetooth property reads, both specific to how this device is built.
+#
+# These live in private/ (SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS) rather than in the
+# vendor sepolicy dir because bluetooth_lea_prop is a private platform type --
+# vendor policy cannot name it, and system/sepolicy carries
+#     neverallow { domain -coredomain } bluetooth_lea_prop:file { ... read ... }
+# so it may only ever be granted to a coredomain. Both domains below are
+# coredomains, so both grants are inside that neverallow.
+
+# system_server reads wifi.interface / wlan.driver.status (wifi_hal_prop)
+# directly on this device:
+#     avc: denied { read } name="u:object_r:wifi_hal_prop:s0"
+#          comm="WifiHandlerThre" scontext=u:r:system_server
+#
+# Upstream this is unnecessary, because the interface name reaches the
+# framework through the vendor WiFi HAL, and system/sepolicy therefore grants
+# wifi_hal_prop only to hal_wifi_server and vendor_init. This device has no
+# vendor WiFi HAL by design (see BoardConfig.mk), so WifiNative takes its
+# no-vendor-HAL path and consults the property itself. The type is
+# system_public_prop, so reading it from a coredomain is unrestricted.
+get_prop(system_server, wifi_hal_prop)
+
+# SystemUI reads persist.bluetooth.leaudio.* (bluetooth_lea_prop):
+#     avc: denied { read } name="u:object_r:bluetooth_lea_prop:s0"
+#          comm="SystemUIBg-13" scontext=u:r:platform_app app=com.android.systemui
+#
+# AOSP grants this to system_app and gmscore_app. On this build SystemUI is
+# signed with the platform key but lands in platform_app rather than
+# system_app, so neither grant covers it.
+get_prop(platform_app, bluetooth_lea_prop)

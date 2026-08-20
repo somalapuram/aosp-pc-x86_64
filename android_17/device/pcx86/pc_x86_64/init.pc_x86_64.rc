@@ -90,6 +90,16 @@ on post-fs-data
     mkdir /data/vendor/pc 0770 root system
     mkdir /data/vendor/hardware 0771 root root
 
+    # wpa_supplicant's control-socket directory. Its init service runs with
+    #     -O/data/vendor/wifi/wpa/sockets
+    # and it does NOT create the path itself -- it fails to start if the
+    # directory is missing. AOSP already labels /data/vendor/wifi/wpa(/.*)? as
+    # wpa_data_file in system/sepolicy/vendor/file_contexts, so only the mkdir
+    # is needed here, not a file_contexts entry.
+    mkdir /data/vendor/wifi 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
+
 on boot
     # No kernel wakelock here. Writing /sys/power/wake_lock needs
     # CAP_BLOCK_SUSPEND, and commands in a vendor rc run as vendor_init:

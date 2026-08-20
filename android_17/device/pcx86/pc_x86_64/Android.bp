@@ -72,3 +72,29 @@ cc_prebuilt_library_shared {
         x86:    { srcs: ["mesa/lib/libgallium_dri.so"] },
     },
 }
+
+// wpa_supplicant's config template, installed to
+// /vendor/etc/wifi/wpa_supplicant.conf.
+//
+// The supplicant will not create a STA interface without a config file and
+// logs only "Conf file does not exist: /data/vendor/wifi/wpa/wpa_supplicant.conf",
+// which reads like something should have seeded /data. Nothing does: the
+// supplicant seeds it itself, from this vendor path, via
+// ensureConfigFileExists() in wpa_supplicant/aidl/supplicant.cpp.
+//
+// src is the same genrule every vendor tree uses, so the contents are the
+// stock AOSP template (update_config=1, pmf=1, sae_pwe=2, ...) with comments
+// and blank lines stripped -- nothing device-specific, which is the point:
+// there is nothing about this PC that needs a custom supplicant config.
+//
+// The module cannot be named "wpa_supplicant.conf": bcmdhd, synadhd and both
+// qcwcn trees each already declare a module with exactly that name. Hence a
+// distinct name plus an explicit filename.
+prebuilt_etc {
+    name: "pc_wpa_supplicant_conf",
+    src: ":wpa_supplicant_conf_gen",
+    filename: "wpa_supplicant.conf",
+    sub_dir: "wifi",
+    vendor: true,
+    licenses: ["external_wpa_supplicant_8_license"],
+}

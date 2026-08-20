@@ -84,3 +84,43 @@ BOARD_VENDOR_SEPOLICY_DIRS += device/pcx86/pc_x86_64/sepolicy
 # that vendor policy cannot see. See sepolicy/private/bpffs_name_transitions.te
 # for why they are required on a mainline kernel.
 SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/pcx86/pc_x86_64/sepolicy/private
+
+# --- WiFi ------------------------------------------------------------------
+# There is deliberately no vendor WiFi HAL here. That is a supported
+# configuration rather than a gap: WifiNative has an explicit no-vendor-HAL
+# path (handleIfaceCreationWhenVendorHalNotSupported, WifiNative.java), and
+# everything this device needs -- scan, connect, WPA2/WPA3 -- goes through
+# wpa_supplicant on nl80211 plus wificond, neither of which calls the vendor
+# HAL. What is lost is the vendor-HAL-only surface: link-layer stats, RTT,
+# Aware/NAN, tethered SoftAP and multi-iface concurrency.
+#
+# The alternative, android.hardware.wifi-service, is worse here: its vendor
+# half is per-chip (libwifi-hal-bcm/-syna/-qcom/...), and with BOARD_WLAN_DEVICE
+# unset it links libwifi-hal-fallback, whose every entry point returns
+# NOT_SUPPORTED. IWifi.start() then fails and the framework reports a broken
+# HAL -- strictly worse than not declaring one. libwifi-hal-desktop looks by
+# name like the right answer for this device, but it is only REFERENCED in
+# frameworks/opt/net/wifi/libwifi_hal/Android.bp; no module of that name exists
+# in this tree, so BOARD_WLAN_DEVICE := desktop does not link.
+#
+# Soong reads all of these through
+# external/wpa_supplicant_8/board_config_wpa_supplicant.mk, which
+# build/make/core/board_config.mk includes.
+BOARD_WPA_SUPPLICANT_DRIVER := NL80211
+
+# REQUIRED, and easy to miss: in wpa_supplicant/Android.bp the supplicant's
+# init_rc sits inside a soong_config_variables block gated on exactly this
+# variable. Without it wpa_supplicant still builds and still installs to
+# /vendor/bin/hw/wpa_supplicant -- with no init service anywhere. Nothing ever
+# starts it, and the failure presents as the supplicant HAL being dead rather
+# than as a missing .rc.
+WIFI_HIDL_UNIFIED_SUPPLICANT_SERVICE_RC_ENTRY := true
+
+# The bring-up laptop's card is an AX211 (Wi-Fi 6E), so build the 11ax paths.
+WIFI_FEATURE_SUPPLICANT_11AX := true
+
+# BOARD_WPA_SUPPLICANT_PRIVATE_LIB is intentionally left unset. It names a
+# per-vendor driver-command shim (cuttlefish uses lib_driver_cmd_simulated_cf_bp
+# for mac80211_hwsim); empty selects the stub, which is what a generic nl80211
+# driver such as iwlwifi wants. Same for BOARD_HOSTAPD_* -- no SoftAP without a
+# vendor HAL, so hostapd is not built.

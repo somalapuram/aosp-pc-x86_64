@@ -284,6 +284,97 @@ PRODUCT_COPY_FILES += \
     $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/iwlwifi/*), \
         $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/$(notdir $(f)))
 
+# --- Bluetooth firmware: Intel "0180" bootloader variant --------------------
+# Same story as the iwlwifi "ma" family above, and found the same way -- from
+# the kernel log rather than by guessing:
+#     Bluetooth: hci0: Failed to load Intel firmware file
+#                intel/ibt-0180-0041.sfi (-2)
+#
+# AOSP's external/linux-firmware/btusb-ibt_ax211/ ships ibt-0040-0041.{sfi,ddc}
+# and nothing else, but this AX211 reports a different bootloader variant and
+# so asks for ibt-0180-*. btintel builds the name from the hardware's own
+# variant/revision, so the 0040 files are never even considered -- the
+# controller stays down and hci0 never finishes coming up, which is why the
+# Bluetooth stack sat forever on "Waiting for service ...IBluetoothHci/default".
+#
+# Taken from the host's linux-firmware. The .ddc is byte-identical to the 0040
+# one (upstream ships ibt-0180-0041.ddc as a symlink to ibt-0040-0041.ddc), but
+# it is stored here under its real name because request_firmware() does not
+# follow anything -- it asks for exactly this filename.
+#
+# These keep the intel/ directory prefix, unlike the iwlwifi blobs: btintel
+# builds "intel/ibt-..." while iwlwifi builds a bare filename.
+PRODUCT_COPY_FILES += \
+    $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/intel/*), \
+        $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/intel/$(notdir $(f)))
+
+# --- WiFi: supplicant + wificond, no vendor HAL ----------------------------
+# See BoardConfig.mk for why there is no android.hardware.wifi vendor HAL and
+# why that is a supported configuration rather than a missing piece.
+#
+# wpa_supplicant is 'proprietary: true' so it installs to /vendor/bin/hw/, and
+# it carries its own VINTF fragment via vintf_fragment_modules -- so unlike the
+# external camera provider it must NOT also be listed in manifest.xml.
+#
+# wificond comes from base_system_ext.mk already; it is repeated here because
+# that inclusion is conditional on the RELEASE_DISABLE_WIFICOND build flag and
+# WiFi does not work without it -- wificond is what actually drives scans and
+# carries the softap/scan interface the framework talks to.
+PRODUCT_PACKAGES += \
+    wpa_supplicant \
+    wificond \
+    pc_wpa_supplicant_conf
+
+# wpa_supplicant refuses to create a STA interface without a config file:
+#     E wpa_supplicant: Conf file does not exist:
+#                       /data/vendor/wifi/wpa/wpa_supplicant.conf
+#     E WifiNative: Failed to setup iface in supplicant on Iface:{Name=wlan0..}
+# It does NOT have to be seeded into /data by hand. supplicant.cpp's
+# ensureConfigFileExists() falls back, in order, to /data/misc/wifi (legacy),
+# then resolveVendorConfPath("/etc/wifi/wpa_supplicant.conf") -- which for a
+# /vendor binary is /vendor/etc/wifi/wpa_supplicant.conf -- and copies whatever
+# it finds into /data/vendor/wifi/wpa/. So shipping the template at that vendor
+# path is enough, and the copy survives factory reset correctly.
+#
+# pc_wpa_supplicant_conf is defined in Android.bp and installs the stock
+# generated template under the real name. It is NOT called
+# 'wpa_supplicant.conf': four vendor trees in AOSP already define a module by
+# that exact name (bcmdhd, synadhd, and both qcwcn variants).
+
+# The framework only starts WifiService when this feature is present; without
+# it WifiManager is null and every caller NPEs. Those NPEs were exactly the two
+# com.android.settings crashes left after the kernel-side WiFi work landed.
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml
+
+# Not declared: android.hardware.wifi.direct (p2p), .aware (NAN), .rtt and
+# .passpoint. p2p needs a P2P interface the no-vendor-HAL path will not create,
+# and aware/rtt are vendor-HAL-only. Declaring a feature that is absent is
+# worse than omitting it -- apps call into it and fail.
+
+# --- Bluetooth -------------------------------------------------------------
+# The stock AIDL HAL works unmodified on this hardware, which is not obvious:
+# android.hardware.bluetooth-service.default is usually described as the
+# rootcanal/UART emulator HAL, but BluetoothHci::initialize tries
+# NetBluetoothMgmt::openHci() FIRST -- a real AF_BLUETOOTH/HCI_CHANNEL_USER
+# socket bound to a kernel hci index via the Linux mgmt API -- and only falls
+# back to the vendor.ser.bt-uart serial path when no hci device exists. Our
+# btusb-bound Intel controller shows up as hci0, so the first path takes it.
+#
+# The HAL ships its own vintf fragment (bluetooth-service-default.xml), so
+# again no manifest.xml entry.
+PRODUCT_PACKAGES += \
+    android.hardware.bluetooth-service.default
+
+# Both features: android.hardware.bluetooth gates BluetoothAdapter itself and
+# bluetooth_le gates the BLE APIs. The AX211 is a combo card and the kernel
+# brings up both, and BluetoothAdapter being null is what the remaining
+# com.android.settings crash was calling
+# isLeAudioBroadcastSourceSupported() on.
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.bluetooth.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth.xml \
+    frameworks/native/data/etc/android.hardware.bluetooth_le.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth_le.xml
+
 # --- Desktop windowing -----------------------------------------------------
 # This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
 # off because the reference devices are phones, so they have to be turned on
