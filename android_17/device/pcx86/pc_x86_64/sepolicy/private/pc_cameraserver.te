@@ -5,3 +5,33 @@
 # cameraserver is a coredomain, so this lives in private policy rather than the
 # vendor-facing dir.
 allow cameraserver tmpfs:file { read write map };
+
+# The app end of that same FMQ. cameraserver hands the capture-result queue to
+# the client process as a memfd, and it carries cameraserver's own tmpfs label,
+# so the camera app is denied on it:
+#     avc: denied { read write } comm="binder:744_3"
+#          path="/memfd:MessageQueue (deleted)"
+#          scontext=u:r:untrusted_app:s0:c71,...
+#          tcontext=u:object_r:cameraserver_tmpfs:s0 tclass=file
+#
+# This is the third and last hop of the same problem: hal_camera_default was
+# granted first, the denial moved to cameraserver, and with both ends of the
+# HAL connection working it moved once more to the app.
+#
+# The consequence is not a stray audit line. The app cannot map the queue, the
+# camera framework tears the session down, and CameraDeviceImpl reports
+# onDisconnected -- at which point AOSP's Camera2 app crashes in its own
+# close() path:
+#     java.util.NoSuchElementException: Death link does not exist
+#         at CameraDeviceImpl.close(CameraDeviceImpl.java:1963)
+#         at Camera2OneCameraOpenerImpl$1.onDisconnected(...)
+# The audit sequence numbers place the denial immediately before each crash
+# (seq 651 at 05:22:13, denial 652, crash 05:22:19).
+#
+# appdomain rather than untrusted_app, and phrased exactly like the grants
+# AOSP already makes in private/app.te for the equivalent queues:
+#     allow appdomain audioserver_tmpfs:file { getattr map read write };
+#     allow appdomain system_server_tmpfs:file { getattr map read write };
+# cameraserver_tmpfs is simply missing from that list upstream. Nothing
+# neverallows it -- app_neverallows.te says nothing about tmpfs.
+allow appdomain cameraserver_tmpfs:file { getattr map read write };
