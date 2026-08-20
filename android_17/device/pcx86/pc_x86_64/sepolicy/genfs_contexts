@@ -34,3 +34,15 @@ genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0A:00/power_supply u:object
 genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0A:01/power_supply u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0003:00/power_supply u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0003:01/power_supply u:object_r:sysfs_batteryinfo:s0
+
+# The AC adapter is NOT under LNXSYBUS with the battery -- it is on the platform
+# bus. The diagnostic added to pc_kmsg_file.sh reported both real paths:
+#     BAT0 : Battery : /sys/devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0A:00/power_supply/BAT0
+#     AC   :         : /sys/devices/platform/ACPI0003:00/power_supply/AC
+# The battery guess above was right and the AC guess was wrong, and the split
+# shows in healthd: the battery came back ("battery l=98 v=13089", where it had
+# been "battery none"), but the charger did not -- chg= stayed empty and the
+# status stuck at DISCHARGING even on mains. Note AC's type field printed empty
+# above while BAT0's printed "Battery"; that empty field IS the denial.
+genfscon sysfs /devices/platform/ACPI0003:00/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/platform/ACPI0003:01/power_supply u:object_r:sysfs_batteryinfo:s0
