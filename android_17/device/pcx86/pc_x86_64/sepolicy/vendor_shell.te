@@ -22,3 +22,13 @@ allow vendor_shell sysfs:dir r_dir_perms;
 allow vendor_shell sysfs:file r_file_perms;
 
 set_prop(vendor_shell, vendor_pc_gpu_prop)
+
+# Kernel-log capture. syslog_read is barred to appdomain outright
+#     neverallow appdomain kernel:system { syslog_read syslog_mod syslog_console };
+# so this cannot live in the shell-domain helpers; vendor_shell is not an
+# appdomain. dmesg_restrict is set to 0 on the kernel command line, but
+# devkmsg_open calls security_syslog() regardless, so both are needed.
+allow vendor_shell kernel:system syslog_read;
+allow vendor_shell kmsg_device:chr_file r_file_perms;
+allow vendor_shell pc_debug_data_file:dir rw_dir_perms;
+allow vendor_shell pc_debug_data_file:file create_file_perms;

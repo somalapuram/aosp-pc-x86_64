@@ -1,0 +1,4 @@
+# Where the kernel-log capture lands. Its own type under /data/vendor because
+# the capture runs in vendor_shell, and /data/local/tmp is shell_data_file --
+# a core data type a vendor domain has no business writing.
+type pc_debug_data_file, file_type, data_file_type;

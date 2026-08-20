@@ -41,6 +41,7 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/pc_stay_awake.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_stay_awake.sh \
     device/pcx86/pc_x86_64/pc_select_egl.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_select_egl.sh \
     device/pcx86/pc_x86_64/pc_noop.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_noop.sh \
+    device/pcx86/pc_x86_64/pc_kmsg_vendor.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_vendor.sh \
     device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_logcat_file.sh \
     device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_kmsg_file.sh
 

@@ -113,6 +113,17 @@ search --no-floppy --label ANDROIDESP --set=root
 # with no actual deadlock -- the main thread stack shows ordinary
 # ULocale/Configuration/Resources work.
 #
+# sysctl.kernel.dmesg_restrict=0 makes the kernel log readable without
+# CAP_SYSLOG, which is the only way to see it on this device: shell is an
+# appdomain and may hold no capability, the machine has no serial header, and
+# /proc/sys/kernel/dmesg_restrict is proc_security, which domain.te lets only
+# init and vendor_init even READ. Setting it from the command line happens
+# before init starts, so no policy is involved at all -- the kernel parses
+# sysctl.* itself (fs/proc/proc_sysctl.c, process_sysctl_arg).
+#
+# This is a bring-up decision with a real cost: kernel addresses and hardware
+# detail become readable by any app. Drop it before anything ships.
+#
 # loglevel=4 keeps warnings and above on the console; everything else is still
 # in the ring buffer via dmesg. Logcat comes over virtio-console regardless,
 # which is cheap. Use the verbose entry (GRUB_DEFAULT=1) when debugging early
@@ -122,6 +133,7 @@ menuentry "Android pc_x86_64" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=enforcing \\
+           sysctl.kernel.dmesg_restrict=0 \\
            console=ttyS0,115200 loglevel=7
     initrd /ramdisk.img
 }
@@ -135,6 +147,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
            console=ttyS0,115200 \\
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\

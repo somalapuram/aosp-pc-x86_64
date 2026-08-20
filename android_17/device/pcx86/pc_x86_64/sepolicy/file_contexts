@@ -80,3 +80,7 @@
 # and a USB/SATA install is sd*.
 /dev/block/(nvme0n1p4|sd[a-z]4)              u:object_r:metadata_block_device:s0
 /dev/block/(nvme0n1p5|sd[a-z]5)              u:object_r:userdata_block_device:s0
+
+# Kernel-log capture destination (pc-kmsg-vendor). See sepolicy/file.te.
+/data/vendor/pc(/.*)?                        u:object_r:pc_debug_data_file:s0
+/vendor/bin/pc_kmsg_vendor\.sh               u:object_r:vendor_shell_exec:s0

@@ -54,20 +54,6 @@ service pc-select-egl /vendor/bin/pc_select_egl.sh
     seclabel u:r:vendor_shell:s0
 
 on early-init
-    # Let the kernel log be read without CAP_SYSLOG.
-    #
-    # dmesg_restrict gates both syslog(2) and /dev/kmsg behind CAP_SYSLOG, and
-    # shell -- an appdomain -- may hold no capability at all, so pc-kmsg-file
-    # captures nothing and every hardware question on real metal becomes
-    # unanswerable: no way to see which drivers bound, what firmware loaded, or
-    # why a device did not appear. On a machine with no network and no serial
-    # header that is the whole diagnostic surface.
-    #
-    # This is a bring-up convenience and a real (small) information leak --
-    # kernel addresses and hardware detail become readable by any app. Drop it
-    # before anything ships.
-    write /proc/sys/kernel/dmesg_restrict 0
-
     exec_start pc-select-egl
 
 # Turn pc_select_egl.sh's finding into ro.hardware.egl.
@@ -98,6 +84,10 @@ on property:vendor.pc.gpu=angle
 
 on post-fs-data
     mkdir /data/vendor 0771 root root
+    # Kernel-log capture destination. Not /data/local/tmp: that is
+    # shell_data_file, and the capture runs in vendor_shell because shell -- an
+    # appdomain -- is neverallowed syslog_read.
+    mkdir /data/vendor/pc 0770 root system
     mkdir /data/vendor/hardware 0771 root root
 
 on boot
@@ -250,6 +240,14 @@ service pc-screencap /system_ext/bin/pc_screencap.sh
 # no serial port, so the ring buffer is otherwise lost at power-off -- and it
 # is where a display that never lights up gets explained (which DRM driver
 # bound, whether firmware loaded, what connectors and modes exist).
+# The kernel log, captured from vendor_shell. shell cannot do this:
+#     neverallow appdomain kernel:system { syslog_read ... };
+service pc-kmsg-vendor /vendor/bin/pc_kmsg_vendor.sh
+    class core
+    user root
+    group root system log readproc
+    seclabel u:r:vendor_shell:s0
+
 service pc-kmsg-file /system_ext/bin/pc_kmsg_file.sh
     class core
     user shell
@@ -288,6 +286,7 @@ on property:vendor.pc.boot=1
     start pc-screencap
     start pc-logcat-file
     start pc-kmsg-file
+    start pc-kmsg-vendor
 
 service console /system/bin/sh
     class core
