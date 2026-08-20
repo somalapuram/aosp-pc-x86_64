@@ -268,6 +268,21 @@ PRODUCT_PACKAGES += \
     linux_firmware_btusb-ibt_be200 \
     linux_firmware_btpci-ibt_be211
 
+# --- WiFi firmware: Intel "ma" family --------------------------------------
+# The bring-up laptop's card is 8086:7e40, which iwlwifi claims through
+# iwl_ma_mac_cfg (pcie/drv.c) -- the "ma" family, Meteor Lake CNVi. AOSP's
+# external/linux-firmware has QuZ, so, gl and sc but NOT ma, so the driver
+# probed, found no firmware and never bound: the PCI device showed up with an
+# empty driver= and there was no wlan interface at all.
+#
+# All three RF variants are shipped (gf, gf4, hr) across API versions 83-89,
+# 14 MB in total, because which one a given card needs depends on its RF module
+# and that is not knowable from here. Flat in /vendor/firmware/: iwlwifi builds
+# a bare filename with no directory part.
+PRODUCT_COPY_FILES += \
+    $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/iwlwifi/*), \
+        $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/$(notdir $(f)))
+
 # --- Desktop windowing -----------------------------------------------------
 # This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
 # off because the reference devices are phones, so they have to be turned on

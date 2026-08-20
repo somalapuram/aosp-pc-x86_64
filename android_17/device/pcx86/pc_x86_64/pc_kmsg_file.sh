@@ -54,11 +54,26 @@ PREV=/data/local/tmp/kmsg.prev.txt
         drv=$(readlink "$d/driver" 2>/dev/null)
         echo "  $(basename "$d")  ${v#0x}:${i#0x}  class=${c#0x}  driver=${drv##*/}"
     done
-    echo "=== USB devices ==="
+    echo "=== USB devices (vendor:product driver product) ==="
+    # The interface's driver symlink, not the device's: btusb and usbhid bind to
+    # interfaces. This is what says whether the Bluetooth radio and the touchpad
+    # actually got a driver, as opposed to merely being present.
     for d in /sys/bus/usb/devices/*; do
         [ -e "$d/idVendor" ] || continue
-        echo "  $(basename "$d")  $(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)  $(cat "$d/product" 2>/dev/null)"
+        drv=""
+        for i in "$d"/*:*; do
+            [ -e "$i/driver" ] && drv="$drv $(basename "$(readlink "$i/driver")")"
+        done
+        echo "  $(basename "$d")  $(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null) drv=[${drv# }] $(cat "$d/product" 2>/dev/null)"
     done
+    echo "=== bluetooth / wifi state ==="
+    echo "  hci:  $(ls /sys/class/bluetooth/ 2>/dev/null | tr '\n' ' ')"
+    echo "  net:  $(ls /sys/class/net/ 2>/dev/null | tr '\n' ' ')"
+    echo "  ieee80211: $(ls /sys/class/ieee80211/ 2>/dev/null | tr '\n' ' ')"
+    echo "=== why the kernel log may still be unreadable ==="
+    echo "  dmesg_restrict = $(cat /proc/sys/kernel/dmesg_restrict 2>/dev/null || echo '<unreadable>')"
+    echo "  /dev/kmsg perms: $(ls -l /dev/kmsg 2>/dev/null)"
+    echo "  id: $(id 2>/dev/null)"
     echo "=== input devices ==="
     for d in /sys/class/input/input*; do
         [ -e "$d/name" ] && echo "  $(basename "$d")  $(cat "$d/name" 2>/dev/null)"
