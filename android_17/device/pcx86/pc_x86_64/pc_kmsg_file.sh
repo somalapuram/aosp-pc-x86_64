@@ -85,6 +85,28 @@ PREV=/data/local/tmp/kmsg.prev.txt
     echo "=== net ==="
     ls /sys/class/net/ 2>/dev/null | tr '\n' ' '; echo
 
+    # Power supplies, with the REAL /sys/devices path behind each symlink.
+    #
+    # The path is the point. sepolicy/genfs_contexts has to label the concrete
+    # /devices/... directory, because /sys/class/power_supply holds symlinks and
+    # SELinux checks the label of the inode they resolve to. Those paths are
+    # ACPI-topology dependent and cannot be read off a powered-down disk, so
+    # they are printed here rather than guessed a second time -- if healthd
+    # still reports "No battery devices found", compare what genfs_contexts
+    # labels against what this prints.
+    echo "=== power supply (name : type : real path) ==="
+    for d in /sys/class/power_supply/*; do
+        [ -e "$d" ] || continue
+        echo "  $(basename "$d") : $(cat "$d/type" 2>/dev/null) : $(readlink -f "$d" 2>/dev/null)"
+    done
+    echo "=== backlight ==="
+    for d in /sys/class/backlight/*; do
+        [ -e "$d" ] || continue
+        echo "  $(basename "$d")  max=$(cat "$d/max_brightness" 2>/dev/null) cur=$(cat "$d/brightness" 2>/dev/null) : $(readlink -f "$d" 2>/dev/null)"
+    done
+    echo "=== sound cards ==="
+    cat /proc/asound/cards 2>/dev/null || echo "  (none)"
+
 echo "=== kernel log follows ==="
 } > "$OUT"
 

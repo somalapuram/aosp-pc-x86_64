@@ -2,3 +2,35 @@
 # plain sysfs. The path is the same on QEMU and on a real PC -- PCI segment 0
 # is where both put the GPU.
 genfscon sysfs /devices/pci0000:00 u:object_r:sysfs_pci:s0
+
+# ACPI battery and AC adapter, for the health HAL.
+#
+# The kernel finds both -- "ACPI: battery: Slot [BAT0] (battery present)" and
+# "ACPI: AC: AC Adapter [AC] (on-line)" -- but Android reported no battery at
+# all ("healthd: No battery devices found", "battery none chg="), because
+# healthd could not read them:
+#     avc: denied { read } name="type" dev="sysfs" ino=15014
+#          scontext=u:r:hal_health_default:s0 tcontext=u:object_r:sysfs:s0
+#
+# Nothing needs to be *granted*: system/sepolicy/private/hal_health.te already
+# carries r_dir_file(hal_health_server, sysfs_batteryinfo) and its comment says
+# outright that "Vendors should mark sysfs_batteryinfo on all files read by
+# health HAL service." This is that marking, and it is all that was missing.
+#
+# It has to be the /devices path rather than /sys/class/power_supply, because
+# the entries there are symlinks and SELinux checks the label of the real
+# inode. Enumerating the class directory itself is already allowed by
+# "allow hal_health_server sysfs:dir r_dir_perms" in the same file.
+#
+# Labelling only the power_supply subdirectories, not the ACPI tree above them:
+# a genfscon prefix relabels everything beneath it, and pointing it at
+# /devices/LNXSYSTM would take the whole ACPI device tree away from the plain
+# sysfs type that other domains expect.
+#
+# PNP0C0A is the ACPI battery device ID and ACPI0003 the AC adapter; slot 01 is
+# listed for machines with a second battery bay. Paths that do not exist on a
+# given machine are simply unused, so listing the variants costs nothing.
+genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0A:00/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/PNP0C0A:01/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0003:00/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0003:01/power_supply u:object_r:sysfs_batteryinfo:s0
