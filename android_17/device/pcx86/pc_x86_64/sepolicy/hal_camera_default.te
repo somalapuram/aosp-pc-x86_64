@@ -7,3 +7,25 @@
 #     Camera provider ...external/0 ready with 0 camera devices
 # Same rule the audio and power HALs already needed.
 allow hal_camera_default tmpfs:file { read write map };
+
+# The camera HAL also needs the graphics allocator, to allocate the buffers
+# backing its streams:
+#     avc: denied { find } name=android.hardware.graphics.allocator.IAllocator/default
+#          scontext=u:r:hal_camera_default:s0
+#          tcontext=u:object_r:hal_graphics_allocator_service:s0
+#     E Camera2Client: initializeImpl: Camera 0: unable to build defaults:
+#                      Invalid argument (-22)
+#     E CameraService: connectHelper: Could not initialize client from HAL.
+#
+# This denial only became reachable once the FMQ grants above and the app-side
+# MCS exemption were in place -- before them the session died earlier, so the
+# HAL never got as far as allocating buffers. Worth noting because the boot
+# looked clean at that point: no crash and no denial from the camera app, but
+# the camera had simply stopped getting far enough to fail loudly.
+#
+# hal_client_domain is the idiom AOSP uses for exactly this everywhere else --
+# cameraserver, bootanim, bufferhubd and adbd all take it against
+# hal_graphics_allocator (system/sepolicy/private/*.te) -- and it pairs with
+# the hal_attribute_service(hal_graphics_allocator, hal_graphics_allocator_service)
+# already declared in private/hal_graphics_allocator.te.
+hal_client_domain(hal_camera_default, hal_graphics_allocator)
