@@ -251,6 +251,46 @@ CONFIG_BT_INTEL=y
 CONFIG_FW_LOADER_USER_HELPER=y
 CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y
 
+# --- GPIO / pinctrl: the touchpad's interrupt -------------------------------
+# The bring-up laptop's touchpad is SYNA311A on I2C. The driver finds it and
+# the probe fails for want of an interrupt:
+#     i2c_hid_acpi i2c-SYNA311A:00: HID over i2c has not been provided an Int IRQ
+#     i2c_hid_acpi i2c-SYNA311A:00: probe with driver i2c_hid_acpi failed with error -22
+# ACPI describes that interrupt as a GpioInt, which only the SoC's pinctrl/GPIO
+# driver can resolve -- and CONFIG_GPIOLIB and CONFIG_PINCTRL were both off, so
+# there was nothing to resolve it with. The device enumerates, the driver
+# matches, and it still cannot work.
+#
+# This is why the kernel log mattered: from Android the touchpad was simply
+# absent, which looks identical to a missing driver, and three earlier guesses
+# (i2c-hid, HID multitouch, a USB Synaptics device that turned out to be the
+# fingerprint reader) were all wrong.
+CONFIG_GPIOLIB=y
+CONFIG_GPIO_ACPI=y
+CONFIG_PINCTRL=y
+CONFIG_PINCTRL_INTEL=y
+
+# Meteor Lake is this machine (Core Ultra 7 155H). The rest are the other Intel
+# generations a generic PC image may meet -- each is small, and a missing one
+# means a dead touchpad with no obvious cause.
+CONFIG_PINCTRL_METEORLAKE=y
+CONFIG_PINCTRL_ALDERLAKE=y
+CONFIG_PINCTRL_TIGERLAKE=y
+CONFIG_PINCTRL_ICELAKE=y
+CONFIG_PINCTRL_CANNONLAKE=y
+CONFIG_PINCTRL_SUNRISEPOINT=y
+CONFIG_PINCTRL_GEMINILAKE=y
+CONFIG_PINCTRL_JASPERLAKE=y
+CONFIG_PINCTRL_ELKHARTLAKE=y
+CONFIG_PINCTRL_LAKEFIELD=y
+CONFIG_PINCTRL_BROXTON=y
+CONFIG_PINCTRL_DENVERTON=y
+CONFIG_PINCTRL_EMMITSBURG=y
+CONFIG_PINCTRL_LEWISBURG=y
+CONFIG_PINCTRL_INTEL_PLATFORM=y
+CONFIG_PINCTRL_BAYTRAIL=y
+CONFIG_PINCTRL_CHERRYVIEW=y
+
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
