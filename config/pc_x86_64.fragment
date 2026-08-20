@@ -230,6 +230,27 @@ CONFIG_BT_HCIBTUSB=y
 CONFIG_BT_HCIBTUSB_BCM=y
 CONFIG_BT_INTEL=y
 
+# --- Firmware loading: let userspace serve it ------------------------------
+# Built-in drivers probe during kernel init, long before first_stage_mount
+# brings up /vendor. With only the direct filesystem loader, a driver that
+# needs firmware at probe finds nothing and never binds -- and it looks
+# identical to an unsupported device:
+#     0000:00:14.3  8086:7e40  class=028000  driver=
+# That is the laptop's Intel wifi. iwlwifi claims 0x7E40 and the blobs were on
+# /vendor; the driver simply asked before /vendor existed.
+#
+# FW_LOADER_USER_HELPER makes the kernel fall back to a uevent that ueventd
+# answers from /vendor/firmware once it is running. iwlwifi asks with
+# request_firmware_nowait (iwl-drv.c), so the probe is already asynchronous and
+# completes whenever the firmware arrives. Intel Bluetooth loads its ibt blobs
+# the same way.
+#
+# The alternative -- linking blobs in with CONFIG_EXTRA_FIRMWARE, as the i915
+# ones are -- does not scale here: 15 MB of iwlwifi across RF variants, when
+# only one is needed and which one is not knowable at build time.
+CONFIG_FW_LOADER_USER_HELPER=y
+CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y
+
 # virtio-gpu, for the QEMU development loop in doc/02-host-setup.md
 CONFIG_DRM_VIRTIO_GPU=y
 
