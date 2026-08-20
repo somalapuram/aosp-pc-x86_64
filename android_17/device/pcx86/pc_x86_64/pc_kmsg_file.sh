@@ -34,7 +34,43 @@ PREV=/data/local/tmp/kmsg.prev.txt
     echo "ro.hardware.egl      = $(getprop ro.hardware.egl)"
     echo "ro.hardware.vulkan   = $(getprop ro.hardware.vulkan)"
     ls -l /dev/dri/ 2>&1
-    echo "=== kernel log follows ==="
+        # PCI inventory, straight from sysfs.
+    #
+    # This exists because the kernel log is not reachable: dmesg_restrict gates
+    # both syslog(2) and /dev/kmsg behind CAP_SYSLOG, and shell -- an appdomain
+    # -- may hold no capability at all. On a machine with no network and no
+    # serial header that left every hardware question unanswerable.
+    #
+    # sysfs needs no capability. Each PCI device exposes its IDs and, crucially,
+    # a "driver" symlink that exists only once something has BOUND to it. So
+    # this distinguishes the two cases that look identical from Android:
+    # hardware absent, versus hardware present with no driver.
+    echo "=== PCI devices (vendor:device class driver) ==="
+    for d in /sys/bus/pci/devices/*; do
+        [ -e "$d/vendor" ] || continue
+        v=$(cat "$d/vendor" 2>/dev/null)
+        i=$(cat "$d/device" 2>/dev/null)
+        c=$(cat "$d/class" 2>/dev/null)
+        drv=$(readlink "$d/driver" 2>/dev/null)
+        echo "  $(basename "$d")  ${v#0x}:${i#0x}  class=${c#0x}  driver=${drv##*/}"
+    done
+    echo "=== USB devices ==="
+    for d in /sys/bus/usb/devices/*; do
+        [ -e "$d/idVendor" ] || continue
+        echo "  $(basename "$d")  $(cat "$d/idVendor" 2>/dev/null):$(cat "$d/idProduct" 2>/dev/null)  $(cat "$d/product" 2>/dev/null)"
+    done
+    echo "=== input devices ==="
+    for d in /sys/class/input/input*; do
+        [ -e "$d/name" ] && echo "  $(basename "$d")  $(cat "$d/name" 2>/dev/null)"
+    done
+    echo "=== video4linux ==="
+    for d in /sys/class/video4linux/*; do
+        [ -e "$d/name" ] && echo "  $(basename "$d")  $(cat "$d/name" 2>/dev/null)"
+    done
+    echo "=== net ==="
+    ls /sys/class/net/ 2>/dev/null | tr '\n' ' '; echo
+
+echo "=== kernel log follows ==="
 } > "$OUT"
 
 # Follow the kernel log if we are allowed to, and do not spin if we are not.

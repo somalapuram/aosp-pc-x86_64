@@ -1,0 +1,7 @@
+# The other end of the camera FMQ. hal_camera_default was granted this and the
+# denial simply moved to cameraserver, which shares the same memfd:
+#     avc: denied { read write } scontext=u:r:cameraserver:s0
+#          tcontext=u:object_r:tmpfs:s0 tclass=file
+# cameraserver is a coredomain, so this lives in private policy rather than the
+# vendor-facing dir.
+allow cameraserver tmpfs:file { read write map };

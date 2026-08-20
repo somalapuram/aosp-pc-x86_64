@@ -11,3 +11,11 @@ allow shell pc_console_device:chr_file rw_file_perms;
 # pc-kmsg-file streams the kernel ring buffer from /dev/kmsg. See the script for
 # why it does not use dmesg(1).
 allow shell kmsg_device:chr_file r_file_perms;
+
+# pc-kmsg-file dumps a PCI/USB/input inventory from sysfs, because the kernel
+# log is unreachable from this domain (dmesg_restrict needs CAP_SYSLOG, and an
+# appdomain may hold no capability). sysfs_pci is an explicitly labelled
+# interface -- see sepolicy/device.te -- so unlike plain sysfs the coredomain
+# neverallow does not apply.
+allow shell sysfs_pci:file r_file_perms;
+allow shell sysfs_pci:dir r_dir_perms;

@@ -5,3 +5,9 @@ set_prop(vendor_init, vendor_pc_gpu_prop)
 
 # 'write /proc/sys/kernel/panic_on_oops 1' from 'on early-init'.
 allow vendor_init proc_panic:file w_file_perms;
+
+# 'write /proc/sys/kernel/dmesg_restrict 0' from on early-init. That file is
+# proc_security, and domain.te neverallows every domain but init and
+# vendor_init from touching it -- commands in a vendor rc run as vendor_init,
+# so this is the one seat that can.
+allow vendor_init proc_security:file w_file_perms;

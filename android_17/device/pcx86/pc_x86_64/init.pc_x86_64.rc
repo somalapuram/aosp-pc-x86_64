@@ -54,6 +54,20 @@ service pc-select-egl /vendor/bin/pc_select_egl.sh
     seclabel u:r:vendor_shell:s0
 
 on early-init
+    # Let the kernel log be read without CAP_SYSLOG.
+    #
+    # dmesg_restrict gates both syslog(2) and /dev/kmsg behind CAP_SYSLOG, and
+    # shell -- an appdomain -- may hold no capability at all, so pc-kmsg-file
+    # captures nothing and every hardware question on real metal becomes
+    # unanswerable: no way to see which drivers bound, what firmware loaded, or
+    # why a device did not appear. On a machine with no network and no serial
+    # header that is the whole diagnostic surface.
+    #
+    # This is a bring-up convenience and a real (small) information leak --
+    # kernel addresses and hardware detail become readable by any app. Drop it
+    # before anything ships.
+    write /proc/sys/kernel/dmesg_restrict 0
+
     exec_start pc-select-egl
 
 # Turn pc_select_egl.sh's finding into ro.hardware.egl.
