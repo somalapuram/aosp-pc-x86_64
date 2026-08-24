@@ -461,3 +461,43 @@ CONFIG_SND_SOC_INTEL_SKL_HDA_DSP_GENERIC_MACH=y
 CONFIG_SND_HDA_GENERIC=y
 CONFIG_SND_HDA_CODEC_REALTEK=y
 CONFIG_SND_HDA_CODEC_HDMI=y
+
+# --- Audio: HDA side-codec smart amplifiers --------------------------------
+# The playback path is fully working at this point: the PCM opens, Android
+# writes into it (827392 frames in one run, status 0, no xruns) and the mixer is
+# wide open. Nothing comes out of the speakers, and the codec log says why:
+#
+#     snd_hda_codec_alc269: ALC245: picked fixup  for codec SSID 103c:8c48
+#     autoconfig for ALC245: line_outs=1 (0x17) type:speaker
+#                            speaker_outs=0
+#                            hp_outs=1 (0x21)
+#
+# speaker_outs=0 -- the autoparser found no speaker pin on the codec at all,
+# and the fixup name in that first line is empty, meaning no machine-specific
+# quirk matched this SSID. That is the normal shape of a recent HP laptop: the
+# ALC245 handles headphones and the microphone, while the internal speakers
+# hang off separate Cirrus smart amplifiers on I2C or SPI, driven as HD-audio
+# "side codecs". SND_HDA_SCODEC_COMPONENT (the framework) was already on, but
+# not one actual amplifier driver was built, so there was nothing to bind.
+#
+# Both CS35L41 and CS35L56 are enabled, and both bus variants of each, because
+# which amplifier and which bus this machine uses is described by ACPI and is
+# not knowable from here -- the same reason all 189 SOF topologies are shipped.
+# Only the matching driver binds; the rest cost image size and nothing else.
+#
+# Dependencies were checked rather than assumed: CS35L41 needs EFI (it reads
+# its calibration from an EFI variable), both need ACPI and SND_SOC, and the
+# bus variants need I2C or SPI_MASTER -- SPI arrived with the SOF work above.
+# All were already satisfied.
+CONFIG_SND_HDA_SCODEC_CS35L41_I2C=y
+CONFIG_SND_HDA_SCODEC_CS35L41_SPI=y
+CONFIG_SND_HDA_SCODEC_CS35L56_I2C=y
+CONFIG_SND_HDA_SCODEC_CS35L56_SPI=y
+
+# Not optional, despite only being 'imply'd by the drivers above. These amps
+# are listed as several devices inside a single ACPI firmware node (typically
+# CSC3551), and this driver is what instantiates a separate I2C/SPI client for
+# each one. Without it the ACPI node is never expanded, no amplifier device is
+# created, and the side-codec drivers have nothing to attach to -- which would
+# look exactly like the drivers not working.
+CONFIG_SERIAL_MULTI_INSTANTIATE=y
