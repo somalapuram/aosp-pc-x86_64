@@ -501,3 +501,25 @@ CONFIG_SND_HDA_SCODEC_CS35L56_SPI=y
 # created, and the side-codec drivers have nothing to attach to -- which would
 # look exactly like the drivers not working.
 CONFIG_SERIAL_MULTI_INSTANTIATE=y
+
+# The Intel LPSS SPI controller the speaker amplifiers sit on.
+#
+# Enabling the CS35L41 drivers above was necessary but not sufficient. The ACPI
+# node is there and serial-multi-instantiate found it, but there was no SPI bus
+# for it to put the amplifiers on:
+#
+#     platform CSC3551:00: deferred probe pending: Serial bus multi instantiate
+#         pseudo device driver: failed to allocate SPI device CSC3551:00 from ACPI
+#
+# That line is worth reading closely, because it answers two questions at once.
+# CSC3551 exists, so the internal speakers really are behind Cirrus amps rather
+# than on the codec's own outputs -- and they are on SPI, not I2C, which the
+# earlier config could not have known.
+#
+# CONFIG_SPI=y was added with the SOF work, but that is only the SPI core.
+# CONFIG_SPI_MASTER and CONFIG_SPI_DYNAMIC were the only SPI symbols set: not
+# one controller driver was built, so there was no spi_master to register a
+# device against. SPI_PXA2XX is the driver for Intel LPSS SSP ports, which is
+# what MFD_INTEL_LPSS (already enabled, for the I2C touchpad) exposes them as.
+# SPI_PXA2XX_PCI follows automatically from PCI && COMMON_CLK, both already on.
+CONFIG_SPI_PXA2XX=y
