@@ -1,0 +1,40 @@
+# The AudioTrack control block, and why this device needs a rule that no phone
+# does.
+#
+#     avc: denied { write } comm="audioserver"
+#          path="/memfd:MemoryHeapBase (deleted)"
+#          scontext=u:r:untrusted_app_29:s0:c69,c256,c512,c768
+#          tcontext=u:object_r:audioserver_tmpfs:s0 tclass=file
+#     E AudioTrack: createTrack_l(0): Could not get control block
+#
+# Without the control block no AudioTrack is ever created, so nothing is
+# written to the audio HAL at all. The symptom is simply silence -- and it is
+# easy to blame on the mixer, which on this device was ALSO muted and needed
+# fixing first (see pc_audio_setup.c). Unmuting the card was necessary and made
+# no audible difference, because playback was failing two layers higher up.
+#
+# Type enforcement is not the problem: system/sepolicy/private/app.te already
+# carries
+#     allow appdomain audioserver_tmpfs:file { getattr map read write };
+# What refuses the write is the MLS/MCS constraint. The app sits at
+# s0:c69,c256,c512,c768 and the memfd at plain s0; writing requires the target
+# level to dominate the source, and s0 does not dominate a categorised app.
+#
+# AOSP never had to solve this because on a phone MemoryHeapBase is backed by
+# ashmem, and ashmem_device is mlstrustedobject, so MCS never applies. This
+# kernel is mainline, where ashmem does not exist:
+#     CONFIG_ASHMEM is not set
+# so MemoryHeapBase falls back to memfd, which takes audioserver's own tmpfs
+# label -- a type upstream had no reason to make MLS-trusted. Every device on a
+# mainline kernel will hit this.
+#
+# Same root cause and same remedy as the camera capture-result queue in
+# pc_cameraserver.te, and phrased the way AOSP adds the attribute from private
+# policy where the declaration cannot be touched:
+#     system/sepolicy/private/traced.te:10     typeattribute traced_tmpfs mlstrustedobject;
+#     system/sepolicy/private/heapprofd.te:10  typeattribute heapprofd_tmpfs mlstrustedobject;
+#
+# The cost: MCS no longer isolates these heaps between apps. The heap is
+# created per track for the client that opened it, so the exposure is narrow,
+# and it is the same trade AOSP already makes for the zygote and tracing heaps.
+typeattribute audioserver_tmpfs mlstrustedobject;
