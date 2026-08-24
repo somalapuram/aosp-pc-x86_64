@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Primary audio HAL policy for this device.
+
+  This replaces frameworks/av/services/audiopolicy/config/primary_audio_policy_configuration.xml,
+  which was being copied verbatim and asks for 44100 Hz:
+
+      <profile format="AUDIO_FORMAT_PCM_16_BIT"
+               samplingRates="44100" channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+
+  That rate is what the driver rejects. For a built-in device the AIDL HAL does
+  NOT negotiate with the hardware - openProxyForAttachedDevice() calls
+  profile_fill_builtin_device_info(), which fills the profile from this config
+  rather than querying the card - so whatever is written here is demanded of
+  the PCM verbatim:
+
+      alsa_device_proxy: proxy_open(card:0 device:0 PCM_OUT)
+      alsa_device_proxy: proxy_open() pcm_is_ready() failed:
+                         cannot set hw params: Invalid argument
+      AHAL_StreamPrimary: Function: start Line: 88 Failed
+      AHAL_Stream: cycle: start failed: -19
+
+  and the stream drops into ERROR, after which every write is refused with
+  "command 'burst' can not be handled in the state ERROR". Nothing downstream
+  reports a fault, so the only symptom is silence.
+
+  48000 because that is what the SOF pipeline runs at: the topology loaded on
+  this machine is sof-hda-generic-2ch.tplg, and the ACE pipelines it describes
+  are 48 kHz. 44100 is simply not a rate this path offers. Content at 44.1 kHz
+  still plays - AudioFlinger resamples to the output rate, which is the normal
+  arrangement on any device whose DSP is fixed-rate.
+
+  The input profile moves for the same reason. It asked for 8000,16000 mono,
+  which are telephony rates; the capture device here is the SoC DMIC array
+  (Dmic0 in the mixer), and it runs at 48 kHz like the rest of the pipeline.
+-->
+<module name="primary" halVersion="2.0">
+    <attachedDevices>
+        <item>Speaker</item>
+        <item>Built-In Mic</item>
+    </attachedDevices>
+    <defaultOutputDevice>Speaker</defaultOutputDevice>
+    <mixPorts>
+        <mixPort name="primary output" role="source" flags="AUDIO_OUTPUT_FLAG_PRIMARY">
+            <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+        </mixPort>
+        <mixPort name="primary input" role="sink">
+            <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_MONO,AUDIO_CHANNEL_IN_STEREO"/>
+        </mixPort>
+   </mixPorts>
+   <devicePorts>
+        <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
+        </devicePort>
+
+        <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source">
+        </devicePort>
+    </devicePorts>
+    <routes>
+        <route type="mix" sink="Speaker"
+               sources="primary output"/>
+        <route type="mix" sink="primary input"
+               sources="Built-In Mic"/>
+    </routes>
+</module>

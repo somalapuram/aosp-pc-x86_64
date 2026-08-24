@@ -64,6 +64,52 @@ static void redirect_output(const char *path) {
     setvbuf(stdout, NULL, _IOLBF, 0);
 }
 
+/*
+ * What the PCM devices will actually accept.
+ *
+ * This matters because the AIDL HAL never asks. For a built-in device
+ * openProxyForAttachedDevice() calls profile_fill_builtin_device_info(), which
+ * fills the profile from primary_audio_policy_configuration.xml instead of
+ * querying the card -- so the rate and format in that XML are demanded of the
+ * driver verbatim, and if the card does not offer them the open fails with
+ *     proxy_open() pcm_is_ready() failed: cannot set hw params: Invalid argument
+ * the stream drops to ERROR, and every subsequent write is refused. Nothing
+ * downstream logs a fault; the symptom is silence.
+ *
+ * The policy config was asking for 44100 and the SOF pipeline runs at 48000,
+ * which is the fix that accompanies this. Printing the real capabilities means
+ * that if 48000 is somehow also wrong, the next boot names the rates the card
+ * does support rather than costing another guess.
+ */
+static void dump_pcm_caps(unsigned int card) {
+    for (unsigned int dev = 0; dev < 8; dev++) {
+        struct pcm_params *p = pcm_params_get(card, dev, PCM_OUT);
+        if (!p) continue;
+        printf("  pcm %u:%u OUT  rate %u..%u  channels %u..%u  "
+               "period %u..%u frames  periods %u..%u\n",
+               card, dev,
+               pcm_params_get_min(p, PCM_PARAM_RATE), pcm_params_get_max(p, PCM_PARAM_RATE),
+               pcm_params_get_min(p, PCM_PARAM_CHANNELS), pcm_params_get_max(p, PCM_PARAM_CHANNELS),
+               pcm_params_get_min(p, PCM_PARAM_PERIOD_SIZE), pcm_params_get_max(p, PCM_PARAM_PERIOD_SIZE),
+               pcm_params_get_min(p, PCM_PARAM_PERIODS), pcm_params_get_max(p, PCM_PARAM_PERIODS));
+        struct pcm_mask *m = pcm_params_get_mask(p, PCM_PARAM_FORMAT);
+        if (m) {
+            printf("      formats mask:");
+            for (unsigned int i = 0; i < 2; i++) printf(" %08x", m->bits[i]);
+            printf("   (bit 0=S8 2=S16_LE 6=S24_LE 10=S32_LE)\n");
+        }
+        pcm_params_free(p);
+    }
+    for (unsigned int dev = 0; dev < 8; dev++) {
+        struct pcm_params *p = pcm_params_get(card, dev, PCM_IN);
+        if (!p) continue;
+        printf("  pcm %u:%u IN   rate %u..%u  channels %u..%u\n", card, dev,
+               pcm_params_get_min(p, PCM_PARAM_RATE), pcm_params_get_max(p, PCM_PARAM_RATE),
+               pcm_params_get_min(p, PCM_PARAM_CHANNELS), pcm_params_get_max(p, PCM_PARAM_CHANNELS));
+        pcm_params_free(p);
+    }
+}
+
 int main(int argc, char **argv) {
     redirect_output("/data/vendor/pc/audio_mixer.txt");
     unsigned int card = 0;
@@ -76,6 +122,9 @@ int main(int argc, char **argv) {
         printf("pc_audio_setup: cannot open mixer for card %u\n", card);
         return 1;
     }
+
+    printf("pc_audio_setup: PCM capabilities\n");
+    dump_pcm_caps(card);
 
     unsigned int n = mixer_get_num_ctls(mixer);
     printf("pc_audio_setup: card %u, %u controls\n", card, n);
