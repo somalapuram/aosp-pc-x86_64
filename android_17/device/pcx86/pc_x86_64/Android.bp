@@ -98,3 +98,26 @@ prebuilt_etc {
     vendor: true,
     licenses: ["external_wpa_supplicant_8_license"],
 }
+
+// Unmutes the ALSA mixer at boot. See pc_audio_setup.c for why this exists at
+// all (the card comes up muted and nothing on this device unmutes it) and why
+// it is a vendor binary rather than a shell script calling tinymix (/dev/snd is
+// audio_device, which appdomain -- and therefore the shell domain the other
+// bring-up helpers run in -- is neverallowed).
+cc_binary {
+    name: "pc_audio_setup",
+    srcs: ["pc_audio_setup.c"],
+    shared_libs: ["libtinyalsa"],
+    vendor: true,
+    cflags: ["-Wall", "-Werror"],
+}
+
+// Reports what each /dev/video* node is and whether its sensor is producing
+// colour. See pc_v4l2_info.c -- the HAL's own format logging is ALOGV, which is
+// compiled out of release builds, so log.tag=V cannot reach it.
+cc_binary {
+    name: "pc_v4l2_info",
+    srcs: ["pc_v4l2_info.c"],
+    vendor: true,
+    cflags: ["-Wall", "-Werror"],
+}

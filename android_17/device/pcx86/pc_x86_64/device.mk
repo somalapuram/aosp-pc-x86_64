@@ -337,6 +337,12 @@ PRODUCT_PROPERTY_OVERRIDES += \
     log.tag.ExtCamPrvdr=V \
     log.tag.ExtCamUtils=V
 
+# The mixer unmute helper. See pc_audio_setup.c -- the card registers muted and
+# nothing else on this device unmutes it.
+PRODUCT_PACKAGES += \
+    pc_audio_setup \
+    pc_v4l2_info
+
 # --- Audio firmware: SOF for Meteor Lake -----------------------------------
 # See config/pc_x86_64.fragment for why this machine needs SOF at all rather
 # than legacy HDA codec probing.

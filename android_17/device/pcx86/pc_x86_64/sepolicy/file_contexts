@@ -84,3 +84,8 @@
 # Kernel-log capture destination (pc-kmsg-vendor). See sepolicy/file.te.
 /data/vendor/pc(/.*)?                        u:object_r:pc_debug_data_file:s0
 /vendor/bin/pc_kmsg_vendor\.sh               u:object_r:vendor_shell_exec:s0
+
+# Mixer unmute helper. Runs in vendor_shell (see init.pc_x86_64.rc); without
+# this label init cannot entrypoint it and the service never starts.
+/vendor/bin/pc_audio_setup                   u:object_r:vendor_shell_exec:s0
+/vendor/bin/pc_v4l2_info                     u:object_r:vendor_shell_exec:s0

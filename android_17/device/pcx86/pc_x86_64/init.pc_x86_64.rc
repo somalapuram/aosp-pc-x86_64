@@ -298,6 +298,37 @@ on property:vendor.pc.boot=1
     start pc-kmsg-file
     start pc-kmsg-vendor
 
+# Unmute the ALSA mixer. The SOF/HDA card comes up with its analog outputs
+# muted -- normal for HDA, where alsactl or UCM would do this on a desktop and
+# a vendor HAL's mixer_paths.xml would on a phone. This device has neither, and
+# AOSP's default audio HAL only drives a handful of control names that a SOF
+# topology does not use, so the stream opens, frames are written, and nothing
+# is audible with no error anywhere.
+#
+# vendor_shell, not shell: /dev/snd is audio_device and app.te neverallows any
+# appdomain read or write on it. Needs the audio group for the DAC nodes.
+#
+# Started from sys.boot_completed rather than `on boot`: SOF loads DSP firmware
+# and then a topology before it registers card0, which lands around 3.7s --
+# well after `on boot`. The existing pc-kmsg-file inventory runs at `on boot`
+# and that is exactly why it kept reporting "sound cards: (none)" even on boots
+# where the card did come up.
+service pc-v4l2-info /vendor/bin/pc_v4l2_info
+    class core
+    user root
+    group root camera
+    oneshot
+    disabled
+    seclabel u:r:vendor_shell:s0
+
+service pc-audio-setup /vendor/bin/pc_audio_setup
+    class core
+    user root
+    group root audio
+    oneshot
+    disabled
+    seclabel u:r:vendor_shell:s0
+
 service console /system/bin/sh
     class core
     console
@@ -306,6 +337,10 @@ service console /system/bin/sh
     group shell log readproc
     seclabel u:r:shell:s0
     setenv HOSTNAME console
+
+on property:sys.boot_completed=1
+    start pc-audio-setup
+    start pc-v4l2-info
 
 on property:ro.debuggable=1
     start console

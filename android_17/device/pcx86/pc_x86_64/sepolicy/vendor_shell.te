@@ -32,3 +32,18 @@ allow vendor_shell kernel:system syslog_read;
 allow vendor_shell kmsg_device:chr_file r_file_perms;
 allow vendor_shell pc_debug_data_file:dir rw_dir_perms;
 allow vendor_shell pc_debug_data_file:file create_file_perms;
+
+# pc-audio-setup unmutes the ALSA mixer at boot (see pc_audio_setup.c).
+# /dev/snd/controlC0 is audio_device; the shell domain the other bring-up
+# helpers use can never have this, because system/sepolicy/private/app.te
+# carries
+#     neverallow appdomain { audio_device ... }:chr_file { read write };
+# vendor_shell is not an appdomain, so the grant is allowed here.
+allow vendor_shell audio_device:dir r_dir_perms;
+allow vendor_shell audio_device:chr_file rw_file_perms;
+
+# pc-v4l2-info reports what each /dev/video* node is and samples its chroma
+# (see pc_v4l2_info.c). Same reasoning as the mixer above: /dev/video* is
+# camera_device, and app.te neverallows appdomain -- so this cannot live in the
+# shell domain with the other bring-up helpers.
+allow vendor_shell camera_device:chr_file rw_file_perms;
