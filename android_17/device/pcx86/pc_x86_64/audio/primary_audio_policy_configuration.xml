@@ -33,6 +33,21 @@
   The input profile moves for the same reason. It asked for 8000,16000 mono,
   which are telephony rates; the capture device here is the SoC DMIC array
   (Dmic0 in the mixer), and it runs at 48 kHz like the rest of the pipeline.
+
+  ONLY the rates change here. An earlier revision also widened the input
+  channelMasks to "AUDIO_CHANNEL_IN_MONO,AUDIO_CHANNEL_IN_STEREO", which was
+  speculative and not needed for anything, and the AIDL HAL rejected the
+  resulting config outright:
+
+      F AHAL_Config: convertCollectionToAidl Line: 128 Failed result (BAD_VALUE)
+      F libc: Fatal signal 6 (SIGABRT) in android.hardware.audio.service-aidl.example
+              AudioPolicyConfigXmlConverter::init()
+
+  The HAL then crash-looped, audioserver never came up, and the device never
+  reached boot_completed - a non-booting device caused by a change that was
+  not fixing anything. This converter is strict and its failures are fatal
+  rather than diagnostic, so keep the delta from the stock config as small as
+  the problem requires.
 -->
 <module name="primary" halVersion="2.0">
     <attachedDevices>
@@ -47,7 +62,7 @@
         </mixPort>
         <mixPort name="primary input" role="sink">
             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
-                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_MONO,AUDIO_CHANNEL_IN_STEREO"/>
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_MONO"/>
         </mixPort>
    </mixPorts>
    <devicePorts>
