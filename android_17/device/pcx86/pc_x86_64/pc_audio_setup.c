@@ -51,7 +51,21 @@ static int ends_with(const char *s, const char *suffix) {
     return ls >= lsuf && strcmp(s + ls - lsuf, suffix) == 0;
 }
 
+/*
+ * Output goes to a file, not stdout. init redirects a service's stdout to
+ * /dev/null, so the first version of this printed a complete mixer dump
+ * straight into the void -- the tool ran, exited 0, and left no trace in the
+ * log at all, which reads exactly like the service never having started.
+ */
+static void redirect_output(const char *path) {
+    /* If this fails the dump is lost, but the unmuting below still runs --
+     * which is the part that matters. */
+    if (!freopen(path, "w", stdout)) return;
+    setvbuf(stdout, NULL, _IOLBF, 0);
+}
+
 int main(int argc, char **argv) {
+    redirect_output("/data/vendor/pc/audio_mixer.txt");
     unsigned int card = 0;
     if (argc > 1) {
         card = (unsigned int)atoi(argv[1]);

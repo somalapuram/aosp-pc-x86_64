@@ -32,9 +32,10 @@
  * that varies across the frame, while a monochrome source pins every U and V
  * at or very near 128. No JPEG decoder needed.
  *
- * Runs in vendor_shell for the same reason as pc_audio_setup: /dev/video* is
- * camera_device, and system/sepolicy/private/app.te neverallows any appdomain
- * -- including the shell domain the other helpers use -- read or write on it.
+ * Runs in vendor_shell for the same reason as pc_audio_setup: app.te
+ * neverallows any appdomain -- including the shell domain the other helpers
+ * use -- read or write on these nodes. Note the type is video_device, NOT
+ * camera_device; granting the latter left this denied on every node.
  */
 
 #include <errno.h>
@@ -149,7 +150,22 @@ static void probe_yuyv_chroma(const char *path, unsigned int w, unsigned int h) 
     close(fd);
 }
 
+/*
+ * Output goes to a file, not stdout. init redirects a service's stdout to
+ * /dev/null, so the first version of this wrote its whole report into the void
+ * -- the tool ran, exited 0, and left nothing in the log, which reads exactly
+ * like the service never having started.
+ */
+static void redirect_output(const char *path) {
+    /* If this fails there is nowhere left to complain to, and the report is
+     * lost; the caller runs regardless so a denial still shows up in the audit
+     * log. */
+    if (!freopen(path, "w", stdout)) return;
+    setvbuf(stdout, NULL, _IOLBF, 0);
+}
+
 int main(void) {
+    redirect_output("/data/vendor/pc/v4l2_info.txt");
     for (int i = 0; i < 10; i++) {
         char path[32];
         snprintf(path, sizeof(path), "/dev/video%d", i);

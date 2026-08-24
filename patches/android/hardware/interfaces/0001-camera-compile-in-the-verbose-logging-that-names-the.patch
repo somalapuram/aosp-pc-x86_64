@@ -1,0 +1,68 @@
+From 1bab048474b8b0508f34a8fe4ca7d99538e30429 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Mon, 24 Aug 2026 08:30:46 +0530
+Subject: [PATCH] camera: compile in the verbose logging that names the buffer
+ layout
+
+BRING-UP ONLY -- revert before shipping.
+
+The external camera preview is monochrome while a still capture taken from
+the same decoded frame comes out in colour. That split is the whole clue,
+and it follows the two code paths exactly: the JPEG is encoded from
+mYu12Frame by libjpeg on the CPU, whereas the preview is written into a
+gralloc buffer whose layout comes from lockYCbCr() and is then classified by
+getFourCcFromLayout() -- purely from the distance between the cb and cr
+pointers and the chroma_step.
+
+formatConvert() reports no error on any frame, so both sides believe they
+agree about that layout while the chroma never reaches the consumer. That is
+the signature of the allocator and the HAL disagreeing silently, not of a
+conversion failure, and it is a live suspect on this device because the
+gralloc implementation here is a patched minigbm.
+
+The values that would settle it -- the y/cb/cr pointers, the strides, the
+chroma_step, and the fourcc derived from them -- are already logged in
+ExternalCameraDeviceSession.cpp, but at ALOGV, which LOG_NDEBUG=1 compiles
+out of release builds. Setting log.tag.ExtCamDev=V does not bring them back:
+the statements are not in the binary. That was tried first and cost a boot.
+
+This logs per frame at 30fps, which is why it is temporary.
+
+Change-Id: Icf9d875d4ac2d0a13bb18fa05413c46815c48950
+---
+ camera/device/default/Android.bp | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/camera/device/default/Android.bp b/camera/device/default/Android.bp
+index 10cee12cd1..af4dd111e6 100644
+--- a/camera/device/default/Android.bp
++++ b/camera/device/default/Android.bp
+@@ -31,6 +31,25 @@ cc_library_shared {
+         "hidl_defaults",
+     ],
+     proprietary: true,
++
++    // BRING-UP ONLY -- revert before shipping.
++    //
++    // The preview is monochrome while a still capture from the same frame is
++    // in colour. That split is the whole clue: the JPEG is encoded from
++    // mYu12Frame by libjpeg on the CPU, whereas the preview is written into a
++    // gralloc buffer whose layout comes from lockYCbCr and is then classified
++    // by getFourCcFromLayout(). formatConvert() reports no error, so both
++    // sides believe they agree, yet the chroma is not reaching the consumer.
++    //
++    // The values that would settle it are logged -- the cb/cr pointers,
++    // strides and chroma_step in ExternalCameraDeviceSession.cpp, and the
++    // fourcc getFourCcFromLayout() derives from them -- but only at ALOGV,
++    // which LOG_NDEBUG=1 compiles out of release builds. Setting
++    // log.tag.ExtCamDev=V cannot bring them back; that was already tried and
++    // cost a boot. The statements have to be compiled in.
++    //
++    // This is verbose (per frame at 30fps), which is why it is temporary.
++    cflags: ["-DLOG_NDEBUG=0"],
+     srcs: [
+         "ExternalCameraDevice.cpp",
+         "ExternalCameraDeviceSession.cpp",
+-- 
+2.53.0
+

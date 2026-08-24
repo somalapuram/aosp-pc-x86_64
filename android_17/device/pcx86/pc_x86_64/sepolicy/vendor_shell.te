@@ -43,7 +43,14 @@ allow vendor_shell audio_device:dir r_dir_perms;
 allow vendor_shell audio_device:chr_file rw_file_perms;
 
 # pc-v4l2-info reports what each /dev/video* node is and samples its chroma
-# (see pc_v4l2_info.c). Same reasoning as the mixer above: /dev/video* is
-# camera_device, and app.te neverallows appdomain -- so this cannot live in the
-# shell domain with the other bring-up helpers.
-allow vendor_shell camera_device:chr_file rw_file_perms;
+# (see pc_v4l2_info.c). Same reasoning as the mixer above: an appdomain is
+# neverallowed these nodes, so this cannot live in the shell domain with the
+# other bring-up helpers.
+#
+# video_device, NOT camera_device: /dev/video* carries video_device, and
+# granting camera_device instead left the tool denied on every node --
+#     avc: denied { read write } comm="pc_v4l2_info" name="video0"
+#          scontext=u:r:vendor_shell:s0 tcontext=u:object_r:video_device:s0
+# camera_device is /dev/camera* and is a different type entirely.
+allow vendor_shell video_device:chr_file rw_file_perms;
+allow vendor_shell video_device:dir r_dir_perms;
