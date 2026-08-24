@@ -25,3 +25,22 @@ allow { audioserver system_server } tmpfs:file { read write map };
 #     avc: denied { execmem } scontext=u:r:surfaceflinger:s0  (956 times)
 allow surfaceflinger self:process execmem;
 
+
+# bootanim needs execmem for the same reason SurfaceFlinger does, and without
+# it the boot animation does not merely fail to appear -- it crashes:
+#     avc: denied { execmem } scontext=u:r:bootanim:s0 tclass=process
+#     F libc: Fatal signal 11 (SIGSEGV), code 2 (SEGV_ACCERR) in
+#             tid 1126 (Thread<00>), pid 1117 (bootanimation)
+#
+# bootanim is a GL client like any other: ANGLE loads SwiftShader in-process,
+# SwiftShader JITs its shaders, and the JIT needs writable-executable pages.
+# The grant for surfaceflinger above already explains why
+# PRODUCT_REQUIRES_INSECURE_EXECMEM_FOR_SWIFTSHADER does not cover this --
+# policy.go only passes it through to system_server.te -- so every other
+# SwiftShader client has to be named explicitly. bootanim was simply missed.
+#
+# Note this is not the whole story for the boot animation. The log also says
+# "BootAnimation: No animation file": no bootanimation.zip is shipped, so even
+# without the crash there would be nothing to draw. That is a cosmetic asset
+# and a separate matter from the segfault.
+allow bootanim self:process execmem;

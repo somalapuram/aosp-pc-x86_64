@@ -31,3 +31,20 @@ hal_client_domain(hal_graphics_composer_default, hal_graphics_allocator)
 
 # Reads /sys/class/backlight to find a panel to dim.
 allow hal_graphics_composer_default sysfs:dir r_dir_perms;
+
+# Display brightness. drm_hwcomposer drives the panel backlight through sysfs
+# (utils/SysfsBacklightController), which means reaching
+#     /sys/devices/pci0000:00/0000:00:02.0/drm/card0/card0-eDP-1/intel_backlight
+# by way of /sys/class/backlight/intel_backlight, a symlink SELinux resolves to
+# that real path. Two grants are needed and they are deliberately different in
+# strength.
+#
+# Traversal only on sysfs_pci: 'search' lets the composer walk down to the
+# connector directory without being able to read any of the PCI attributes on
+# the way, which is all it needs and no more.
+allow hal_graphics_composer_default sysfs_pci:dir search;
+
+# The backlight itself is read-write: brightness and bl_power are written to
+# set the level and to blank the panel, max_brightness and scale are read.
+allow hal_graphics_composer_default sysfs_leds:dir search;
+allow hal_graphics_composer_default sysfs_leds:file rw_file_perms;

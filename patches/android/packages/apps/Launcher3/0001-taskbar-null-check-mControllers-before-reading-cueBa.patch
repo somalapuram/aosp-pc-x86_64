@@ -1,0 +1,53 @@
+From d7ae98c6b0899c79d7a243f647cef552b1dd141a Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Mon, 24 Aug 2026 12:55:02 +0530
+Subject: [PATCH] taskbar: null-check mControllers before reading
+ cueBarController
+
+The launcher dies at boot on this device and has to be restarted by hand:
+
+    java.lang.NullPointerException: Attempt to read from field
+        'com.android.launcher3.taskbar.CueBarController
+         com.android.launcher3.taskbar.TaskbarControllers.cueBarController'
+        on a null object reference
+      at TaskbarNavButtonController.onRecentsButtonLayoutChanged(:289)
+      at NavbarButtonsViewController.notifyRecentsButtonPosition(:588)
+      at NavbarButtonsViewController.onBubbleBarLocationUpdated(:1403)
+      at BubbleBarController.updateBubbleBarLocationInternal(:678)
+
+The null object is mControllers, not cueBarController. mControllers is
+assigned in init() and set back to null in onDestroy(), and the guard at
+line 289 tests mControllers.cueBarController without first testing
+mControllers -- so a bubble-bar location update delivered outside that
+window dereferences null.
+
+That reads as an oversight rather than an assumption: line 439 of this same
+file already guards with "if (mControllers == null)". This adds the same
+check to line 289.
+
+It shows up on this device because desktop mode is enabled, which brings up
+the taskbar and with it the bubble bar; the callback that triggers it does
+not exist on a phone-shaped configuration.
+
+Change-Id: I74ad475ef1ad3ac266454cac427f309760af4951
+---
+ .../android/launcher3/taskbar/TaskbarNavButtonController.java  | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/quickstep/src/com/android/launcher3/taskbar/TaskbarNavButtonController.java b/quickstep/src/com/android/launcher3/taskbar/TaskbarNavButtonController.java
+index f2fd227df2..b0833787c7 100644
+--- a/quickstep/src/com/android/launcher3/taskbar/TaskbarNavButtonController.java
++++ b/quickstep/src/com/android/launcher3/taskbar/TaskbarNavButtonController.java
+@@ -286,7 +286,8 @@ public class TaskbarNavButtonController implements TaskbarControllers.LoggableTa
+      */
+     public void onRecentsButtonLayoutChanged(Rect bounds) {
+         mSystemUiProxy.notifyRecentsButtonPositionChanged(bounds);
+-        if (cueBarAceMigration() && mControllers.cueBarController != null) {
++        if (cueBarAceMigration() && mControllers != null
++                && mControllers.cueBarController != null) {
+             mControllers.cueBarController.onRecentsButtonLayoutChanged(bounds);
+         }
+     }
+-- 
+2.53.0
+

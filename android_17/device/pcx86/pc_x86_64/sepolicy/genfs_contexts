@@ -46,3 +46,27 @@ genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0003:01/power_supply u:objec
 # above while BAT0's printed "Battery"; that empty field IS the denial.
 genfscon sysfs /devices/platform/ACPI0003:00/power_supply u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/platform/ACPI0003:01/power_supply u:object_r:sysfs_batteryinfo:s0
+
+# The panel backlight, so display brightness can be changed.
+#
+# /sys/class/backlight/intel_backlight is a symlink into the DRM connector's
+# directory, and SELinux resolves it to the real path, which sits inside the
+# subtree labelled sysfs_pci for the GPU above. drm_hwcomposer could not
+# traverse it:
+#     avc: denied { search } name="pci0000:00" dev="sysfs"
+#          scontext=u:r:hal_graphics_composer_default:s0
+#          tcontext=u:object_r:sysfs_pci:s0 tclass=dir
+#     E drmhwc: Could not read power from
+#               /sys/class/backlight/intel_backlight/bl_power
+#
+# In the HWC3 model the composer owns display brightness -- drm_hwcomposer
+# implements ExecuteSetDisplayBrightness and carries a sysfs backlight
+# controller that reads bl_power, max_brightness, brightness and scale, and
+# writes bl_power and brightness. So this is not the missing ILights HAL that
+# LightsService complains about; that governs notification LEDs and the like.
+#
+# sysfs_leds is AOSP's own type for exactly this (public/file.te). AOSP ships
+# no genfscon for it because the path is per-board; this is that entry.
+# genfscon resolves by longest prefix, so this wins over the /devices/pci0000:00
+# rule above without disturbing it.
+genfscon sysfs /devices/pci0000:00/0000:00:02.0/drm/card0/card0-eDP-1/intel_backlight u:object_r:sysfs_leds:s0
