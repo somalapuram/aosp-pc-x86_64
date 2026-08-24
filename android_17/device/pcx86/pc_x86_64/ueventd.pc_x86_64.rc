@@ -61,3 +61,27 @@
 # the only way to see what Android actually drew while the virtio-gpu scanout
 # limitation keeps the host framebuffer blank.
 /dev/hvc2                 0660   root       shell
+
+# Panel backlight, so display brightness can be set.
+#
+# Labelling the node for SELinux (sepolicy/genfs_contexts) got the composer as
+# far as reading it, but not writing it:
+#     drmhwc: Backlight /sys/class/backlight/intel_backlight/
+#             (powered=no max=192000 hal applies encoding)
+#     drmhwc: Failed to turn backlight on at .../bl_power (13)
+# 13 is EACCES, and this one is DAC rather than SELinux: the kernel creates
+# these attributes 0644 root:root, so a read of max_brightness succeeds and
+# every write fails. Two separate permission systems, two separate fixes; the
+# SELinux label alone was never going to be enough.
+#
+# system:graphics matches what the service actually runs as -- hwc3-drm.rc
+# declares "user system" and "group graphics drmrpc" -- rather than being
+# guessed.
+#
+# ueventd resolves this /sys/class form: SysfsPermissions::MatchWithSubsystem
+# builds "/sys/class/<subsystem>/<basename>" and matches the rule against it
+# (system/core/init/devices.cpp), so the rule does not have to name the
+# PCI/DRM path the way the SELinux genfscon does. That also makes it immune to
+# the connector renaming that the genfscon entry is exposed to.
+/sys/class/backlight/intel_backlight    brightness      0660   system   graphics
+/sys/class/backlight/intel_backlight    bl_power        0660   system   graphics

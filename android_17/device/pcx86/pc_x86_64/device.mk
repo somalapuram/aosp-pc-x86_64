@@ -308,41 +308,6 @@ PRODUCT_COPY_FILES += \
     $(foreach f,$(wildcard device/pcx86/pc_x86_64/firmware/intel/*), \
         $(f):$(TARGET_COPY_OUT_VENDOR)/firmware/intel/$(notdir $(f)))
 
-# --- Camera: verbose format logging (BRING-UP ONLY) ------------------------
-# The preview comes out black and white, and nothing in the default log says
-# why. What is known: the external camera HAL only ever streams MJPEG (see the
-# fourcc check in ExternalCameraDeviceSession.cpp, which rejects anything that
-# is not MJPEG or Z16), and it DROPS frames whose conversion fails rather than
-# emitting grey ones -- so the handful of "Convert V4L2 frame to YU12 failed"
-# lines are dropped frames, not the cause of the monochrome image.
-#
-# That leaves the question of which node and which format were actually
-# selected, and the answer is only logged at verbose level:
-#     ExternalCameraDevice.cpp:890  ALOGV("index:%d,ret:%d, format:%c%c%c%c"...)
-#     ExternalCameraDevice.cpp:911  ALOGV("index:%d, format:%c%c%c%c, w %d, h %d"...)
-# so turn those on. The next boot will name the fourcc and list every
-# resolution the camera advertises, which distinguishes "the colour sensor is
-# streaming a mono JPEG" from "the IR node got registered instead" -- the two
-# candidates, and not something to guess between.
-#
-# Set as a build property rather than from init.rc because the camera HAL
-# starts in class hal and reads log tags at process start, before any of our
-# rc stanzas run.
-#
-# REMOVE before shipping, along with sysctl.kernel.dmesg_restrict=0 in
-# tools/mkdisk.sh and the bring-up sysfs grants (doc/08-roadmap.md).
-PRODUCT_PROPERTY_OVERRIDES += \
-    log.tag.ExtCamDev=V \
-    log.tag.ExtCamDevSsn=V \
-    log.tag.ExtCamPrvdr=V \
-    log.tag.ExtCamUtils=V
-
-# The mixer unmute helper. See pc_audio_setup.c -- the card registers muted and
-# nothing else on this device unmutes it.
-PRODUCT_PACKAGES += \
-    pc_audio_setup \
-    pc_v4l2_info
-
 # --- Audio firmware: SOF for Meteor Lake -----------------------------------
 # See config/pc_x86_64.fragment for why this machine needs SOF at all rather
 # than legacy HDA codec probing.
