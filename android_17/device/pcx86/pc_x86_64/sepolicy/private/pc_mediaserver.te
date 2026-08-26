@@ -1,0 +1,37 @@
+# The record track control block, and the same missing class as
+# pc_mediaswcodec.te.
+#
+# Video recording reached the audio stage and stopped there:
+#
+#     E AudioRecord: createRecord_l(0): AudioFlinger could not create record
+#                    track, status: -2147483646
+#     E StagefrightRecorder: audio source is not initialized
+#     E MediaRecorder: start failed: -2147483648
+#
+# The kernel says what actually failed, and it is not audio:
+#
+#     binder: 1459:1403 translate fd failed
+#     binder: 1403:1459 transaction reply to 1569:3625 failed
+#
+# 1403 is audioserver, 1569 mediaserver. audioserver opened the input stream
+# successfully, built the record track, and could not hand the shared control
+# block back: binder_translate_fd asks SELinux whether the receiving domain may
+# use the file, and the answer was no. mediaserver never receives a control
+# block, AudioSource fails to construct, and StagefrightRecorder reports the
+# audio source as uninitialised. Nothing in the audio path is at fault.
+#
+# AOSP grants precisely this in private/mediaserver.te:
+#     allow mediaserver audioserver:memfd_file { getattr map read write };
+# and, as in pc_mediaswcodec.te, memfd_file is an Android common kernel class
+# that mainline does not implement, so the object is a tmpfs file carrying
+# audioserver's tmpfs type and that rule cannot match.
+#
+# The fd half of the transfer is already permitted: mediaserver.te has
+# binder_call(mediaserver, binderservicedomain) and audioserver is one, which
+# grants audioserver:fd use. The denial is on class file, not fd, which is
+# consistent with that. Only the file half is missing.
+#
+# No MLS attribute is needed. Both domains run at s0, so l1 eq l2 satisfies the
+# write constraint on its own, and pc_audioserver.te has already marked
+# audioserver_tmpfs mlstrustedobject for the app case.
+allow mediaserver audioserver_tmpfs:file { getattr read write map };

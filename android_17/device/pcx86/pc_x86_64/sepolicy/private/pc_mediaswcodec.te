@@ -1,0 +1,43 @@
+# The Codec2 FMQ, and the security class this kernel does not have.
+#
+#     avc: denied { write } comm="binder:1574_5" name="memfd:MessageQueue"
+#          scontext=u:r:mediaswcodec:s0 tcontext=u:object_r:tmpfs:s0 tclass=file
+#     avc: denied { read write } comm="NDK MediaCodec_"
+#          path="/memfd:MessageQueue (deleted)"
+#          scontext=u:r:mediaswcodec:s0
+#          tcontext=u:object_r:appdomain_tmpfs:s0:c512,c768 tclass=file
+#          app=com.android.systemui
+#     E NdkMediaCodec: untranslated sf error code: 14
+#     E SoundPool::Sound: decode: decode error: -10000
+#     E SoundPool::Sound: doLoad: unable to load sound
+#
+# AOSP already grants exactly this, one line, in private/mediaswcodec.te:
+#     allow mediaswcodec appdomain:memfd_file { getattr read write map };
+# and that rule never matches here. memfd_file is a security class the Android
+# common kernel adds; mainline has no such class, so a memfd is an ordinary
+# tmpfs file and is labelled with the creating process's tmpfs type instead.
+# The permission upstream grants on appdomain:memfd_file has to be granted on
+# appdomain_tmpfs:file to have any effect on this device. Same rule, same
+# intent, different class, because the kernel is different.
+#
+# This only became reachable once media.c2.hal.selection was set to aidl. Until
+# then no Codec2 service was discoverable at all, mediaswcodec was never asked
+# to decode anything, and the denial had nothing to fire on. Fixing the HAL
+# selection did not cause this; it uncovered it.
+#
+# Both ends are needed. tmpfs is the queue mediaswcodec is handed by another
+# system component, appdomain_tmpfs the one created by an app process, and a
+# decode session uses both.
+#
+# No mlstrustedobject or mlstrustedsubject here, unlike pc_audioserver.te and
+# pc_cameraserver.te. Those needed it because a categorised app sat on one side
+# of an s0 object. Here the MLS constraints already exempt this case outright:
+# private/mls names appdomain_tmpfs explicitly in both directions,
+#     mlsconstrain { file ... } { read getattr execute }
+#          (t2 == app_data_file_type or t2 == appdomain_tmpfs or l1 dom l2 ...)
+#     mlsconstrain { file ... } { write setattr append ... }
+#          (t2 == app_data_file_type or t2 == appdomain_tmpfs or l1 eq l2 ...)
+# and mediaswcodec against plain tmpfs is s0 against s0. So this is type
+# enforcement alone, and no MCS isolation is given up.
+allow mediaswcodec tmpfs:file { getattr read write map };
+allow mediaswcodec appdomain_tmpfs:file { getattr read write map };
