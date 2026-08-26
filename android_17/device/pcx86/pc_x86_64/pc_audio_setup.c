@@ -36,10 +36,12 @@
  * whatever the HAL drives it is not these. Recording produced a valid file
  * whose audio track was silence.
  *
- * The gain caveat still stands, so capture volumes go to about three quarters
- * of range rather than maximum. That is loud enough to hear and leaves room
- * before clipping, and it is a starting point to tune from rather than a
- * setting to trust.
+ * Gain goes to maximum. Three quarters of range was tried first, on the
+ * principle that an input pinned at full gain is its own kind of broken, and
+ * the probe measured what that actually gave: peak 706 of 32767, RMS 64, about
+ * -54 dBFS. The recording contained real audio and was inaudible. Nothing is
+ * being protected from clipping 35 dB below where it should be, so the caution
+ * was wrong here and the measurement replaces it.
  *
  * Why a binary and not tinymix from a shell script: /dev/snd is audio_device,
  * and system/sepolicy/private/app.te carries
@@ -272,25 +274,33 @@ int main(int argc, char **argv) {
             }
             action = failed ? " -> CAPTURE UNMUTE FAILED" : " -> capture unmuted";
         } else if (t == MIXER_CTL_TYPE_INT && ends_with(name, "Capture Volume")) {
-            /* Three quarters of range, not maximum: enough to be clearly
-             * audible while leaving headroom, since an input pinned at full
-             * gain is its own kind of broken. */
+            /* Maximum, and the earlier caution about not doing that is
+             * withdrawn on the evidence. Three quarters of range plus one step
+             * of boost measured
+             *     capture probe 0:0 -> peak 706/32767  rms 64
+             * which is about -54 dBFS RMS. Speech recorded at a usable level
+             * sits nearer -20, so this was some 35 dB short: real audio, and
+             * inaudible on playback. There is no clipping risk to protect at
+             * that distance from full scale.
+             *
+             * The probe below reports the level this produces, so if it turns
+             * out hot the number to back off is measured rather than guessed. */
             int max = mixer_ctl_get_range_max(ctl);
-            int min = mixer_ctl_get_range_min(ctl);
-            int target = min + (max - min) * 3 / 4;
             int failed = 0;
             for (unsigned int v = 0; v < nv; v++) {
-                if (mixer_ctl_set_value(ctl, v, target) != 0) failed = 1;
+                if (mixer_ctl_set_value(ctl, v, max) != 0) failed = 1;
             }
-            action = failed ? " -> CAPTURE GAIN FAILED" : " -> capture gain to 3/4";
+            action = failed ? " -> CAPTURE GAIN FAILED" : " -> capture gain to max";
         } else if (t == MIXER_CTL_TYPE_INT && strcmp(name, "Mic Boost Volume") == 0) {
-            /* One step of boost. The range is only 0..3 and the internal mic is
-             * usually quiet without any. */
+            /* Also maximum, for the same reason. The range is only 0..3 and on
+             * a Realtek codec each step is around 10 dB, so this is most of the
+             * gain that was missing. */
+            int max = mixer_ctl_get_range_max(ctl);
             int failed = 0;
             for (unsigned int v = 0; v < nv; v++) {
-                if (mixer_ctl_set_value(ctl, v, 1) != 0) failed = 1;
+                if (mixer_ctl_set_value(ctl, v, max) != 0) failed = 1;
             }
-            action = failed ? " -> MIC BOOST FAILED" : " -> mic boost 1";
+            action = failed ? " -> MIC BOOST FAILED" : " -> mic boost to max";
         } else if (t == MIXER_CTL_TYPE_ENUM && strcmp(name, "Auto-Mute Mode") == 0) {
             /* Enum 0 is "Disabled" on Realtek codecs. Left on, jack detection
              * re-mutes the speaker the instant the switch above is set, which

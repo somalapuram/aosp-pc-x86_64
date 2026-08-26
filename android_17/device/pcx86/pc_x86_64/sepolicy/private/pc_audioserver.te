@@ -50,3 +50,23 @@ typeattribute audioserver_tmpfs mlstrustedobject;
 # system_server_tmpfs is mlstrustedobject in its own declaration and both
 # domains are s0, so type enforcement is the whole of it.
 allow audioserver system_server_tmpfs:file { getattr map read write };
+
+# And system_server, which SoundPool runs inside. The AudioTrack control block
+# is the same MemoryHeapBase this file's first rule is about, but system_server
+# is not an appdomain, so private/app.te's grant does not reach it:
+#
+#     avc: denied { read write } path="/memfd:MemoryHeapBase (deleted)"
+#          scontext=u:r:system_server:s0
+#          tcontext=u:object_r:audioserver_tmpfs:s0 tclass=file
+#     E AudioTrack: createTrack_l(0): Could not get control block
+#     E SoundPool::Stream: play_l: error creating AudioTrack
+#
+# Seventeen failed UI sounds in one boot. This is quieter than the earlier
+# faults because it is per track rather than fatal: most sounds play and some
+# do not, which reads as flaky audio rather than broken audio.
+#
+# private/system_server.te:483 grants the memfd form and stops there:
+#     allow system_server audioserver:memfd_file { getattr read write map };
+# Both domains are s0 and audioserver_tmpfs is already mlstrustedobject from
+# the rule above, so type enforcement is all that is missing.
+allow system_server audioserver_tmpfs:file { getattr read write map };
