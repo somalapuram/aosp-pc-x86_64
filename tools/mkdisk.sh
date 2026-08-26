@@ -128,12 +128,36 @@ search --no-floppy --label ANDROIDESP --set=root
 # in the ring buffer via dmesg. Logcat comes over virtio-console regardless,
 # which is cheap. Use the verbose entry (GRUB_DEFAULT=1) when debugging early
 # boot, accepting that it distorts timing.
+# video= pins the QEMU display mode, and without it the guest sits at 640x480.
+#
+# virtio-gpu is told a preferred resolution by -device virtio-vga-gl,xres=,yres=
+# and advertises it over EDID -- the guest confirms it negotiated the feature,
+# "[drm] features: +virgl +edid" -- and then nothing applies it. fbcon comes up
+# at "colour frame buffer device 80x30", which is 640x480, and the scanout stays
+# there: measured with xwininfo, the QEMU window was 640x507 ten minutes into a
+# boot while the device had been asked for 1824x1024. Android renders into
+# whatever mode is set, so the boot animation and the whole UI were 640x480 and
+# the window was small because the guest was small.
+#
+# Setting it here happens before any of that, and drm_hwcomposer inherits the
+# mode rather than choosing one.
+#
+# Virtual-1 is the connector name for virtio-gpu: virtgpu_display.c registers
+# DRM_MODE_CONNECTOR_VIRTUAL and drm_connector.c names that type "Virtual".
+# Naming the connector rather than using the bare video=WxH form is what keeps
+# this out of the way on real hardware, where the panel is eDP-1 and this
+# argument matches nothing and is ignored.
+#
+# GUEST_MODE overrides it at image build time. 1600x900 is the default because
+# it fits inside a 1080p host with room for a titlebar, and at density 240 it is
+# 1066x600dp, so still a large-screen layout rather than a phone one.
 menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=enforcing \\
            sysctl.kernel.dmesg_restrict=0 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
            console=ttyS0,115200 loglevel=7
     initrd /ramdisk.img
 }

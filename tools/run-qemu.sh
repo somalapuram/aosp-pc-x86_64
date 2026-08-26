@@ -329,12 +329,19 @@ fi
 
 GPU=${GPU:-virgl}
 GFX=()
-if [[ "$GPU" == "plain" ]]; then
-# Start maximised/fullscreen on request: FULLSCREEN=1 ./build.sh run
-# Combined with zoom-to-fit that gives the guest the whole monitor.
+
+# Start fullscreen on request: FULLSCREEN=1 ./build.sh run
+#
+# Defined here, before the GPU branch, because it has to be set on every path.
+# It was first written just inside `if [[ "$GPU" == "plain" ]]`, which GPU
+# defaults away from, so FS stayed unset, "${FS[@]}" expanded to nothing, and
+# -full-screen never reached qemu however the variable was exported. The
+# environment was reaching the process the whole time -- FULLSCREEN=1 was
+# visible in /proc/<pid>/environ -- which is what made it look like qemu was
+# ignoring the flag rather than never being given it.
 FS=()
 [[ -n "${FULLSCREEN:-}" ]] && FS=(-full-screen)
-
+if [[ "$GPU" == "plain" ]]; then
 case "$DISPLAY_MODE" in
         none|auto) GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display none) ;;
         *)         GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
@@ -389,18 +396,20 @@ case "$DISPLAY_MODE" in
     none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
     # gl=on is not optional: the plain GTK path takes the non-GL scanout, which
     # is the black-screen-with-a-cursor failure described in doc/05-graphics.md.
-    # zoom-to-fit scales the guest framebuffer to whatever size the window is,
-    # so the window becomes resizable and maximising it fills the screen. Without
-    # it GTK pins the window to the guest's exact pixel size: dragging the corner
-    # does nothing, and a guest larger than the screen is simply clipped. The two
-    # halves work together -- the sizing above stops the window being born too
-    # big, this lets it be made bigger afterwards.
+    # No zoom-to-fit. It reads like the option that makes the window bigger and
+    # does the reverse: the window keeps the size it was created at and the
+    # guest is scaled DOWN into it. Both halves were measured separately here.
+    # With video=Virtual-1:1600x900 fixing the guest, fbcon reported
+    # "colour frame buffer device 200x56" -- 200 columns of 8px by 56 rows of
+    # 16px, exactly 1600x900 -- while xwininfo still showed the window at
+    # 640x507. The guest was right and the window was ignoring it.
     #
-    # Verified accepted by this QEMU rather than assumed; an unknown -display
-    # parameter is rejected outright ("Parameter 'x' is unexpected"), so a
-    # version without it would fail to launch rather than ignore it.
+    # Without it GTK sizes the window to the guest's scanout, which is the
+    # behaviour wanted: fix the mode, get a window that size. Resolution is
+    # therefore set by video= in mkdisk.sh, not here; xres/yres below only
+    # supply the EDID preferred mode, which nothing on this guest acts on.
     gtk)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
-               -display gtk,gl=on,zoom-to-fit=on) ;;
+               -display gtk,gl=on) ;;
     vnc)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
                -display egl-headless -vnc "127.0.0.1:$VNC_DISPLAY")
           cat >&2 <<VNCMSG
