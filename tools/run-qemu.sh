@@ -202,8 +202,67 @@ fi
 # up while keeping the same layout, double ro.sf.lcd_density to 480 in
 # device.mk as well -- that is a build property, so it needs a rebuild, whereas
 # XRES/YRES here take effect on the next boot.
-XRES=${XRES:-2560}
-YRES=${YRES:-1600}
+#
+# The default is now measured rather than assumed. 2560x1600 is the panel of
+# the real target machine, and hardcoding it made the QEMU window unusable on
+# any host screen smaller than that: GTK asks for a window the size of the
+# guest framebuffer, the window manager refuses and shrinks it, and the result
+# is a small window showing a large-tablet layout, which is both tiny and
+# clipped. Nothing in the guest is wrong; there is just nowhere to put it.
+#
+# So ask the host how big its screen is and fit the guest inside it. The
+# detection reads DISPLAY, it never sets it -- picking a display is the
+# session's business, and this script has been wrong about it twice already.
+#
+# Only the geometry is taken from the host; the aspect ratio is left alone by
+# scaling both axes with the same factor, so the guest stays 16:10 and Android
+# keeps a sensible dp size. 90% leaves room for titlebars, panels and docks,
+# and the result is rounded down to a multiple of 8 because virtio-gpu is
+# happier with aligned strides.
+#
+# Explicit XRES/YRES still win, and the fallback when nothing can be measured
+# is 1920x1200: 16:10, fits a 1080p screen once scaled, and at density 240 is
+# 1280x800dp, so still a large-screen layout rather than a phone one.
+detect_host_screen() {
+    local geom=""
+    if [[ -n "${DISPLAY:-}" ]] && command -v xdpyinfo >/dev/null 2>&1; then
+        geom=$(xdpyinfo 2>/dev/null | awk '/dimensions:/ {print $2; exit}')
+    fi
+    if [[ -z "$geom" && -n "${DISPLAY:-}" ]] && command -v xrandr >/dev/null 2>&1; then
+        geom=$(xrandr 2>/dev/null | awk '/\*/ {print $1; exit}')
+    fi
+    if [[ -z "$geom" ]] && command -v wlr-randr >/dev/null 2>&1; then
+        geom=$(wlr-randr 2>/dev/null | awk '/current/ {print $1; exit}')
+    fi
+    [[ "$geom" =~ ^([0-9]+)x([0-9]+)$ ]] || return 1
+    # Trailing newline matters: read returns non-zero when it hits EOF without
+    # one, even though it has already assigned the variables, so the caller's
+    # `if read ...` would take the failure branch every time and silently fall
+    # back to the default. That is exactly what it did until this was tested.
+    printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+if [[ -z "${XRES:-}${YRES:-}" ]]; then
+    if read -r HOST_W HOST_H < <(detect_host_screen) && (( HOST_W > 0 && HOST_H > 0 )); then
+        # Largest 16:10 box inside 90% of the host screen.
+        avail_w=$(( HOST_W * 9 / 10 ))
+        avail_h=$(( HOST_H * 9 / 10 ))
+        if (( avail_w * 10 / 16 <= avail_h )); then
+            XRES=$(( avail_w / 8 * 8 ))
+            YRES=$(( avail_w * 10 / 16 / 8 * 8 ))
+        else
+            YRES=$(( avail_h / 8 * 8 ))
+            XRES=$(( avail_h * 16 / 10 / 8 * 8 ))
+        fi
+        info "host screen ${HOST_W}x${HOST_H}, sizing guest to ${XRES}x${YRES}"
+    else
+        XRES=1920
+        YRES=1200
+        info "host screen not detected, guest ${XRES}x${YRES} (override with XRES/YRES)"
+    fi
+fi
+XRES=${XRES:-1920}
+YRES=${YRES:-1200}
 
 # Blob resources: let the guest and host SHARE buffers instead of copying.
 #
@@ -265,7 +324,12 @@ fi
 GPU=${GPU:-virgl}
 GFX=()
 if [[ "$GPU" == "plain" ]]; then
-    case "$DISPLAY_MODE" in
+# Start maximised/fullscreen on request: FULLSCREEN=1 ./build.sh run
+# Combined with zoom-to-fit that gives the guest the whole monitor.
+FS=()
+[[ -n "${FULLSCREEN:-}" ]] && FS=(-full-screen)
+
+case "$DISPLAY_MODE" in
         none|auto) GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display none) ;;
         *)         GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
     esac
@@ -319,7 +383,18 @@ case "$DISPLAY_MODE" in
     none) GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display egl-headless) ;;
     # gl=on is not optional: the plain GTK path takes the non-GL scanout, which
     # is the black-screen-with-a-cursor failure described in doc/05-graphics.md.
-    gtk)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT -display gtk,gl=on) ;;
+    # zoom-to-fit scales the guest framebuffer to whatever size the window is,
+    # so the window becomes resizable and maximising it fills the screen. Without
+    # it GTK pins the window to the guest's exact pixel size: dragging the corner
+    # does nothing, and a guest larger than the screen is simply clipped. The two
+    # halves work together -- the sizing above stops the window being born too
+    # big, this lets it be made bigger afterwards.
+    #
+    # Verified accepted by this QEMU rather than assumed; an unknown -display
+    # parameter is rejected outright ("Parameter 'x' is unexpected"), so a
+    # version without it would fail to launch rather than ignore it.
+    gtk)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
+               -display gtk,gl=on,zoom-to-fit=on) ;;
     vnc)  GFX=(-device virtio-vga-gl,xres=$XRES,yres=$YRES$BLOBOPT
                -display egl-headless -vnc "127.0.0.1:$VNC_DISPLAY")
           cat >&2 <<VNCMSG
@@ -368,6 +443,7 @@ exec qemu-system-x86_64 \
     -drive file="$DISK",format=raw,if=none,id=disk0 \
     -device nvme,drive=disk0,serial=androidpc0 \
     "${GFX[@]}" \
+    "${FS[@]}" \
     -device intel-hda -device hda-duplex \
     -device virtio-net-pci,netdev=n0 \
     -netdev user,id=n0,hostfwd=tcp::${ADB_PORT}-:5555 \
