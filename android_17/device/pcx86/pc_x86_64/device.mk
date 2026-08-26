@@ -570,6 +570,44 @@ PRODUCT_COPY_FILES += \
 PRODUCT_VENDOR_PROPERTIES += \
     media.c2.hal.selection=aidl
 
+# Force shared memory onto memfd. This kernel has no ashmem, and the fallback
+# that is supposed to cover that is gated shut on this device.
+#
+# ashmem_create_region() picks memfd only when use_memfd() agrees, and it
+# checks three things: the memfd_class sepolicy capability, which reads 0 here
+# because system/sepolicy never declares the policycap; ro.vendor.api_level;
+# and the calling application's target SDK, which must be 37 or newer. Any one
+# of those failing sends it to __ashmem_create_region, which opens
+# /dev/ashmem<boot_id>, which does not exist:
+#
+#     E CursorWindow: Failed ashmem_create_region: No such file or directory
+#     E SQLiteBlobTooBigException: Row too big to fit into CursorWindow
+#         requiredPos=0, totalRows=8
+#
+# That is F-Droid crashing, and the mechanism is worth stating because it is
+# not what it looks like. A CursorWindow starts at kInlineSize, 16KB on the
+# heap, and only reaches config_cursorWindowSize by inflating into ashmem. With
+# ashmem unavailable it is stuck at 16KB forever, so raising
+# config_cursorWindowSize to 8192 changed nothing at all: the window never gets
+# near the configured size. Any row over 16KB fails, which one of F-Droid's
+# Version rows comfortably is.
+#
+# The target SDK gate is what makes this F-Droid's problem specifically: it
+# targets SDK 30. The gate exists to protect older apps from assumptions about
+# the fd they are given, which is reasonable where ashmem is the alternative
+# and useless where the alternative is failing outright.
+#
+# sys.use_memfd is libcutils' own override for exactly this and short-circuits
+# all three checks. Preferred over patching the gate or declaring the policycap:
+# it is the supported switch, it is one line, and it leaves memfds labelled the
+# way they already are on this device, so the tmpfs rules in sepolicy/private
+# keep matching. Declaring policycap memfd_class would relabel every memfd as
+# memfd_file and switch the whole device onto AOSP's memfd_file rules in one
+# step; that is arguably the more correct end state and is not a change to make
+# in the same breath as fixing a crash.
+PRODUCT_SYSTEM_PROPERTIES += \
+    sys.use_memfd=true
+
 # The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
 #
 # Retired in 2328f8c along with the verbose HAL logging, but for a different

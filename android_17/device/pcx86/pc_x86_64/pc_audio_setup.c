@@ -56,6 +56,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
 #include <tinyalsa/asoundlib.h>
 
 static int ends_with(const char *s, const char *suffix) {
@@ -337,6 +338,50 @@ int main(int argc, char **argv) {
             probe_capture_ch(card, dev, kChannelCounts[i]);
         }
     }
+
+    /* A second pass, ninety seconds later.
+     *
+     * Everything measured at boot says the microphone works: both channels of
+     * 0:0 carry signal at roughly -40 dBFS with the mixer unmuted and at full
+     * gain. Everything measured in the recording says the encoder is fed
+     * silence: the AAC global_gain of every frame sits at 7 to 10, where
+     * ordinary speech is 110 upward, so the content is at the very bottom of
+     * the scale rather than merely quiet.
+     *
+     * Both cannot be true of the same signal, so the loss is between ALSA and
+     * the encoder. The mixer is not the culprit: the HAL never writes mic gain
+     * on this device -- no setHwGain or setMicGain appears in a whole boot --
+     * and setMicMute is only ever called with 0.
+     *
+     * What has not been measured is the ALSA level at the time a recording
+     * happens rather than at boot. This pass re-reads the capture controls and
+     * re-probes after a delay long enough to record something in between. If
+     * the level is still there, the loss is definitively above the HAL and
+     * nothing in the mixer will fix it. If it has collapsed, something changed
+     * the capture path after boot and the controls printed here will say what.
+     *
+     * The probe may find the device busy if a recording is in flight, which it
+     * reports rather than hides; that is itself informative.
+     *
+     * Diagnostic only. Delete this pass once the answer is known. */
+    sleep(90);
+    printf("pc_audio_setup: second pass at T+90s\n");
+    struct mixer *m2 = mixer_open(card);
+    if (m2) {
+        unsigned int n2 = mixer_get_num_ctls(m2);
+        for (unsigned int i = 0; i < n2; i++) {
+            struct mixer_ctl *c = mixer_get_ctl(m2, i);
+            if (!c) continue;
+            const char *nm = mixer_ctl_get_name(c);
+            if (!nm || !strstr(nm, "Capture")) continue;
+            printf("  [%u] %-40s cur=", i, nm);
+            unsigned int nv2 = mixer_ctl_get_num_values(c);
+            for (unsigned int v = 0; v < nv2 && v < 8; v++) printf("%d ", mixer_ctl_get_value(c, v));
+            printf("\n");
+        }
+        mixer_close(m2);
+    }
+    probe_capture_ch(card, 0, 2);
 
     printf("pc_audio_setup: done\n");
     return 0;
