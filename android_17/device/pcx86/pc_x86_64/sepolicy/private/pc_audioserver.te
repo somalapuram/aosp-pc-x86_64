@@ -38,3 +38,15 @@
 # created per track for the client that opened it, so the exposure is narrow,
 # and it is the same trade AOSP already makes for the zygote and tracing heaps.
 typeattribute audioserver_tmpfs mlstrustedobject;
+
+# The other direction, found while chasing the codec queues: audioserver maps
+# buffers owned by system_server and was refused 39 times in a boot.
+#
+#     avc: denied { read write } scontext=u:r:audioserver:s0
+#          tcontext=u:object_r:system_server_tmpfs:s0 tclass=file
+#
+# private/audioserver.te:93 grants the memfd form of this already:
+#     allow audioserver system_server:memfd_file { getattr map read write };
+# system_server_tmpfs is mlstrustedobject in its own declaration and both
+# domains are s0, so type enforcement is the whole of it.
+allow audioserver system_server_tmpfs:file { getattr map read write };

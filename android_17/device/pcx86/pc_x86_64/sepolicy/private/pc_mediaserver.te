@@ -70,3 +70,65 @@ allow mediaserver audioserver_tmpfs:file { getattr read write map };
 #     allow cameraserver tmpfs:file { read write map };
 # An FMQ has two ends and both of them need the rule.
 allow mediaserver tmpfs:file { getattr read write map };
+
+# The app end of the thumbnail buffer. Recording is fixed and the files are
+# valid; what is missing is the ability to see one.
+#
+#     avc: denied { read write } path="/memfd:MetadataRetrieverClient (deleted)"
+#          scontext=u:r:untrusted_app:s0:c72,c256,c512,c768
+#          tcontext=u:object_r:mediaserver_tmpfs:s0 tclass=file
+#
+# MediaMetadataRetriever decodes a frame in mediaserver and returns it to the
+# client through IMemory, which is a memfd on this kernel. The app cannot map
+# it, so the transfer fails and the filmstrip has nothing to draw:
+#
+#     E libbinder.IMemory: transaction failed fd=-2147483647, size=0,
+#                          err=-2147483646 (FAILED_TRANSACTION)
+#     E MediaMetadataRetrieverJNI: getEmbeddedPicture: Call failed.
+#     E MediaMetadataRetrieverJNI: getFrameAtTime: videoFrame is a NULL pointer
+#
+# The recording itself completed: both tracks stopped with status 0, the file
+# was published out of .pending, and it is a structurally valid MP4 with a
+# 13MB mdat. Only the thumbnail is missing, which from the filmstrip is
+# indistinguishable from the recording not having been saved.
+#
+# private/app.te grants appdomain the equivalent for its neighbours,
+#     allow appdomain audioserver_tmpfs:file { getattr map read write };
+#     allow appdomain system_server_tmpfs:file { getattr map read write };
+# and simply omits mediaserver_tmpfs. cameraserver_tmpfs was missing from that
+# same list, which is why pc_cameraserver.te already carries this exact pair.
+allow appdomain mediaserver_tmpfs:file { getattr map read write };
+
+# And the MLS half, for the same reason it was needed for the camera queue. The
+# app is s0:c72,... and the memfd is plain s0. Reading needs the source to
+# dominate the target, which a categorised app does, so read alone would pass;
+# writing needs equivalence, and s0 does not equal a categorised level, so the
+# mapping is still refused. IMemory maps the region shared, so both are asked
+# for and an allow rule cannot lift an MLS constraint.
+#
+# Added from private policy because the declaration in public/mediaserver.te
+# cannot be edited, the way AOSP does it for traced_tmpfs and heapprofd_tmpfs.
+typeattribute mediaserver_tmpfs mlstrustedobject;
+
+# The buffers FrameDecoder actually reads, and the crash they caused.
+#
+#     avc: denied { read write } scontext=u:r:mediaserver:s0
+#          tcontext=u:object_r:mediaextractor_tmpfs:s0 tclass=file
+#
+# mediaserver did not merely fail to produce a thumbnail, it aborted:
+#
+#     Abort message: MediaBuffer.cpp:145 CHECK(offset + length <= mSize) failed
+#         #05 MediaBuffer::set_range
+#         #06 BpMediaSource::readMultiple
+#         #08 FrameDecoder::extractInternalUsingBlockModel
+#         #09 FrameDecoder::extractFrame
+#
+# readMultiple carries sample data in shared memory owned by mediaextractor.
+# Unable to map it, mediaserver ends up with a zero sized buffer and then sets a
+# real range on it, and the CHECK is fatal rather than diagnostic. Two
+# tombstones this boot, both mediaserver, both here. Fixing the mapping removes
+# the crash as well as the missing thumbnail.
+#
+# private/mediaserver.te:10 already grants exactly this as
+#     allow mediaserver mediaextractor:memfd_file { getattr map read write };
+allow mediaserver mediaextractor_tmpfs:file { getattr map read write };

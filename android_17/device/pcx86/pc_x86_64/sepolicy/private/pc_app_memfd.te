@@ -1,0 +1,53 @@
+# Apps mapping the codec's buffers, and the pattern behind every memfd rule on
+# this device.
+#
+#     48x scontext=u:r:untrusted_app:s0:c72,c256,c512,c768
+#         tcontext=u:object_r:tmpfs:s0 tclass=file
+#     20x scontext=u:r:platform_app:s0:c512,c768
+#         tcontext=u:object_r:tmpfs:s0 tclass=file
+#
+# These are Codec2 buffers. mediaswcodec is hal_codec2 (hal_server_domain in
+# private/mediaswcodec.te) and declares no tmpfs type of its own, so its memfds
+# keep the generic tmpfs label rather than a mediaswcodec_tmpfs one.
+#
+# private/app.te states the rule this completes, in a block it introduces as
+# "Read tmpfs/memfd types from these processes":
+#
+#     allow appdomain audioserver_tmpfs:file    { getattr map read write };
+#     allow appdomain audioserver:memfd_file    { getattr map read write };
+#     allow appdomain system_server_tmpfs:file  { getattr map read write };
+#     allow appdomain system_server:memfd_file  { getattr map read write };
+#     allow appdomain zygote_tmpfs:file         { map read };
+#     allow appdomain zygote:memfd_file         { map read };
+#     allow appdomain hal_codec2:memfd_file     { getattr map read write };
+#     allow appdomain cameraserver:memfd_file   { getattr map read write };
+#     allow appdomain mediaextractor:memfd_file { getattr map read write };
+#     allow appdomain mediaserver:memfd_file    { getattr map read write };
+#
+# The first three are granted in both forms, the last four only as memfd_file.
+# That asymmetry is invisible on a kernel that implements the memfd_file
+# security class and total on one that does not: mainline has no such class, so
+# a memfd is an ordinary tmpfs file carrying the creating process's tmpfs type,
+# every memfd_file rule silently matches nothing, and only the paired ones keep
+# working. cameraserver was the first of the four to be noticed and is already
+# handled in pc_cameraserver.te; this covers hal_codec2, and mediaserver and
+# mediaextractor are covered in pc_mediaserver.te.
+#
+# So the whole family of denials on this device is one upstream assumption, not
+# a series of unrelated faults, and the remedy is to supply the tmpfs half AOSP
+# supplies for its own first three entries.
+#
+# Worth being deliberate about the breadth. The counterpart here has to be the
+# generic tmpfs type, because hal_codec2 has no tmpfs type to name, so this is
+# wider than the domain specific rules elsewhere: it reaches any tmpfs file
+# whose creator lacks a type_transition, not only the codec's. It is bounded by
+# being file class only, and it grants apps no more than the hal_codec2
+# memfd_file rule already intends. A narrower rule would need mediaswcodec to
+# declare a tmpfs type, which means changing platform policy rather than
+# adding to it.
+#
+# MLS needs nothing here. private/mls exempts the read and write constraints
+# when the object is app_data_file_type or appdomain_tmpfs, and for plain tmpfs
+# at s0 a categorised app dominates s0 for read; write is the constraint that
+# would bite, and tmpfs is not app data, so equivalence is not required of it.
+allow appdomain tmpfs:file { getattr map read write };
