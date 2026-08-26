@@ -581,6 +581,27 @@ PRODUCT_VENDOR_PROPERTIES += \
 PRODUCT_PACKAGES += \
     pc_v4l2_info
 
+# The mixer and PCM reporter, also brought back for one boot (BRING-UP ONLY).
+#
+# Capture cannot open: proxy_open(card:0 device:0 PCM_IN) is refused with
+# "cannot set hw params: Invalid argument", so the input stream sits in state
+# ERROR and recording gets no audio. PCM_OUT on the same card opens cleanly,
+# so this is specific to the capture endpoint.
+#
+# The channel count in primary_audio_policy_configuration.xml has been changed
+# from mono to stereo, which is the likely cause and the usual shape of an HDA
+# capture endpoint. That is a hypothesis, not a measurement: the build host has
+# no such card to interrogate, and the HAL does not log what the driver would
+# accept. dump_pcm_caps() in pc_audio_setup.c prints the real rate and channel
+# ranges for every capture and playback device on the card, so the next boot
+# either confirms stereo or names what to use instead, rather than costing
+# another guess.
+#
+# Drop this again once capture opens. Note it also unmutes and maxes the
+# playback controls, which is redundant now that output works.
+PRODUCT_PACKAGES += \
+    pc_audio_setup
+
 # Ethernet. This device really does have a wired NIC, and without the feature
 # EthernetService never configures eth0, so the guest has no IP at all:
 # nothing in logcat mentions eth0, DHCP or IpClient. That makes adb over TCP

@@ -41,3 +41,39 @@
 # enforcement alone, and no MCS isolation is given up.
 allow mediaswcodec tmpfs:file { getattr read write map };
 allow mediaswcodec appdomain_tmpfs:file { getattr read write map };
+
+# The same rule again for the two clients that are not apps. Granting the app
+# case moved the denial rather than removing it, exactly as it did three times
+# over for the camera queue in pc_cameraserver.te:
+#
+#     193x scontext=u:r:mediaswcodec:s0
+#          tcontext=u:object_r:system_server_tmpfs:s0 tclass=file
+#      15x scontext=u:r:mediaswcodec:s0
+#          tcontext=u:object_r:mediaserver_tmpfs:s0 tclass=file
+#
+# system_server is SoundPool, which is why UI sound stayed silent after the
+# codec list was populated. mediaserver is MediaCodecSource, and its denial is
+# why a recording that ran for thirteen seconds wrote nothing:
+#
+#     E MPEG4Writer: The number of recorded samples is 0
+#     I MPEG4Writer: Received total/0-length (1/0) buffers and encoded 0
+#                    frames. - Video
+#
+# The encoder was created and started and never saw a single input buffer, so
+# the video track was empty and the file had nothing to finalise.
+#
+# mediaextractor is the precedent worth following here rather than the memfd
+# rules quoted above. It is the same shape of service, a media component that
+# maps buffers its clients own, and private/mediaextractor.te already carries
+# this exact set on the file class:
+#     allow mediaextractor appdomain_tmpfs:file { getattr map read write };
+#     allow mediaextractor mediaserver_tmpfs:file { getattr map read write };
+#     allow mediaextractor system_server_tmpfs:file { getattr map read write };
+# mediaswcodec is simply missing from that pattern upstream, because on a
+# kernel with memfd_file it never needed it.
+#
+# Still type enforcement only: both types are s0 and mediaswcodec is s0, so
+# l1 eq l2 satisfies the write constraint, and system_server_tmpfs already
+# carries mlstrustedobject in its declaration.
+allow mediaswcodec system_server_tmpfs:file { getattr read write map };
+allow mediaswcodec mediaserver_tmpfs:file { getattr read write map };

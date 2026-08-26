@@ -61,8 +61,35 @@
                      samplingRates="48000" channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
         </mixPort>
         <mixPort name="primary input" role="sink">
+            <!-- Stereo, not mono. openProxyForAttachedDevice() does not ask the
+                 card what it can do; profile_fill_builtin_device_info() fills
+                 the profile straight from this file and demands it verbatim of
+                 the driver. Asking card 0 device 0 for one channel is refused:
+
+                   proxy_open(card:0 device:0 PCM_IN)
+                   proxy_open() pcm_is_ready() failed: cannot set hw params:
+                       Invalid argument
+                   openProxyForAttachedDevice: failed to open device,
+                       address=<0,0> error=-12
+                   AHAL_StreamPrimary: Function: start Line: 88 Failed
+
+                 which leaves the input stream in state ERROR, so every later
+                 burst returns -ENOSYS and AudioFlinger reads framesRead=-38.
+                 HDA capture endpoints are stereo; a mono capture stream is a
+                 phone codec convention this card does not share. Nothing is
+                 lost by opening stereo: AudioFlinger downmixes to whatever the
+                 client asked for, and the camcorder profile still records one
+                 channel.
+
+                 The output side of this file needed the same lesson at 44100
+                 and is deliberately untouched here, since PCM_OUT opens
+                 cleanly on this card.
+
+                 One value, not a list. A comma separated channelMasks converts
+                 to -1 and aborts the HAL during config parsing, which stops the
+                 device booting at all; that mistake cost a boot already. -->
             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
-                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_MONO"/>
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_STEREO"/>
         </mixPort>
    </mixPorts>
    <devicePorts>
