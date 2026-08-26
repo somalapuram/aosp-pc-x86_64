@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Media profiles for pc_x86_64.
+
+  This file exists because of a camera bug, not a media one. Without any
+  media_profiles XML on the device, MediaProfiles::getInstance() logs
+
+      Could not find a validated xml file. Using the default instance instead.
+
+  and the built in defaults declare exactly two encoders, H263 and MPEG4 SP,
+  both capped at 352x288 (createDefaultH263VideoEncoderCap in MediaProfiles.cpp).
+
+  Camera API1 turns those caps into a size filter. Parameters::initialize walks
+  every video encoder to derive bounds, then asks getFilteredSizes for camera
+  sizes inside them. With the CIF defaults the window is 176x144 to 352x288, an
+  area of 25344 to 101376, while the smallest size this sensor offers in MJPEG
+  is 640x360, an area of 230400. Nothing can fall inside, the list comes back
+  empty, and initialize fails:
+
+      generated preview size list is empty!!
+      initializeImpl: Camera 0: unable to build defaults: Invalid argument (-22)
+
+  The message names the preview list, but getFilteredSizes prints it for both
+  of its calls and it is the second, the video size list, that cannot be
+  satisfied. Photo mode survives because it retries on API2, which does not go
+  through Parameters at all; video mode has no such fallback and finishes the
+  activity, which is why it looked like a crash.
+
+  The profiles below therefore describe only sizes the sensor actually offers,
+  taken from the on device V4L2 dump rather than from a template: 640x480,
+  1280x720 and 1920x1080, all of which it reports at 30fps in MJPEG. 640x360 is
+  left out for lack of a matching quality name. LOW, HIGH and the timelapse
+  equivalents are not listed because MediaProfiles derives them from the
+  smallest and largest entries here.
+
+  vga and 480p both map to 640x480. The sensor has no 720x480 mode, so a strict
+  reading would omit 480p, but apps probe it by name and dropping it buys
+  nothing; device/linaro/dragonboard makes the same trade.
+
+  Audio is 48kHz mono AAC to match the input the audio policy actually
+  declares. Stereo or 44100 here would be a profile the recorder cannot honour.
+
+  cameraId 0 and 100 are both present. The external camera provider registers
+  this sensor as device 100 (cameraIdOffset), while an API1 client sees it as
+  index 0, and getCamcorderProfile does no fallback between the two: a miss
+  returns nullptr rather than the nearest profile. Declaring both avoids
+  depending on which identifier reaches MediaProfiles. The shipped DTD still
+  restricts cameraId to 0 or 1, but the parser does not validate against it and
+  device/google/cuttlefish already ships ids up to 6.
+-->
+<!DOCTYPE MediaSettings SYSTEM "/system/etc/media_profiles_V1_0.dtd">
+<MediaSettings>
+    <CamcorderProfiles cameraId="0">
+        <EncoderProfile quality="vga" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="480p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="720p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="6000000"
+                   width="1280"
+                   height="720"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="1080p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="12000000"
+                   width="1920"
+                   height="1080"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapsevga" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse480p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse720p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="6000000"
+                   width="1280"
+                   height="720"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse1080p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="12000000"
+                   width="1920"
+                   height="1080"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <ImageEncoding quality="95" />
+        <ImageEncoding quality="80" />
+        <ImageEncoding quality="70" />
+        <ImageDecoding memCap="20000000" />
+    </CamcorderProfiles>
+
+    <CamcorderProfiles cameraId="100">
+        <EncoderProfile quality="vga" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="480p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="720p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="6000000"
+                   width="1280"
+                   height="720"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="1080p" fileFormat="mp4" duration="60">
+            <Video codec="h264"
+                   bitRate="12000000"
+                   width="1920"
+                   height="1080"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapsevga" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse480p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="3000000"
+                   width="640"
+                   height="480"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse720p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="6000000"
+                   width="1280"
+                   height="720"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <EncoderProfile quality="timelapse1080p" fileFormat="mp4" duration="30">
+            <Video codec="h264"
+                   bitRate="12000000"
+                   width="1920"
+                   height="1080"
+                   frameRate="30" />
+            <Audio codec="aac"
+                   bitRate="96000"
+                   sampleRate="48000"
+                   channels="1" />
+        </EncoderProfile>
+
+        <ImageEncoding quality="95" />
+        <ImageEncoding quality="80" />
+        <ImageEncoding quality="70" />
+        <ImageDecoding memCap="20000000" />
+    </CamcorderProfiles>
+
+    <EncoderOutputFileFormat name="3gp" />
+    <EncoderOutputFileFormat name="mp4" />
+
+    <!-- Maxima are what bound the API1 video size window described above, so
+         h264 is what makes 1920x1080 reachable. c2.android.avc.encoder accepts
+         up to 2048x2048, so this is the encoder's real limit rather than a
+         hopeful one. h263 keeps its true CIF ceiling; the bounds take the
+         maximum across encoders, so it costs nothing to leave it honest. -->
+    <VideoEncoderCap name="h264" enabled="true"
+        minBitRate="64000" maxBitRate="12000000"
+        minFrameWidth="176" maxFrameWidth="1920"
+        minFrameHeight="144" maxFrameHeight="1080"
+        minFrameRate="15" maxFrameRate="30" />
+
+    <VideoEncoderCap name="h263" enabled="true"
+        minBitRate="64000" maxBitRate="1000000"
+        minFrameWidth="176" maxFrameWidth="352"
+        minFrameHeight="144" maxFrameHeight="288"
+        minFrameRate="15" maxFrameRate="30" />
+
+    <VideoEncoderCap name="m4v" enabled="true"
+        minBitRate="64000" maxBitRate="12000000"
+        minFrameWidth="176" maxFrameWidth="1920"
+        minFrameHeight="144" maxFrameHeight="1080"
+        minFrameRate="15" maxFrameRate="30" />
+
+    <AudioEncoderCap name="aac" enabled="true"
+        minBitRate="8000" maxBitRate="96000"
+        minSampleRate="8000" maxSampleRate="48000"
+        minChannels="1" maxChannels="1" />
+
+    <AudioEncoderCap name="amrnb" enabled="true"
+        minBitRate="5525" maxBitRate="12200"
+        minSampleRate="8000" maxSampleRate="8000"
+        minChannels="1" maxChannels="1" />
+
+    <VideoDecoderCap name="wmv" enabled="false" />
+    <AudioDecoderCap name="wma" enabled="false" />
+</MediaSettings>

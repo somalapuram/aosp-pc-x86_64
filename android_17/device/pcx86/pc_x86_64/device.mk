@@ -514,6 +514,21 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.camera.external.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.external.xml \
     device/pcx86/pc_x86_64/external_camera_config.xml:$(TARGET_COPY_OUT_VENDOR)/etc/external_camera_config.xml
 
+# Media profiles. Without this file MediaProfiles falls back to built in
+# defaults whose only encoders are H263 and MPEG4 SP capped at 352x288, and
+# Camera API1 derives its video size window from exactly those caps. The
+# smallest size this sensor offers is 640x360, so the window and the sensor do
+# not overlap at all and Parameters::initialize fails with "generated preview
+# size list is empty!!", taking video recording down with it. See the file
+# itself for the full chain.
+#
+# vendor/etc is the third directory MediaProfiles searches, after product/etc
+# and odm/etc; this product puts nothing in either, so vendor wins. The file
+# name has to carry the _V1_0 variant, which is the default value of
+# ro.media.xml_variant.profiles.
+PRODUCT_COPY_FILES += \
+    device/pcx86/pc_x86_64/media/media_profiles_V1_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_V1_0.xml
+
 # The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
 #
 # Retired in 2328f8c along with the verbose HAL logging, but for a different
