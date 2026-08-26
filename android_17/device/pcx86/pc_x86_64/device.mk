@@ -436,6 +436,18 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += \
     PcLauncher
 
+# F-Droid, so the device can install software without a Play Store. The APK and
+# the reasoning behind how it is imported are in vendor/x86/fdroid/Android.bp;
+# in short it keeps its own signature because it self-updates, and lands on the
+# product partition because it is bundled software rather than platform.
+#
+# This is the store only. Installs go through the normal package installer and
+# need the user to confirm each one, and to allow F-Droid to install unknown
+# apps first. Unattended installs would need the Privileged Extension, which is
+# a separate privileged app and a separate decision.
+PRODUCT_PACKAGES += \
+    F-Droid
+
 # --- Desktop windowing -----------------------------------------------------
 # This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
 # off because the reference devices are phones, so they have to be turned on
