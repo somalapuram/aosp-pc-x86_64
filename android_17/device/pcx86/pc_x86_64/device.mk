@@ -529,6 +529,35 @@ PRODUCT_COPY_FILES += \
 PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/media/media_profiles_V1_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_V1_0.xml
 
+# Select the AIDL Codec2 HAL. Without this the device has almost no codecs.
+#
+# IsCodec2AidlHalSelected() reads media.c2.hal.selection and DEFAULTS IT TO
+# "hidl" (frameworks/av/media/codec2/hal/common/HalSelection.cpp), regardless of
+# ro.vendor.api_level. HIDL then requires hwservicemanager, which this device
+# does not run, so Codec2Client::CacheServiceNames() gets nothing back:
+#
+#     Cannot list manifest for android.hardware.media.c2@1.0::IComponentStore
+#         without hwservicemanager
+#     Available Codec2 services: "__ApexCodecs__"
+#     Codec2InfoBuilder: adding type 'audio/mp4a-latm'
+#     MediaCodecList generated and serialized (372 bytes)
+#
+# __ApexCodecs__ is the in process store gated on in_process_sw_audio_codec
+# support, so it carries audio only. The result is a device whose entire codec
+# list is one AAC entry: no video encoder for recording, and almost nothing to
+# decode audio with either.
+#
+# mediaswcodec is running and does register the AIDL service, which makes this
+# harder to spot than it should be. But CodecServiceRegistrant only backs that
+# registration with the real component store when AIDL is selected; otherwise it
+# deliberately registers a null store "so it's not accidentally used". So the
+# service exists, answers, and provides nothing.
+#
+# dragonboard, cuttlefish and goldfish all set this property. It is effectively
+# required on any device without hwservicemanager rather than a tuning knob.
+PRODUCT_VENDOR_PROPERTIES += \
+    media.c2.hal.selection=aidl
+
 # The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
 #
 # Retired in 2328f8c along with the verbose HAL logging, but for a different
