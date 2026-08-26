@@ -126,11 +126,24 @@ fi
 # ----------------------------------------------------------------- write ----
 # conv=fsync so the exit status means the data actually reached the device;
 # without it dd returns as soon as the page cache has it.
+#
+# oflag=direct because buffered writing has actually killed a write here. The
+# page cache accepts data far faster than USB can drain it -- progress reported
+# 4.3 GB/s -- and roughly 13 GB in, the T7 dropped off the bus outright:
+#
+#     blk_update_request: I/O error, dev sda
+#     sd 2:0:0:0: [sda] tag#0 CMD_AGE ... DID_NO_CONNECT
+#
+# conv=fsync alone does not prevent that; it only forces the flush at the end,
+# by which point the whole transfer is queued. Bypassing the cache paces dd to
+# the device instead, which reads as slower and is the difference between a
+# write that completes and one that does not. The image is a whole number of
+# GiB so every block is aligned, which O_DIRECT requires.
 info "writing (this takes a while; the image is sparse but dd writes it whole)"
 if [[ $EUID -ne 0 ]]; then
-    sudo dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync
+    sudo dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
 else
-    dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync
+    dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
 fi
 
 sync
