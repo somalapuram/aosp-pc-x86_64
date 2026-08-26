@@ -244,21 +244,27 @@ detect_host_screen() {
 
 if [[ -z "${XRES:-}${YRES:-}" ]]; then
     if read -r HOST_W HOST_H < <(detect_host_screen) && (( HOST_W > 0 && HOST_H > 0 )); then
-        # Largest 16:10 box inside 90% of the host screen.
-        avail_w=$(( HOST_W * 9 / 10 ))
-        avail_h=$(( HOST_H * 9 / 10 ))
-        if (( avail_w * 10 / 16 <= avail_h )); then
-            XRES=$(( avail_w / 8 * 8 ))
-            YRES=$(( avail_w * 10 / 16 / 8 * 8 ))
-        else
-            YRES=$(( avail_h / 8 * 8 ))
-            XRES=$(( avail_h * 16 / 10 / 8 * 8 ))
-        fi
-        info "host screen ${HOST_W}x${HOST_H}, sizing guest to ${XRES}x${YRES}"
+        # Fill the host screen, keeping ITS aspect ratio.
+        #
+        # The first attempt at this forced 16:10 to match the target laptop's
+        # panel and took 90%, which on a 16:9 host produced 1552x968 -- smaller
+        # than the window the old hardcoded 2560x1600 ended up with once the
+        # window manager had shrunk it, so the change made the thing it was
+        # meant to fix worse. Matching the target's aspect is not worth losing
+        # a fifth of the screen: the guest is being looked at here, not
+        # measured, and pclauncher lays out responsively.
+        #
+        # 95% rather than 100% because the window has a titlebar and the host
+        # may have a panel or dock; a window taller than the workarea gets
+        # shrunk by the WM, which is the failure being avoided. Aligned to 8
+        # for stride.
+        XRES=$(( HOST_W * 95 / 100 / 8 * 8 ))
+        YRES=$(( HOST_H * 95 / 100 / 8 * 8 ))
+        echo "guest display ${XRES}x${YRES} (host screen ${HOST_W}x${HOST_H}; FULLSCREEN=1 for the whole screen)" >&2
     else
         XRES=1920
         YRES=1200
-        info "host screen not detected, guest ${XRES}x${YRES} (override with XRES/YRES)"
+        echo "guest display ${XRES}x${YRES} (host screen not detected; override with XRES/YRES)" >&2
     fi
 fi
 XRES=${XRES:-1920}
