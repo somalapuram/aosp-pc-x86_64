@@ -150,10 +150,10 @@ static void dump_pcm_caps(unsigned int card) {
  * Run after the unmute below, or every device reads flat whether or not it has
  * a microphone on it.
  */
-static void probe_capture(unsigned int card, unsigned int device) {
+static void probe_capture_ch(unsigned int card, unsigned int device, unsigned int channels) {
     struct pcm_config config;
     memset(&config, 0, sizeof(config));
-    config.channels = 2;              /* the card offers 2..2, per dump_pcm_caps */
+    config.channels = channels;
     config.rate = 48000;              /* and exactly 48000                        */
     config.period_size = 1024;
     config.period_count = 4;
@@ -172,8 +172,12 @@ static void probe_capture(unsigned int card, unsigned int device) {
     short *buf = (short *)malloc(bytes);
     if (!buf) { pcm_close(pcm); return; }
 
-    int peak = 0, nonzero = 0;
-    long long sumsq = 0;
+    /* Per channel, because a stereo capture with one live channel and one dead
+     * one is a real and common HDA wiring, and averaging the two hides it. The
+     * camcorder profile records mono, so the framework downmixes; if the live
+     * channel is the one being dropped or halved that matters. */
+    int peak[8] = {0}, nonzero[8] = {0};
+    long long sumsq[8] = {0};
     long count = 0;
     /* Discard the first couple of periods: a freshly started capture often
      * returns a block of zeros before the DMA is really running, which would
@@ -182,28 +186,31 @@ static void probe_capture(unsigned int card, unsigned int device) {
         if (pcm_read(pcm, buf, bytes) != 0) break;
         if (period < 2) continue;
         for (unsigned int i = 0; i < frames * config.channels; i++) {
+            unsigned int c = i % config.channels;
+            if (c >= 8) continue;
             int v = buf[i];
             if (v < 0) v = -v;
-            if (v > peak) peak = v;
-            if (v != 0) nonzero++;
-            sumsq += (long long)buf[i] * buf[i];
-            count++;
+            if (v > peak[c]) peak[c] = v;
+            if (v != 0) nonzero[c]++;
+            sumsq[c] += (long long)buf[i] * buf[i];
         }
+        count += frames;
     }
     free(buf);
     pcm_close(pcm);
 
     if (count == 0) {
-        printf("  capture probe %u:%u -> no frames read\n", card, device);
+        printf("  capture probe %u:%u ch%u -> no frames read\n", card, device, channels);
         return;
     }
-    /* RMS as a fraction of full scale, in tenths of a percent, to avoid
-     * pulling in libm for a log. */
-    long rms = (long)(sqrtl((long double)sumsq / (long double)count));
-    printf("  capture probe %u:%u -> peak %d/32767  rms %ld  nonzero %d/%ld  => %s\n",
-           card, device, peak, rms, nonzero, count,
-           peak > 64 ? "SIGNAL, microphone is on this device"
-                     : "flat, nothing on this device");
+    int loudest = 0;
+    printf("  capture probe %u:%u ch%u ->", card, device, channels);
+    for (unsigned int c = 0; c < channels && c < 8; c++) {
+        long rms = (long)(sqrtl((long double)sumsq[c] / (long double)count));
+        if (peak[c] > loudest) loudest = peak[c];
+        printf("  [ch%u peak %d rms %ld nz %d/%ld]", c, peak[c], rms, nonzero[c], count);
+    }
+    printf("  => %s\n", loudest > 64 ? "SIGNAL" : "flat");
 }
 
 int main(int argc, char **argv) {
@@ -318,8 +325,18 @@ int main(int argc, char **argv) {
      * microphone is attached, which is the exact ambiguity this is here to
      * remove. Both capture devices the card reported are probed. */
     printf("pc_audio_setup: capture probe\n");
-    probe_capture(card, 0);
-    probe_capture(card, 6);
+    /* Several channel counts per device. The first pass probed 0:6 at stereo
+     * only, it refused the hw params, and that was read as "nothing there" --
+     * but a SOF DMIC array is commonly 4 channel and would refuse stereo
+     * exactly the same way. That was the probe's limitation being mistaken for
+     * a property of the hardware, so ask properly this time. */
+    static const unsigned int kChannelCounts[] = {2, 4, 1};
+    for (unsigned int dev = 0; dev < 8; dev++) {
+        if (dev != 0 && dev != 6) continue;
+        for (unsigned int i = 0; i < sizeof(kChannelCounts)/sizeof(kChannelCounts[0]); i++) {
+            probe_capture_ch(card, dev, kChannelCounts[i]);
+        }
+    }
 
     printf("pc_audio_setup: done\n");
     return 0;

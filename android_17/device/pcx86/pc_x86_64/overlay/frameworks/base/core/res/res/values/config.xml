@@ -30,4 +30,30 @@
     <!-- Show the home screen (and its wallpaper) behind floating windows, which
          is what makes it read as a desktop rather than a blank void. -->
     <bool name="config_showHomeBehindDesktop">true</bool>
+
+    <!-- SQLite cursor window size, in KB. The platform default is 2048, and
+         F-Droid crashes against it as soon as its index is downloaded:
+
+           SQLiteBlobTooBigException: Row too big to fit into CursorWindow
+               requiredPos=0, totalRows=8
+             at org.fdroid.database.VersionDaoInt_Impl.getVersionsInternal
+             at org.fdroid.database.DbUpdateChecker.getUpdatableApps
+
+         A single row of F-Droid's Version table exceeds 2MB. The table carries
+         whatsNew, antiFeatures, nativecode and features per version, and the
+         localised changelogs of a widely translated app are enough on their
+         own. Only eight rows were being read, so this is one oversized row
+         rather than a large result set, and no paging on F-Droid's side would
+         avoid it.
+
+         2048 is a phone-era figure and this machine has 32GB of RAM, so the
+         default is conservative by about four orders of magnitude here. 8192
+         gives real headroom rather than moving the cliff slightly further away.
+         The window is allocated per cursor and only for the duration of a
+         query, so the cost is bounded by how many cursors are open at once.
+
+         Not specific to F-Droid: any app reading a row bigger than 2MB hits
+         this, and a desktop with this much memory has no reason to keep the
+         phone default. -->
+    <integer name="config_cursorWindowSize">8192</integer>
 </resources>
