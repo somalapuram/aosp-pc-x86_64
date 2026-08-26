@@ -1,0 +1,63 @@
+// F-Droid, bundled as a prebuilt so the device has a way to install software
+// without a Play Store.
+//
+// PROVENANCE. Downloaded from https://f-droid.org/F-Droid.apk and verified
+// before being committed, because this ends up signed into a system image
+// where nobody will look at it again:
+//
+//   version      1.23.2 (versionCode 1023052), package org.fdroid.fdroid
+//   sha256       985f5181d48bb6bafd54083a048b391271e0ab28385881cc41294fb01a222762
+//   signing cert 43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab
+//                CN=Ciaran Gultnieks, valid 2010-07-23 to 2037-12-08
+//
+// That fingerprint is F-Droid's published signing key. It is the thing worth
+// checking: the download is plain HTTPS, and a matching certificate is what
+// makes this the real client rather than merely a file that came from the
+// right host. Re-verify it if this APK is ever updated.
+//
+// presigned rather than re-signed with the platform key. F-Droid must keep its
+// own signature: it self-updates from the F-Droid repository, and Android only
+// accepts an update signed by the same certificate as the installed copy.
+// Re-signing here would install a build that could never update itself.
+//
+// preprocessed, and the build refuses to proceed without it:
+//
+//   Prebuilt, presigned apks with targetSdkVersion >= 30 must set
+//   preprocessed: true (because they must be signed with signature v2, and the
+//   build system would wreck that signature otherwise)
+//
+// F-Droid targets SDK 30, so it is signed with APK Signature Scheme v2, which
+// covers the whole archive rather than each entry. Any repacking, zipalign
+// included, invalidates it. preprocessed tells Soong to install the file
+// byte for byte.
+//
+// dex_preopt off for the same reason: the APK ships optimised and signed, and
+// preopting a prebuilt is not needed for it to run.
+//
+// product partition, not system or vendor. This is bundled software rather
+// than part of the platform, and product/app is where that belongs; vendor is
+// for hardware support and carries SELinux rules an ordinary app should not be
+// subject to.
+//
+// WHAT THIS DOES NOT INCLUDE. F-Droid installs through the normal package
+// installer, so each install and update needs the user to confirm, and the
+// user must first allow F-Droid to install unknown apps (it declares
+// REQUEST_INSTALL_PACKAGES, which is a user grant rather than something the
+// build can pre-approve). Unattended installs would need the separate
+// F-Droid Privileged Extension, which has to be a privileged app with its own
+// permission allowlist entry. That is deliberately not bundled here: it is a
+// larger decision about what gets platform privilege on this device, and the
+// store works without it.
+//
+// It also needs a working network, which on this device means the Wi-Fi or
+// wired path being up. There is no offline repository shipped with it.
+android_app_import {
+    name: "F-Droid",
+    apk: "F-Droid.apk",
+    presigned: true,
+    preprocessed: true,
+    dex_preopt: {
+        enabled: false,
+    },
+    product_specific: true,
+}

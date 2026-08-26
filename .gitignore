@@ -17,6 +17,23 @@
 /android_17/device/*
 !/android_17/device/pcx86/
 
+# Exception: the F-Droid prebuilt. android_17/vendor/ is otherwise synced
+# rather than kept here -- pclauncher lives there as its own git clone -- but
+# F-Droid is a third-party binary that has to be byte-exact to keep its
+# signature valid, so it is tracked instead of fetched. Verified once (hash and
+# signing certificate, recorded in its Android.bp) rather than re-fetched and
+# re-verified on every sync, and it means the build needs no network.
+#
+# Same level-by-level form as the device exception above, for the same reason:
+# git will not descend into an excluded directory looking for exceptions. The
+# re-exclude of vendor/x86/* keeps pclauncher out, which is correct -- it is a
+# separate repository, not content of this one.
+!/android_17/vendor/
+/android_17/vendor/*
+!/android_17/vendor/x86/
+/android_17/vendor/x86/*
+!/android_17/vendor/x86/fdroid/
+
 # ...except the cross-built Mesa libraries, which live inside the device tree
 # but are build output: ~20 MB of .so produced by ./build.sh mesa. The recipe
 # is in git (tools/build-mesa.sh), the artefacts are not -- the same rule the
