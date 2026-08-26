@@ -35,3 +35,38 @@
 # write constraint on its own, and pc_audioserver.te has already marked
 # audioserver_tmpfs mlstrustedobject for the app case.
 allow mediaserver audioserver_tmpfs:file { getattr read write map };
+
+# The client end of the Codec2 FMQ. Granting mediaswcodec the queue in
+# pc_mediaswcodec.te only covered the service side; mediaserver holds the other
+# end of the same memfd and was refused on it:
+#
+#     avc: denied { read write } comm="oid.aac.encoder"
+#          path="/memfd:MessageQueue (deleted)" scontext=u:r:mediaserver:s0
+#          tcontext=u:object_r:tmpfs:s0 tclass=file
+#
+# The consequence is not a stray audit line. The BufferPool cannot hand buffers
+# across, so registration fails outright and every buffer is rejected:
+#
+#     E libbinder.IPCThreadState: Binder transaction failure. BR_FAILED_REPLY,
+#                                 error: -1 (Operation not permitted)
+#     W Codec2-AIDL-BufferTypes: registerSender -- returned error: 4.
+#     E Codec2-AIDL-BufferTypes: Failed to send buffer with BufferPool.
+#     E Codec2-AIDL-BufferTypes: Invalid C2Buffer::data.
+#
+# which strands the recording pipeline one step further back, in the camera:
+#
+#     W CameraSource: Waiting on an available memory base timed out.
+#                     Dropping a recording frame.
+#     E MPEG4Writer: The number of recorded samples is 0
+#
+# CameraSource hands its metadata buffers to the encoder and gets none back,
+# because the encoder never receives them, so its pool drains and every
+# subsequent frame is dropped on a 200ms timeout. A recording that runs for six
+# seconds and saves nothing is what that looks like from the UI.
+#
+# Same shape as the camera queue, which needed exactly this pair: the HAL end
+# was granted first and the denial moved to cameraserver, which is why
+# pc_cameraserver.te carries
+#     allow cameraserver tmpfs:file { read write map };
+# An FMQ has two ends and both of them need the rule.
+allow mediaserver tmpfs:file { getattr read write map };
