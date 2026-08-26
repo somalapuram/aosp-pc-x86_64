@@ -21,9 +21,11 @@
  * asking the device directly.
  *
  * For each node this prints the driver/card/bus, the capture capability, and
- * every pixel format with its frame sizes -- which identifies the IR node
- * (it offers GREY/Y8 and no MJPEG, which is exactly why the HAL fails to
- * initialise it) versus the colour one.
+ * every pixel format with its frame sizes and the frame rates offered at each
+ * -- which identifies the IR node (it offers GREY/Y8 and no MJPEG, which is
+ * exactly why the HAL fails to initialise it) versus the colour one, and shows
+ * per size whether it can clear Camera API1's 29.97fps preview floor, which is
+ * what video recording turns on. See print_frame_intervals() below.
  *
  * Then, where the node offers an uncompressed YUYV mode, it grabs a single
  * frame and reports the spread of the U and V samples. That is the actual
@@ -60,6 +62,66 @@ static int xioctl(int fd, unsigned long req, void *arg) {
     int r;
     do { r = ioctl(fd, req, arg); } while (r == -1 && errno == EINTR);
     return r;
+}
+
+/*
+ * Enumerate the frame intervals the camera reports for one size, and say
+ * whether that size can survive Camera API1.
+ *
+ * This is the number that decided the video-recording failure and the one
+ * thing the earlier version of this tool did not print. The chain: the
+ * external HAL keeps only rates at or below the fpsBound in
+ * external_camera_config.xml and drops a resolution outright if none survive;
+ * the fastest survivor becomes ANDROID_SENSOR_INFO_MIN_FRAME_DURATION; and
+ * API1 (Parameters.cpp:3071) discards any preview size whose minFrameDuration
+ * exceeds 1e9/29.97, failing with "generated preview size list is empty!!"
+ * when that empties the list.
+ *
+ * So the question "can this camera record video" is answered per size by
+ * whether the hardware offers at least 29.97fps here -- printed below as
+ * PASSES/below, against the raw rate list, so a future regression names the
+ * resolution rather than costing another boot to bisect.
+ *
+ * Note the rates are compared as the HAL compares them, in floating point off
+ * the raw numerator/denominator. UVC counts intervals in 100ns units, so a
+ * nominal 30fps arrives as 10000000/333333 = 30.00003fps; printing the value
+ * the HAL actually sees is what makes an off-by-a-rounding bound visible.
+ */
+static void print_frame_intervals(int fd, unsigned int pixfmt,
+                                  unsigned int w, unsigned int h) {
+    /* 1e9 / 29.97, the API1 preview/record floor. */
+    const double kApi1MinFps = 29.97;
+
+    double best = 0.0;
+    int printed = 0;
+
+    for (int ii = 0;; ii++) {
+        struct v4l2_frmivalenum fi;
+        memset(&fi, 0, sizeof(fi));
+        fi.index = ii;
+        fi.pixel_format = pixfmt;
+        fi.width = w;
+        fi.height = h;
+        if (xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &fi) < 0) break;
+        if (fi.type != V4L2_FRMIVAL_TYPE_DISCRETE) {
+            printf("  (non-discrete intervals)");
+            printed = 1;
+            break;
+        }
+        if (fi.discrete.numerator == 0) continue;
+        double fps = (double)fi.discrete.denominator / (double)fi.discrete.numerator;
+        if (fps > best) best = fps;
+        printf("%s%.5g", printed ? "," : "  fps: ", fps);
+        printed = 1;
+    }
+
+    if (!printed) {
+        printf("  fps: none reported");
+    } else if (best > 0.0) {
+        printf("   [max %.5g -> API1 %s]", best,
+               best >= kApi1MinFps ? "PASSES" : "below 29.97, unusable for preview/record");
+    }
+    printf("\n");
 }
 
 /* Grab one YUYV frame and report how much the chroma actually moves.
@@ -200,7 +262,9 @@ int main(void) {
                 fs.pixel_format = fd_.pixelformat;
                 if (xioctl(fd, VIDIOC_ENUM_FRAMESIZES, &fs) < 0) break;
                 if (fs.type != V4L2_FRMSIZE_TYPE_DISCRETE) break;
-                printf("        %ux%u\n", fs.discrete.width, fs.discrete.height);
+                printf("        %ux%u", fs.discrete.width, fs.discrete.height);
+                print_frame_intervals(fd, fd_.pixelformat,
+                                      fs.discrete.width, fs.discrete.height);
                 if (fd_.pixelformat == V4L2_PIX_FMT_YUYV && si == 0) {
                     has_yuyv = 1; yw = fs.discrete.width; yh = fs.discrete.height;
                 }

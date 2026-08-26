@@ -14,11 +14,38 @@
   TWO nodes (one capture, one metadata); the HAL probes and skips the ones
   that cannot stream, so they do not need listing.
 
-  The FpsList bounds are conservative and mirror the other AOSP boards that use
-  this HAL (device/linaro/dragonboard, device/amlogic/yukawa). They cap the
-  advertised frame rate per resolution rather than the resolution itself: a
-  webcam that cannot sustain 1080p30 over USB 2.0 bandwidth advertises 10fps
-  there instead of dropping frames.
+  The FpsList does NOT do what its name suggests, and getting this wrong broke
+  video recording. getFrameRateList() (ExternalCameraDevice.cpp) enumerates the
+  rates the camera itself reports and DISCARDS every one above fpsBound; it
+  never invents a rate. If nothing survives, updateFpsBounds() then drops the
+  whole resolution from the supported list. So a low bound does not gently cap
+  a fast mode, it deletes it.
+
+  That matters because Camera API1 (still used by the video path of the stock
+  camera app) filters preview sizes to those reaching 29.97fps:
+  Parameters.cpp:3071 drops any size whose minFrameDuration exceeds
+  1e9 / 29.97, and aborts with "generated preview size list is empty!!" if none
+  remain. minFrameDuration is derived from the FASTEST rate that survived the
+  bound above. Bounds of 15 and 10 therefore made 720p and 1080p arithmetically
+  incapable of ever clearing that floor, leaving API1 with nothing unless the
+  camera happened to offer MJPEG at 640x480 or below. This one does not, so
+  Camera2Client failed to initialise with BAD_VALUE and the app called finish().
+
+  The bounds below sit above each nominal rate so the hardware's own rates pass
+  through untouched. This cannot overstate what the camera can do: the values
+  are a ceiling applied to the device's reported list, so anything advertised
+  was measured by the camera, not by us. The old bounds were copied from
+  dragonboard and yukawa, where they guard USB 2.0 bandwidth on an external
+  webcam; on a built-in laptop sensor they only removed working modes.
+
+  Each bound is the nominal rate plus one. UVC expresses frame intervals in
+  100ns units, so 30fps is 333333 rather than 333333.33 and reads back as
+  30.00003fps. A bound of exactly 30.0 would compare greater-than and discard
+  the very mode it was meant to admit; the margin absorbs that rounding.
+
+  1920x1080 stays the last entry, so anything larger is still unsupported: the
+  list ceiling is what bounds resolution, and MaxJpegBufferSize above is sized
+  for 1080p.
 -->
 <ExternalCamera>
     <Provider>
@@ -41,9 +68,9 @@
             fps (as minimum frame duration) up to the fpsBound value. -->
         <FpsList>
             <!-- width/height must be increasing, fpsBound must be decreasing-->
-            <Limit width="640" height="480" fpsBound="30.0"/>
-            <Limit width="1280" height="720" fpsBound="15.0"/>
-            <Limit width="1920" height="1080" fpsBound="10.0"/>
+            <Limit width="640" height="480" fpsBound="121.0"/>
+            <Limit width="1280" height="720" fpsBound="61.0"/>
+            <Limit width="1920" height="1080" fpsBound="31.0"/>
             <!-- image size larger than the last entry will not be supported-->
         </FpsList>
     </Device>

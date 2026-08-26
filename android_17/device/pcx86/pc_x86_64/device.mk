@@ -514,6 +514,29 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.camera.external.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.external.xml \
     device/pcx86/pc_x86_64/external_camera_config.xml:$(TARGET_COPY_OUT_VENDOR)/etc/external_camera_config.xml
 
+# The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
+#
+# Retired in 2328f8c along with the verbose HAL logging, but for a different
+# reason than that logging was: this is a oneshot writing to
+# /data/vendor/pc/v4l2_info.txt, not four lines per frame at 30fps, so it does
+# not reintroduce the ring-buffer flooding that made the ExtCam log tags
+# untenable while a recording crash was being chased.
+#
+# It is here because the fps bounds in external_camera_config.xml were just
+# raised to let the camera's own frame rates through, and the one fact needed
+# to confirm that worked -- which rates this sensor actually offers per
+# resolution -- cannot be read anywhere else. The HAL logs it only at ALOGV,
+# which LOG_NDEBUG=1 compiles out, and the build host is a workstation with no
+# webcam to interrogate. The tool now enumerates VIDIOC_ENUM_FRAMEINTERVALS
+# per size and marks each against API1's 29.97fps floor, so the next boot
+# either shows MJPEG sizes reading PASSES or names the rates that still fall
+# short.
+#
+# Drop this entry again once recording is confirmed; the init.rc service that
+# starts it is harmless without it.
+PRODUCT_PACKAGES += \
+    pc_v4l2_info
+
 # Ethernet. This device really does have a wired NIC, and without the feature
 # EthernetService never configures eth0, so the guest has no IP at all:
 # nothing in logcat mentions eth0, DHCP or IpClient. That makes adb over TCP
