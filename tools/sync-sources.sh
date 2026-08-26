@@ -39,6 +39,26 @@ PINNED_MANIFEST="aosp-android17-pinned.xml"
 # kernel change in this project is a config symbol in config/pc_x86_64.fragment.
 KERNEL_REV="0d8395707651"
 
+# pclauncher: the desktop launcher that replaces Launcher3QuickStep. Its own
+# repository, developed standalone in Android Studio against Gradle and built
+# here by Soong from the same sources -- see vendor/x86/pclauncher/Android.bp.
+#
+# Tracked on the 'aosp' branch, not main. main is the Gradle form that opens in
+# Android Studio; aosp carries the Soong build -- Android.bp, package attributes
+# in the manifests, and the Hilt base class the Gradle plugin would otherwise
+# generate. The two cannot be one branch: AGP 8 rejects the package attribute
+# that Soong's manifest merger requires.
+#
+# It lands in vendor/ rather than packages/apps/ because vendor/ is where
+# non-AOSP code belongs and, more practically, because repo does not own it:
+# it is absent from the manifest, so `repo sync` will not touch it and
+# `repo forall` will not walk it. The parent .gitignore already excludes it via
+# /android_17/*, so it is never committed into this repository either.
+PCLAUNCHER_SRC="$AOSP_ROOT/vendor/x86/pclauncher"
+PCLAUNCHER_REMOTE="git@github.com:somalapuram/pclauncher.git"
+PCLAUNCHER_BRANCH="aosp"
+PCLAUNCHER_REV="bf4edc9922c5e067152b1cafab29a4a5a80de7ca"
+
 # The GitHub mirror over SSH. git.kernel.org is the canonical source and works
 # equally well:
 #     KERNEL_REMOTE=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
@@ -221,6 +241,50 @@ sync_kernel() {
     ok "kernel at $(git describe --tags 2>/dev/null || git rev-parse --short HEAD)"
 }
 
+# -------------------------------------------------------- pclauncher ----
+# Unlike the kernel and AOSP, this one IS a fork we own, so it is checked out on
+# a branch rather than detached: the expectation is that it gets committed to
+# and pushed from here. PCLAUNCHER_REV records the revision this tree was known
+# good at, and is only forced onto the checkout when the working tree is clean
+# and unmodified -- clobbering someone's in-progress launcher work to satisfy a
+# pin would be a poor trade.
+sync_pclauncher() {
+    info "pclauncher"
+
+    if [[ ! -d "$PCLAUNCHER_SRC/.git" ]]; then
+        info "cloning $PCLAUNCHER_REMOTE"
+        mkdir -p "$(dirname "$PCLAUNCHER_SRC")"
+        git clone -b "$PCLAUNCHER_BRANCH" "$PCLAUNCHER_REMOTE" "$PCLAUNCHER_SRC" \
+            || die "clone failed. This is an SSH remote -- check your GitHub key."
+    else
+        ok "already cloned"
+    fi
+
+    cd "$PCLAUNCHER_SRC"
+
+    if [[ -n "$(git status --porcelain)" ]]; then
+        warn "working tree has local changes -- leaving it alone"
+        ok "pclauncher at $(git rev-parse --short HEAD) (modified)"
+        return
+    fi
+
+    if [[ "$(git rev-parse HEAD)" == "$PCLAUNCHER_REV" ]]; then
+        ok "already at the pinned revision"
+    else
+        git cat-file -e "$PCLAUNCHER_REV^{commit}" 2>/dev/null || {
+            info "fetching"
+            git fetch origin
+        }
+        # A detached HEAD here would be actively unhelpful: this is a tree that
+        # gets developed in. Move the branch instead, but only because the check
+        # above established there is nothing to lose.
+        info "checking out $PCLAUNCHER_REV"
+        git checkout --detach "$PCLAUNCHER_REV" 2>/dev/null \
+            || warn "could not reach $PCLAUNCHER_REV -- staying at $(git rev-parse --short HEAD)"
+    fi
+    ok "pclauncher at $(git rev-parse --short HEAD)"
+}
+
 # ------------------------------------------------------------ patches ----
 # The only change this port needs inside an AOSP project. Kept as a patch
 # rather than a fork so that 1083 untouched projects stay untouched -- a fork
@@ -276,12 +340,13 @@ apply_patches() {
 # --------------------------------------------------------------- main ----
 check_prereqs
 case "${1:-all}" in
-    all)     sync_aosp; sync_kernel; apply_patches ;;
-    aosp)    sync_aosp ;;
-    kernel)  sync_kernel ;;
-    patches) apply_patches ;;
-    verify)  verify_checkouts ;;
-    *)       die "unknown target: $1  (all | aosp | kernel | patches | verify)" ;;
+    all)        sync_aosp; sync_kernel; sync_pclauncher; apply_patches ;;
+    aosp)       sync_aosp ;;
+    kernel)     sync_kernel ;;
+    pclauncher) sync_pclauncher ;;
+    patches)    apply_patches ;;
+    verify)     verify_checkouts ;;
+    *)          die "unknown target: $1  (all | aosp | kernel | pclauncher | patches | verify)" ;;
 esac
 
 echo

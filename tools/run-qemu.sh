@@ -94,16 +94,35 @@ VNC_DISPLAY=${VNC_DISPLAY:-1}
 
 [[ -f "$DISK" ]] || { echo "no disk image: $DISK  (run ./build.sh image)" >&2; exit 1; }
 
-# A VM left running from a previous session holds the 5555 hostfwd, and QEMU
-# then refuses to start with a message that names the port and not the cause:
+# The adb host-forward. Overridable because 5555 is the default for every
+# Android emulator on the machine, not just this one:
+#     ADB_PORT=5585 ./build.sh run
+ADB_PORT="${ADB_PORT:-5555}"
+
+# A VM left running from a previous session holds the hostfwd, and QEMU then
+# refuses to start with a message that names the port and not the cause:
 #     qemu-system-x86_64: -netdev user,id=n0,hostfwd=tcp::5555-:5555:
 #         Could not set up host forwarding rule 'tcp::5555-:5555'
 # ./build.sh test kills stale VMs itself; this path did not, so 'run' simply
 # failed and left you guessing. Say what is wrong and how to fix it.
-if pgrep -f '[q]emu-system-x86_64' >/dev/null 2>&1; then
-    echo "A VM is already running (pid $(pgrep -f '[q]emu-system-x86_64' | head -1))." >&2
-    echo "It holds the 5555 host-forward, so this one cannot start." >&2
-    echo "Stop it with:  pkill -f qemu-system-x86_64" >&2
+#
+# Match OUR disk image, not the qemu binary. An Android Studio AVD is also a
+# qemu-system-x86_64 process, so the old check reported "a VM is already
+# running" for an unrelated emulator and told you to pkill it -- advice that
+# would have killed someone's running AVD to free a port this script can simply
+# be told to change.
+if pgrep -f "[q]emu-system-x86_64.*$(basename "$DISK")" >/dev/null 2>&1; then
+    echo "A VM is already running on $(basename "$DISK") (pid $(pgrep -f "[q]emu-system-x86_64.*$(basename "$DISK")" | head -1))." >&2
+    echo "It holds the $ADB_PORT host-forward, so this one cannot start." >&2
+    echo "Stop it with:  pkill -f 'qemu-system-x86_64.*$(basename "$DISK")'" >&2
+    exit 1
+fi
+
+# Someone else's emulator on the same port is a different problem with a
+# different fix, so say so rather than blaming a stale VM of ours.
+if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :$ADB_PORT" 2>/dev/null | grep -q ":$ADB_PORT"; then
+    echo "Port $ADB_PORT is already in use by another process (an Android Studio AVD" >&2
+    echo "uses 5555 too). Pick a free one:  ADB_PORT=5585 ./build.sh run" >&2
     exit 1
 fi
 
@@ -351,7 +370,7 @@ exec qemu-system-x86_64 \
     "${GFX[@]}" \
     -device intel-hda -device hda-duplex \
     -device virtio-net-pci,netdev=n0 \
-    -netdev user,id=n0,hostfwd=tcp::5555-:5555 \
+    -netdev user,id=n0,hostfwd=tcp::${ADB_PORT}-:5555 \
     -device qemu-xhci -device usb-tablet -device usb-kbd \
     -serial mon:stdio \
     -qmp "unix:$QMP_SOCK,server,nowait" \

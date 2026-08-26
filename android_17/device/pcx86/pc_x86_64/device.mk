@@ -411,6 +411,31 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.bluetooth.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth.xml \
     frameworks/native/data/etc/android.hardware.bluetooth_le.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth_le.xml
 
+# --- pclauncher -------------------------------------------------------------
+# The desktop launcher this port is being built for. Its sources are a separate
+# repository cloned to android_17/vendor/x86/pclauncher by
+# tools/sync-sources.sh, and it is compiled by Soong from that tree -- see
+# vendor/x86/pclauncher/Android.bp for why it is built rather than imported as a
+# Gradle-produced APK.
+#
+# Stage A: shipped ALONGSIDE Launcher3QuickStep, not instead of it.
+#
+# Launcher3QuickStep arrives through an inherit (build/make/target/product/
+# handheld_system_ext.mk), so it is not something this file can simply drop --
+# there is no PRODUCT_PACKAGES entry here to delete. Removing it means
+# un-inheriting or overriding, which is worth doing deliberately rather than as
+# a side effect of adding the new launcher.
+#
+# Both being installed is also the arrangement pclauncher expects while it is
+# under development: its HomeActivity declares CATEGORY_LAUNCHER as well as
+# CATEGORY_HOME precisely so it can be opened from whatever launcher is
+# currently default and then chosen as home. If both are present Android asks
+# which to use rather than picking silently, so nothing is lost by waiting.
+#
+# Stage B -- pclauncher as the only home app -- is a separate change.
+PRODUCT_PACKAGES += \
+    PcLauncher
+
 # --- Desktop windowing -----------------------------------------------------
 # This is a PC: keyboard, mouse, 2560x1600. AOSP defaults every desktop switch
 # off because the reference devices are phones, so they have to be turned on
