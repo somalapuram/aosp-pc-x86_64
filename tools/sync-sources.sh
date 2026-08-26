@@ -57,7 +57,7 @@ KERNEL_REV="0d8395707651"
 PCLAUNCHER_SRC="$AOSP_ROOT/vendor/x86/pclauncher"
 PCLAUNCHER_REMOTE="git@github.com:somalapuram/pclauncher.git"
 PCLAUNCHER_BRANCH="aosp"
-PCLAUNCHER_REV="b2350f858893e46354d8b41f2b10138cda6915f4"
+PCLAUNCHER_REV="16e81638a20c3e7f69cffa4727e183a810a251fc"
 
 # The GitHub mirror over SSH. git.kernel.org is the canonical source and works
 # equally well:
