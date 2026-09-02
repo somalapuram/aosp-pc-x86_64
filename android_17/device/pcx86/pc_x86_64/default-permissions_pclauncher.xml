@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<!--
+  Pre-grant pclauncher's one runtime permission.
+
+  Every other permission the launcher declares is granted by the platform
+  signature it is built with (vendor/x86/pclauncher/Android.bp):
+
+      SYSTEM_ALERT_WINDOW   signature|setup|appop|installer|pre23|development
+      PACKAGE_USAGE_STATS   signature|privileged|development|appop|retailDemo
+      BIND_APPWIDGET        signature|privileged
+      REBOOT                signature|privileged
+      SHUTDOWN              signature|privileged|role
+
+  POST_NOTIFICATIONS is the exception. It is `dangerous|instant`, with no
+  signature or privileged flag, so no certificate and no privapp allowlist can
+  reach it: a dangerous permission is granted to a running app or not at all.
+  This file is the mechanism that exists for exactly that: PackageManager reads
+  etc/default-permissions at first boot and grants what it names.
+
+  What breaks without it. The shell chrome (menu bar, dock, taskbar, tray)
+  is drawn by a foreground service, and a foreground service must post a
+  notification. Since API 33 the system silently drops that notification when
+  POST_NOTIFICATIONS is denied, and the launcher never asks for it at runtime by
+  design (there is no good moment to interrupt a desktop coming up to ask
+  permission to show a notification the user did not want anyway). So on a fresh
+  install the service runs with an invisible notification: the shell works, but
+  the user has no affordance for it and no way to tell it is running.
+
+  fixed="false" deliberately. This is a starting state, not a policy: the user
+  can turn the notification off in Settings like any other, and it stays off.
+  fixed="true" would re-grant it on every boot and take that choice away.
+-->
+<exceptions>
+    <exception package="com.somalapuram.pclauncher">
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false"/>
+    </exception>
+</exceptions>

@@ -437,6 +437,23 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += \
     PcLauncher
 
+# The launcher's permissions are pre-granted, so nothing it needs is behind a
+# dialog on a fresh install. Two mechanisms, because one cannot cover both
+# halves of what it declares:
+#
+#   - SYSTEM_ALERT_WINDOW, PACKAGE_USAGE_STATS, BIND_APPWIDGET, REBOOT and
+#     SHUTDOWN all carry the `signature` flag, so the platform certificate in
+#     vendor/x86/pclauncher/Android.bp grants the set. `privileged: true` plus a
+#     privapp allowlist would not: SYSTEM_ALERT_WINDOW has no `privileged` flag,
+#     and it is the one the dock and menu bar cannot exist without.
+#
+#   - POST_NOTIFICATIONS is `dangerous`, which no signature reaches. It is
+#     granted by the file below, which PackageManager reads at first boot.
+#
+# Read the file itself for what each one is for.
+PRODUCT_COPY_FILES += \
+    device/pcx86/pc_x86_64/default-permissions_pclauncher.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/default-permissions/default-permissions_pclauncher.xml
+
 # F-Droid, so the device can install software without a Play Store. The APK and
 # the reasoning behind how it is imported are in vendor/x86/fdroid/Android.bp;
 # in short it keeps its own signature because it self-updates, and lands on the
