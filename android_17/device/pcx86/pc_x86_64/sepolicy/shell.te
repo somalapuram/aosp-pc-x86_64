@@ -20,3 +20,19 @@ allow shell kmsg_device:chr_file r_file_perms;
 allow shell sysfs_pci:file r_file_perms;
 allow shell sysfs_pci:dir r_dir_perms;
 
+# The same inventory reports /sys/class/udc, which decides whether USB adb is
+# possible at all: a gadget binds to a USB device controller, and an empty
+# directory there means there is none. The listing was refused, so the report
+# came back blank and said nothing either way:
+#
+#     avc: denied { read } for comm="ls" name="udc" dev="sysfs"
+#          scontext=u:r:shell:s0 tcontext=u:object_r:sysfs_udc:s0 tclass=dir
+#
+# sysfs_udc is an AOSP type (public/file.te), separately labelled rather than
+# plain sysfs, so granting it does not run into the coredomain neverallow that
+# blocks a blanket sysfs read -- the same reasoning as sysfs_pci above.
+#
+# Read on the directory only. The names of the controllers are the whole
+# question; nothing here needs to open a controller or write to one.
+allow shell sysfs_udc:dir r_dir_perms;
+
