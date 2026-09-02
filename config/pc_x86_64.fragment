@@ -337,11 +337,48 @@ CONFIG_USB_STORAGE=y
 CONFIG_USB_UAS=y
 
 # --- USB gadget (USB adb; most desktops have no device-mode controller) ----
+#
+# The framework below was already here and is not sufficient on its own: a
+# gadget needs a USB Device Controller to bind to, and without one
+# /sys/class/udc is empty, adbd has nothing to attach its FunctionFS gadget to,
+# and USB adb cannot work however Android is configured. That is why the
+# comment above says most desktops cannot do this.
+#
+# The controller worth trying on this machine is Intel's xDCI, which is a
+# DesignWare dwc3 core presented as a PCI device, so dwc3 plus its PCI glue is
+# what would drive it. It is enabled here rather than assumed to exist: the
+# driver costs nothing if no such device is present, it simply never probes.
+#
+# Whether the hardware exposes it at all is the open question, and it cannot be
+# answered from the build host. Meteor Lake silicon has xDCI, but a laptop is
+# built to BE the host: the USB-A ports are host-only and the USB-C ports
+# usually route to xHCI and Thunderbolt in host mode, with xDCI either fused
+# off or hidden unless firmware enables it. So this may probe and may not, and
+# pc_kmsg_file.sh now reports /sys/class/udc so the next boot says which.
+#
+# If a UDC does appear there is a second half still to do on the Android side:
+# the configfs gadget has to be created and bound, which means the USB gadget
+# HAL and ro.usb.controller naming the UDC. Deliberately not written yet --
+# there is no point building that for a controller that may not exist.
 CONFIG_USB=y
 CONFIG_USB_SUPPORT=y
 CONFIG_USB_GADGET=y
 CONFIG_USB_CONFIGFS=y
 CONFIG_USB_CONFIGFS_F_FS=y
+
+# The device controller itself, and dual-role so the port can switch away from
+# host mode rather than only ever acting as one.
+CONFIG_USB_DWC3=y
+CONFIG_USB_DWC3_PCI=y
+CONFIG_USB_DWC3_DUAL_ROLE=y
+
+# Role switching and Type-C. Meteor Lake reports its Type-C ports through UCSI
+# over ACPI, and without a role switch a dual-role port stays in host mode, so
+# the controller would probe and still never present a device.
+CONFIG_USB_ROLE_SWITCH=y
+CONFIG_TYPEC=y
+CONFIG_TYPEC_UCSI=y
+CONFIG_UCSI_ACPI=y
 
 # --- Power / ACPI ----------------------------------------------------------
 CONFIG_SUSPEND=y

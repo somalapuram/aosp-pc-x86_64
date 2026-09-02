@@ -30,6 +30,20 @@ PREV=/data/local/tmp/kmsg.prev.txt
     echo "=== adb ==="
     echo "service.adb.tcp.port = $(getprop service.adb.tcp.port)"
     echo "init.svc.adbd        = $(getprop init.svc.adbd)"
+    # USB device-mode. This is the one fact that decides whether USB adb is
+    # possible at all: a gadget needs a UDC to bind to, and if /sys/class/udc
+    # is empty there is no device controller and no amount of Android
+    # configuration will produce one. dwc3 is enabled in the kernel fragment to
+    # drive Intel's xDCI if this machine exposes it; these lines say whether it
+    # probed.
+    echo "=== usb device mode ==="
+    echo "udc devices          = $(ls /sys/class/udc/ 2>/dev/null | tr '\n' ' ')"
+    echo "ro.usb.controller    = $(getprop ro.usb.controller)"
+    echo "sys.usb.controller   = $(getprop sys.usb.controller)"
+    echo "sys.usb.config       = $(getprop sys.usb.config)"
+    echo "sys.usb.state        = $(getprop sys.usb.state)"
+    echo "dwc3 in dmesg        = $(dmesg 2>/dev/null | grep -ci dwc3)"
+    echo "xdci/typec in dmesg  = $(dmesg 2>/dev/null | grep -ciE 'xdci|typec|ucsi')"
     echo "=== graphics ==="
     echo "ro.hardware.egl      = $(getprop ro.hardware.egl)"
     echo "ro.hardware.vulkan   = $(getprop ro.hardware.vulkan)"
