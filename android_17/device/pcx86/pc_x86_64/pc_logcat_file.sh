@@ -9,7 +9,7 @@
 # This writes to /data instead. After a boot, plug the disk into a workstation
 # and read it directly; userdata is plain ext4:
 #
-#     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/bootlog.txt
+#     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/local/tmp/bootlog.txt
 #
 # Started from a trigger that fires after /data is mounted -- starting earlier
 # would land the file on the read-only ramdisk.

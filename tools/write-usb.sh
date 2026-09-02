@@ -139,11 +139,25 @@ fi
 # the device instead, which reads as slower and is the difference between a
 # write that completes and one that does not. The image is a whole number of
 # GiB so every block is aligned, which O_DIRECT requires.
-info "writing (this takes a while; the image is sparse but dd writes it whole)"
+# Prefer GNU dd. Ubuntu 25.10 makes /usr/bin/dd the uutils Rust
+# reimplementation (package coreutils-from-uutils), and a write of this image
+# with it reported 4.0 GB/s sustained -- above the 10 Gbps bus ceiling, so that
+# data demonstrably never reached the device -- and then died with
+# DID_NO_CONNECT, the exact failure O_DIRECT is here to prevent. Invoked
+# directly on the same device it does honour oflag=direct (904 MB/s, the drive's
+# real speed), so this is not a blanket claim that its O_DIRECT is broken; the
+# reason that run buffered is not established. GNU dd is what the reasoning
+# above was written and tested against, so use it when it is installed and let
+# the observed rate say which one is running: at or below ~1 GB/s means the
+# writes are reaching the drive, far above it means they are not.
+DD=dd
+command -v gnudd >/dev/null 2>&1 && DD=gnudd
+
+info "writing with $DD (the image is sparse but dd writes it whole)"
 if [[ $EUID -ne 0 ]]; then
-    sudo dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
+    sudo "$DD" if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
 else
-    dd if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
+    "$DD" if="$IMG" of="$TARGET" bs=4M status=progress conv=fsync oflag=direct
 fi
 
 sync

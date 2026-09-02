@@ -341,6 +341,21 @@ GFX=()
 # ignoring the flag rather than never being given it.
 FS=()
 [[ -n "${FULLSCREEN:-}" ]] && FS=(-full-screen)
+
+# A second, blank disk: DISK2=/path/to.img ./build.sh run
+#
+# Exists to test the installer without a machine to lose. It attaches as a
+# second nvme, so the guest sees nvme0n1 (this image, booted) and nvme1n1
+# (empty) -- both non-removable, which is the case that actually matters,
+# because "not removable" is most of how pc_install.sh decides what to erase.
+# A removable second disk would be excluded and would prove nothing.
+DISK2OPT=()
+if [[ -n "${DISK2:-}" ]]; then
+    [[ -f "$DISK2" ]] || { echo "DISK2=$DISK2 does not exist" >&2; exit 1; }
+    DISK2OPT=(-drive "file=$DISK2,format=raw,if=none,id=disk1"
+              -device nvme,drive=disk1,serial=androidpc1)
+    echo "second disk: $DISK2 ($(( $(stat -c %s "$DISK2") / 1024 / 1024 )) MiB) as nvme1n1" >&2
+fi
 if [[ "$GPU" == "plain" ]]; then
 case "$DISPLAY_MODE" in
         none|auto) GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display none) ;;
@@ -457,6 +472,7 @@ exec qemu-system-x86_64 \
     -drive if=pflash,format=raw,unit=1,file="$VARS" \
     -drive file="$DISK",format=raw,if=none,id=disk0 \
     -device nvme,drive=disk0,serial=androidpc0 \
+    "${DISK2OPT[@]}" \
     "${GFX[@]}" \
     "${FS[@]}" \
     -device intel-hda -device hda-duplex \

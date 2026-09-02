@@ -59,15 +59,28 @@ sudo mount -o ro "$PART" "$MNT" 2>/dev/null \
     || die "mount failed. If the device was powered off abruptly the journal may
      need replaying:  sudo e2fsck -fy $PART   (this MODIFIES the filesystem)"
 
+# Where to look, in order of preference. pc_kmsg_file.sh and pc_logcat_file.sh
+# write under /data/local/tmp, which is "local/tmp" once userdata is mounted
+# here -- not the root of the partition. Looking only at the root is why this
+# reported "no logs found" on a disk that had four of them, so the root stays in
+# the list as a fallback rather than being swapped out for the right path.
+SUBDIRS=(local/tmp vendor/pc .)
+
 copied=0
-for f in kmsg.txt kmsg.prev.txt bootlog.txt bootlog.prev.txt; do
-    if [[ -f "$MNT/$f" ]]; then
-        sudo cp "$MNT/$f" "$OUT/$f" 2>/dev/null && copied=1
-        sudo chown "$USER" "$OUT/$f" 2>/dev/null
-        printf '  %-20s %s\n' "$f" "$(du -h "$OUT/$f" | cut -f1)"
-    fi
+for f in kmsg.txt kmsg.prev.txt bootlog.txt bootlog.prev.txt pc_install.log; do
+    for d in "${SUBDIRS[@]}"; do
+        src="$MNT/$d/$f"
+        [[ -f "$src" ]] || continue
+        sudo cp "$src" "$OUT/$f" 2>/dev/null && copied=1
+        # SUDO_USER, not USER: this script is normally run as `sudo collect-logs`,
+        # where $USER is root, so chowning to it leaves the caller unable to read
+        # the logs they just asked for without sudo.
+        sudo chown "${SUDO_USER:-$USER}" "$OUT/$f" 2>/dev/null
+        printf '  %-20s %-10s %s\n' "$f" "$(du -h "$OUT/$f" | cut -f1)" "${d#.}"
+        break
+    done
 done
-(( copied )) || die "no logs found on $PART -- did the boot get far enough to mount /data?"
+(( copied )) || die "no logs found on $PART (looked in ${SUBDIRS[*]}) -- did the boot get far enough to mount /data?"
 
 # ------------------------------------------------------------- summary ----
 K="$OUT/kmsg.txt"; L="$OUT/bootlog.txt"

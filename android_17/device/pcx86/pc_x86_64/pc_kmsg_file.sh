@@ -14,7 +14,7 @@
 # early boot output is lost by starting late.
 #
 # Read it afterwards on a workstation; userdata is plain ext4:
-#     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/kmsg.txt
+#     sudo mount -o ro /dev/sdX5 /mnt && less /mnt/local/tmp/kmsg.txt
 # or use tools/collect-logs.sh, which does that and summarises the result.
 
 OUT=/data/local/tmp/kmsg.txt
