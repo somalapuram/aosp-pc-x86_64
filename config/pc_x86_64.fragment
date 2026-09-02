@@ -336,49 +336,40 @@ CONFIG_SATA_AHCI=y
 CONFIG_USB_STORAGE=y
 CONFIG_USB_UAS=y
 
-# --- USB gadget (USB adb; most desktops have no device-mode controller) ----
+# --- USB gadget (USB adb; this machine has no device-mode controller) ------
 #
-# The framework below was already here and is not sufficient on its own: a
-# gadget needs a USB Device Controller to bind to, and without one
-# /sys/class/udc is empty, adbd has nothing to attach its FunctionFS gadget to,
-# and USB adb cannot work however Android is configured. That is why the
-# comment above says most desktops cannot do this.
+# The framework only. There is no USB Device Controller on this hardware, so
+# nothing can bind a gadget and USB adb is not achievable here; these are kept
+# because they cost nothing and the image is meant to run on other machines.
 #
-# The controller worth trying on this machine is Intel's xDCI, which is a
-# DesignWare dwc3 core presented as a PCI device, so dwc3 plus its PCI glue is
-# what would drive it. It is enabled here rather than assumed to exist: the
-# driver costs nothing if no such device is present, it simply never probes.
+# This was investigated properly and the answer is in the PCI class codes:
 #
-# Whether the hardware exposes it at all is the open question, and it cannot be
-# answered from the build host. Meteor Lake silicon has xDCI, but a laptop is
-# built to BE the host: the USB-A ports are host-only and the USB-C ports
-# usually route to xHCI and Thunderbolt in host mode, with xDCI either fused
-# off or hidden unless firmware enables it. So this may probe and may not, and
-# pc_kmsg_file.sh now reports /sys/class/udc so the next boot says which.
+#     00:0d.0 [8086:7ec0] class 0c0330   xHCI host
+#     00:0d.2 [8086:7ec2] class 0c0340   USB4 host interface
+#     00:0d.3 [8086:7ec3] class 0c0340   USB4 host interface
+#     00:14.0 [8086:7e7d] class 0c0330   xHCI host
 #
-# If a UDC does appear there is a second half still to do on the Android side:
-# the configfs gadget has to be created and bound, which means the USB gadget
-# HAL and ro.usb.controller naming the UDC. Deliberately not written yet --
-# there is no point building that for a controller that may not exist.
+# Under class 0c03 the prog-if byte is the whole question: 30 is xHCI, 40 is
+# the USB4 host interface, and a USB *device* controller is fe. Every USB
+# function on this machine is a host. 0c0340 was briefly misread as device
+# mode, dwc3 was pointed at 00:0d.2 on the strength of it, and the kernel gave
+# the flat contradiction:
+#
+#     dwc3 dwc3.0.auto: this is not a DesignWare USB3 DRD Core
+#
+# dwc3 had matched, mapped the registers, found no Synopsys ID and refused. The
+# driver worked; the premise did not. DWC3, role switching and UCSI were all
+# added for that attempt and are removed again with it, since a controller that
+# does not exist needs no driver and dwc3 binding the USB4 interface is an
+# error every boot rather than a harmless no-op.
+#
+# For debugging, use adb over the network. It needs both machines on one
+# subnet, which is the only reason the earlier attempt failed.
 CONFIG_USB=y
 CONFIG_USB_SUPPORT=y
 CONFIG_USB_GADGET=y
 CONFIG_USB_CONFIGFS=y
 CONFIG_USB_CONFIGFS_F_FS=y
-
-# The device controller itself, and dual-role so the port can switch away from
-# host mode rather than only ever acting as one.
-CONFIG_USB_DWC3=y
-CONFIG_USB_DWC3_PCI=y
-CONFIG_USB_DWC3_DUAL_ROLE=y
-
-# Role switching and Type-C. Meteor Lake reports its Type-C ports through UCSI
-# over ACPI, and without a role switch a dual-role port stays in host mode, so
-# the controller would probe and still never present a device.
-CONFIG_USB_ROLE_SWITCH=y
-CONFIG_TYPEC=y
-CONFIG_TYPEC_UCSI=y
-CONFIG_UCSI_ACPI=y
 
 # --- Power / ACPI ----------------------------------------------------------
 CONFIG_SUSPEND=y
