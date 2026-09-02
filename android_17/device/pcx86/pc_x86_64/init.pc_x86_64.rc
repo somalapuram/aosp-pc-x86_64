@@ -288,6 +288,9 @@ service pc-logcat-file /system_ext/bin/pc_logcat_file.sh
 # sepolicy/property_contexts, and vendor_init may both set and read it.
 on boot
     setprop vendor.pc.boot 1
+    # Bring-up probe: prove what init actually sees. Remove once the installer
+    # is trusted. <3> so it survives the install entry's loglevel=4.
+    write /dev/kmsg "<3>pc_probe: ro.boot.pc_install=[${ro.boot.pc_install}]"
 
 on property:vendor.pc.boot=1
     class_start hal
@@ -358,17 +361,88 @@ on property:ro.debuggable=1
 # tty0 so the machine's own screen shows it. Without that the installer would
 # be prompting for confirmation somewhere nobody is looking.
 #
-# No seclabel, so it runs in init's context. That is deliberate and matches the
-# install entry booting permissive: the installer needs raw block writes, and
-# the alternative is shipping a domain that holds those permissions on every
-# installed system for a program that runs once from removable media.
-service pc-installer /system/bin/sh /system/system_ext/bin/pc_install.sh
+# seclabel is REQUIRED, and leaving it out is why this service silently never
+# ran. The comment that used to sit here said omitting it was deliberate, so the
+# installer would "run in init's context" -- that is not what init does. With no
+# seclabel, Service::Start() calls ComputeContextFromExecutable() and returns its
+# error before it logs "starting service", so a failure there produces no
+# "starting service" line, no execve error, and no service: the exact silence
+# seen here across several boots. Every other service in this file carries one;
+# this was the only exception, and it was the odd one out for no good reason.
+#
+# vendor_shell matches pc-kmsg-vendor, which is proven to start from this rc.
+# The domain does not hold raw block-write permission, which does not matter:
+# the install entry boots permissive precisely so this one program can do what
+# no shipped domain should be able to.
+service pc-installer /system_ext/bin/pc_install.sh
     class core
     user root
     group root
+    seclabel u:r:vendor_shell:s0
     console
     oneshot
     disabled
 
-on property:ro.boot.pc_install=1
+# Keep the text console readable for the whole install.
+#
+# /dev/console being tty0 is only half of it. SurfaceFlinger takes DRM master
+# the moment it starts and paints the display, so the framebuffer console --
+# and the prompt sitting on it -- disappears behind a boot animation and then a
+# launcher. The installer would still be waiting for input the user cannot see.
+#
+# `stop` before class_start reaches them is what prevents that: this trigger
+# runs from queue_property_triggers_action in late-init, and marks each service
+# disabled so the later `class_start main` skips it. This boot therefore never
+# brings up the UI, which is correct -- it exists to run the installer and
+# reboot, and nothing else on it needs a display.
+# Anchored to events, not to the property alone.
+#
+# `on property:ro.boot.pc_install=1` looks right and does nothing. It is the
+# third bare property trigger in this file to silently never fire -- see the
+# notes above on init.svc.audioserver and apexd.status -- and the failure is
+# indistinguishable from a working trigger whose service exits quietly: init
+# logs nothing, because from its point of view no action was ever queued.
+# The cost here was a boot that reached the desktop with no installer and no
+# evidence either way, twice.
+#
+# An event trigger with a property condition is the form that does fire, and
+# `on boot` is already proven in this file (it is what sets vendor.pc.boot).
+# Splitting across two events is deliberate, because the ordering matters and
+# init.rc fixes it: late-init runs post-fs-data, then zygote-start, then boot,
+# and class_start core (surfaceflinger) sits inside boot. Stopping both at
+# post-fs-data therefore marks them disabled BEFORE anything tries to start
+# them, which is what keeps the framebuffer console the installer prompts on.
+# Doing it at boot would race class_start and could leave a half-started UI
+# holding the display.
+#
+# `console` is the third one, and it is the one that actually eats keystrokes.
+# AOSP init.rc runs `service console /system/bin/sh` with the `console` option
+# whenever ro.debuggable=1, which is always true on a userdebug build. That
+# shell and the installer then hold the SAME /dev/console open and both read
+# it, so the user's typing is split between two readers: the shell takes some
+# bytes, the installer gets the rest. It shows up as a "console:/ $" prompt
+# sharing the screen, and as a typed ERASE arriving as RASE or AS -- which
+# looked like serial timing and was not.
+on post-fs-data && property:ro.boot.pc_install=1
+    stop surfaceflinger
+    stop zygote
+    stop console
+
+on boot && property:ro.boot.pc_install=1
+    # Stop the console shell AGAIN, and this time last.
+    #
+    # The post-fs-data block above already stops it, and that is not enough:
+    # this same file starts it from `on property:ro.debuggable=1`, a bare
+    # property trigger, which init runs from queue_property_triggers during
+    # late-init -- i.e. AFTER post-fs-data. So the shell was killed and then
+    # immediately restarted by us, and went on sharing /dev/console with the
+    # installer, taking the first byte of every line the user typed: ERASE
+    # arrived as RASE, three times in a row.
+    #
+    # `boot` runs after late-init's property triggers, so a stop here is the
+    # last word. It stays in post-fs-data as well, to keep the shell off the
+    # screen for the whole install rather than only from boot onwards.
+    stop console
+    write /dev/kmsg "<3>pc_probe: install trigger fired"
     start pc-installer
+    write /dev/kmsg "<3>pc_probe: start command returned"
