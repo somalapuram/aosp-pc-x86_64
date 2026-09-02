@@ -95,8 +95,12 @@ unsparse() {
 # ------------------------------------------------------------------ GRUB ----
 info "building standalone GRUB EFI image"
 # GRUB_DEFAULT=1 selects the verbose entry; KERNEL_EXTRA_ARGS appends to both.
+#
+# GRUB_TIMEOUT is 5 rather than 3 because the menu is not decoration: the
+# install entry is the last one, and three seconds is not enough time to read
+# three entries and arrow down to it before the default boots.
 cat > "$WORK/grub.cfg" <<EOF
-set timeout=3
+set timeout=${GRUB_TIMEOUT:-5}
 set default=${GRUB_DEFAULT:-0}
 
 # The ESP carries a volume label so GRUB finds it regardless of disk ordering.
@@ -203,6 +207,32 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
 # sake of a program that runs once from removable media. Scoping it to this
 # entry keeps the installed system enforcing, which is what the other two
 # entries do and what actually matters.
+# loglevel=1, far quieter than the other entries, and for the same reason the
+# console order is flipped: this screen is a user interface, not a log.
+#
+# Stopping surfaceflinger and zygote is what keeps the framebuffer console
+# visible, but it also means system_server never registers the 'activity'
+# service, so servicemanager retries it -- and SurfaceFlingerAIDL -- as lazy
+# services once a second, forever:
+#     init: Control message: Could not find 'aidl/activity' for ctl.interface_start
+# Those go through printk, so at loglevel=4 they land on tty0 and scroll the
+# installer's prompt off the screen about as fast as it is drawn.
+#
+# The two streams filter differently, which is what makes this work: printk
+# output obeys the console loglevel, while a write to /dev/console from a
+# program's stdout does not. So loglevel=1 silences init and the kernel while
+# leaving every line the installer prints exactly where the user can read it.
+# The kernel log is still complete in the ring buffer and in the transcript.
+#
+# CONSOLE ORDER IS LOAD-BEARING, and it is the opposite of the other two
+# entries. Linux points /dev/console at the LAST console= on the command line,
+# and init gives a service marked `console` that device for its stdin and
+# stdout. With tty0 first and ttyS0 last -- the order every other entry uses,
+# because for them serial is the debugging channel -- the installer's banner and
+# its "Type ERASE to continue" prompt go out the serial port, and a user looking
+# at the machine's own screen sees an ordinary boot while the installer blocks
+# forever on input that is never coming. This entry is interactive, on the
+# machine's own display, so tty0 goes last. Serial still gets the kernel log.
 menuentry "Install Android to internal disk (ERASES IT)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
@@ -211,16 +241,69 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            androidboot.pc_install=1 \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           console=tty0 console=ttyS0,115200 loglevel=4
+           console=ttyS0,115200 console=tty0 loglevel=1
+    initrd /ramdisk.img
+}
+
+# The same install, confirmed HERE instead of at a prompt.
+#
+# The interactive entry above asks the user to type ERASE on the machine's own
+# console. That assumes the kernel's VT layer delivers keystrokes to
+# /dev/console, and on this hardware it does not: the kernel has CONFIG_VT,
+# VT_CONSOLE, ATKBD, USB_HID and EVDEV all enabled, the prompt appears, and
+# nothing typed reaches the reader. Android drives input through evdev and
+# InputFlinger, not the VT, so a console prompt is not a reliable way to ask
+# this machine's owner a question.
+#
+# GRUB's own input demonstrably works -- selecting this entry at all requires
+# arrowing down to it and pressing enter -- so the confirmation is moved to
+# where the keyboard is known to function. androidboot.pc_install_confirm=ERASE
+# carries that answer to the installer, which then skips the prompt.
+#
+# This is a deliberate, clearly labelled, last-in-the-list choice, which is the
+# same standard the typed word was there to meet: nothing here can be reached by
+# accident, and the default entry is still a normal boot.
+menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           androidboot.pc_install=1 \\
+           androidboot.pc_install_confirm=ERASE \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           console=ttyS0,115200 console=tty0 loglevel=1
     initrd /ramdisk.img
 }
 
 EOF
 
+# What gets embedded is a loader, not the menu.
+#
+# grub-mkstandalone bakes its config into the EFI binary, so a menu embedded
+# here is unreachable to anything that is not rebuilding the image -- and
+# pc_install.sh has to edit the menu: the installed system needs its own
+# boot_part_uuid, and it must not keep offering to install itself over its own
+# disk. It was written to sed an ESP grub.cfg that this script never actually
+# wrote, so the install died on "no grub.cfg on the copied ESP".
+#
+# So embed six lines that find the ESP by label and hand control to the real
+# grub.cfg sitting on it, and ship the menu as a plain file. That also means the
+# kernel command line can be edited on a written stick without a rebuild.
+cat > "$WORK/grub-embed.cfg" <<'EOFEMBED'
+search --no-floppy --label ANDROIDESP --set=root
+if [ -f ($root)/grub.cfg ]; then
+    configfile ($root)/grub.cfg
+else
+    echo "ANDROIDESP has no grub.cfg -- cannot boot."
+    sleep 30
+fi
+EOFEMBED
+
 grub-mkstandalone -O x86_64-efi -o "$WORK/bootx64.efi" \
     --modules="part_gpt fat ext2 normal linux echo all_video test true sleep search search_label configfile gzio" \
-    "boot/grub/grub.cfg=$WORK/grub.cfg" 2>/dev/null
-ok "bootx64.efi $(du -h "$WORK/bootx64.efi" | cut -f1)"
+    "boot/grub/grub.cfg=$WORK/grub-embed.cfg" 2>/dev/null
+ok "bootx64.efi $(du -h "$WORK/bootx64.efi" | cut -f1) (loader; menu is grub.cfg on the ESP)"
 
 # ------------------------------------------------------------------- ESP ----
 info "building ESP (FAT32, ${ESP_MB} MiB)"
@@ -231,7 +314,8 @@ mmd    -i "$WORK/esp.img" ::/EFI ::/EFI/BOOT
 mcopy  -i "$WORK/esp.img" "$WORK/bootx64.efi" ::/EFI/BOOT/BOOTX64.EFI
 mcopy  -i "$WORK/esp.img" "$BZIMAGE"          ::/bzImage
 mcopy  -i "$WORK/esp.img" "$RAMDISK"          ::/ramdisk.img
-ok "ESP populated: BOOTX64.EFI, bzImage, ramdisk.img"
+mcopy  -i "$WORK/esp.img" "$WORK/grub.cfg"    ::/grub.cfg
+ok "ESP populated: BOOTX64.EFI, grub.cfg, bzImage, ramdisk.img"
 
 # ------------------------------------------------------- partition images ----
 info "preparing partition images"
