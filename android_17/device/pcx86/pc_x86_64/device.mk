@@ -43,7 +43,8 @@ PRODUCT_COPY_FILES += \
     device/pcx86/pc_x86_64/pc_noop.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_noop.sh \
     device/pcx86/pc_x86_64/pc_kmsg_vendor.sh:$(TARGET_COPY_OUT_VENDOR)/bin/pc_kmsg_vendor.sh \
     device/pcx86/pc_x86_64/pc_logcat_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_logcat_file.sh \
-    device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_kmsg_file.sh
+    device/pcx86/pc_x86_64/pc_kmsg_file.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_kmsg_file.sh \
+    device/pcx86/pc_x86_64/pc_install.sh:$(TARGET_COPY_OUT_SYSTEM_EXT)/bin/pc_install.sh
 
 # --- Mesa (real GL driver) -------------------------------------------------
 # Built out of tree by ./build.sh mesa -- AOSP's external/mesa3d/Android.bp

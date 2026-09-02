@@ -344,3 +344,31 @@ on property:sys.boot_completed=1
 
 on property:ro.debuggable=1
     start console
+
+# --- Installer -------------------------------------------------------------
+#
+# Copies this image onto the machine's internal disk, giving userdata whatever
+# space is left. See pc_install.sh for what it does and what stops it.
+#
+# Dormant unless the GRUB "Install" entry was chosen: that entry is the only
+# thing that sets ro.boot.pc_install, so a normal boot never starts this and
+# the script exits immediately if it is started by hand without the flag.
+#
+# `console` hands the service /dev/console, which the install entry points at
+# tty0 so the machine's own screen shows it. Without that the installer would
+# be prompting for confirmation somewhere nobody is looking.
+#
+# No seclabel, so it runs in init's context. That is deliberate and matches the
+# install entry booting permissive: the installer needs raw block writes, and
+# the alternative is shipping a domain that holds those permissions on every
+# installed system for a program that runs once from removable media.
+service pc-installer /system/bin/sh /system/system_ext/bin/pc_install.sh
+    class core
+    user root
+    group root
+    console
+    oneshot
+    disabled
+
+on property:ro.boot.pc_install=1
+    start pc-installer

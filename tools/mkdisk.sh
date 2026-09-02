@@ -178,6 +178,43 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            androidboot.verifiedbootstate=orange ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img
 }
+# The installer entry. Copies this image onto the machine's internal disk and
+# gives userdata whatever is left of it -- see pc_install.sh, which is what
+# androidboot.pc_install=1 starts.
+#
+# Nothing here erases anything. The flag only makes an init service run instead
+# of staying dormant, and that service prints what it is about to destroy and
+# waits for the word ERASE. Booting either entry above can never reach it.
+#
+# console=tty0 is added so the installer is visible on the laptop's own screen.
+# The normal entries send the console to serial only, which is right for a
+# system with a UI and useless for a text installer on a machine that may have
+# no serial cable attached.
+#
+# androidboot.pc_install_target=<name> can be appended by hand at the GRUB
+# prompt on a machine with more than one internal disk; the installer refuses
+# to guess between them.
+#
+# PERMISSIVE, and only here. The installer writes raw block devices, runs
+# sgdisk and mke2fs and mounts a FAT filesystem, which under enforcing policy
+# would need a domain holding permissions nothing else on the device should
+# have. Confining the installer properly means adding those permissions to the
+# shipped policy, where they would then exist on every installed system for the
+# sake of a program that runs once from removable media. Scoping it to this
+# entry keeps the installed system enforcing, which is what the other two
+# entries do and what actually matters.
+menuentry "Install Android to internal disk (ERASES IT)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           androidboot.pc_install=1 \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           console=tty0 console=ttyS0,115200 loglevel=4
+    initrd /ramdisk.img
+}
+
 EOF
 
 grub-mkstandalone -O x86_64-efi -o "$WORK/bootx64.efi" \
