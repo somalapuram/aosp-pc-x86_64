@@ -344,3 +344,57 @@ on property:sys.boot_completed=1
 
 on property:ro.debuggable=1
     start console
+
+# --- USB gadget: adb over the Type-C port ---------------------------------
+#
+# This machine has a USB device controller, which is unusual for a laptop and
+# was nearly missed. PCI enumeration shows two USB functions on 00:0d:
+#     00:0d.0 [8086:7ec0] class 0x0c0330  xHCI, host
+#     00:0d.2 [8086:7ec2] class 0x0c0340  device controller (Intel xDCI)
+# dwc3-pci did not carry 0x7ec2, so nothing bound to it and the symptom was
+# identical to the hardware not existing. patches/linux/0002 adds the ID.
+#
+# What follows is the other half: a controller alone produces no adb endpoint.
+# The gadget has to be described in configfs before anything can be bound to
+# it. init.rc already mounts configfs and imports init.usb.configfs.rc, which
+# carries the rules that symlink a function into the config and write the UDC;
+# those rules do nothing until the skeleton below exists and sys.usb.configfs
+# is 1.
+#
+# on boot, not earlier: configfs is mounted by init.rc during `on init`, so an
+# earlier stage would find /config missing.
+on boot
+    mkdir /config/usb_gadget/g1 0770 shell shell
+    mkdir /config/usb_gadget/g1/strings/0x409 0770 shell shell
+    write /config/usb_gadget/g1/bcdUSB 0x0200
+    # Google's vendor id and the adb-only product id, so host udev rules and
+    # adb recognise this the way they would any Android device. adb actually
+    # matches on the interface descriptor (class ff, subclass 42, protocol 1)
+    # rather than these, but a sane pair keeps lsusb output honest.
+    write /config/usb_gadget/g1/idVendor 0x18d1
+    write /config/usb_gadget/g1/idProduct 0x4ee7
+    write /config/usb_gadget/g1/strings/0x409/serialnumber ${ro.serialno}
+    write /config/usb_gadget/g1/strings/0x409/manufacturer "Android"
+    write /config/usb_gadget/g1/strings/0x409/product "pc_x86_64"
+    mkdir /config/usb_gadget/g1/functions/ffs.adb
+    mkdir /config/usb_gadget/g1/configs/b.1 0770 shell shell
+    mkdir /config/usb_gadget/g1/configs/b.1/strings/0x409 0770 shell shell
+    write /config/usb_gadget/g1/configs/b.1/MaxPower 500
+
+    # adbd talks to the gadget through FunctionFS, and mounts it here. uid/gid
+    # 2000 is shell, which is what adbd runs as.
+    mkdir /dev/usb-ffs 0775 shell shell
+    mkdir /dev/usb-ffs/adb 0770 shell shell
+    mount functionfs adb /dev/usb-ffs/adb uid=2000,gid=2000
+
+    # Only adb is described here. mtp, ptp, accessory and midi are all
+    # available in configfs and all deliberately left out: this exists to
+    # debug the device, and every extra function is another descriptor to get
+    # wrong for no benefit.
+    setprop sys.usb.configfs 1
+
+# sys.usb.controller is NOT set here on purpose. init runs SetUsbController on
+# a background thread that polls /sys/class/udc and sets the property whenever
+# a controller appears, so hardcoding a name -- as device/linaro/hikey960 does
+# with "ff100000.dwc3" -- would only be a guess at what dwc3-pci will call this
+# one, and would be wrong the moment it changed.

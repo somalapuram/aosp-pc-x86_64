@@ -608,6 +608,15 @@ PRODUCT_VENDOR_PROPERTIES += \
 PRODUCT_SYSTEM_PROPERTIES += \
     sys.use_memfd=true
 
+# Default the USB gadget to adb. init.usb.rc turns persist.sys.usb.config into
+# sys.usb.config on boot, and the configfs rules only act on sys.usb.config, so
+# without a default the gadget skeleton is built and never bound to anything.
+#
+# adb alone, not "mtp,adb": this is a debug path, and mtp would need its own
+# FunctionFS mount and descriptors that nothing here uses.
+PRODUCT_PROPERTY_OVERRIDES += \
+    persist.sys.usb.config=adb
+
 # The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
 #
 # Retired in 2328f8c along with the verbose HAL logging, but for a different
