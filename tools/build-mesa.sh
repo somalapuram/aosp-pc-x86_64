@@ -143,6 +143,26 @@ EOF
     # PKG_CONFIG_LIBDIR below and starts finding host libraries: a working build
     # began failing on a missing zstd.h that way, having picked up the host's
     # zstd for an Android target.
+    # -Dmesa-clc=system is what lets iris configure at all. meson.build's
+    # with_driver_using_cl lists with_gallium_iris, so selecting iris turns
+    # with_clc on, and with_clc enables LLVM unconditionally:
+    #
+    #     ERROR: Feature llvm cannot be disabled: CLC requires LLVM
+    #
+    # There is no option to switch that off -- it is computed from the driver
+    # list. Mesa 26.1 made this true for iris, so doc/05-graphics.md 4, which
+    # picks iris first precisely because it has no LLVM dependency, no longer
+    # holds as written for the version in this tree.
+    #
+    # 'system' takes the other branch of that if, where with_clc collapses to
+    # with_gallium_rusticl -- off here -- so nothing cross-builds LLVM for
+    # Android. The cost is two native binaries, mesa_clc and vtn_bindgen2,
+    # which have to be on PATH; build them once from this same tree with
+    # -Dinstall-mesa-clc=true against the host's LLVM.
+    #
+    # precomp-compiler=system keeps with_drivers_clc false as well, and costs
+    # nothing here: no Intel driver looks for a per-driver *_clc program, only
+    # asahi and pco do.
     info "[$ABI] configuring mesa (drivers: $DRIVERS)"
     rm -rf "$WORK/build-$ABI"
     PKG_CONFIG_LIBDIR="$PFX/lib/pkgconfig" \
@@ -153,6 +173,7 @@ EOF
         -Dllvm=disabled -Degl=enabled -Dgles1=disabled -Dgles2=enabled \
         -Dgbm=enabled -Dglx=disabled -Dandroid-libbacktrace=disabled \
         -Degl-lib-suffix=_mesa -Dgles-lib-suffix=_mesa \
+        -Dmesa-clc=system -Dprecomp-compiler=system \
         >/dev/null
 
     info "[$ABI] building with $JOBS jobs"
