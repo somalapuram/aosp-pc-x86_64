@@ -117,7 +117,8 @@ search --no-floppy --label ANDROIDESP --set=root
 # with no actual deadlock -- the main thread stack shows ordinary
 # ULocale/Configuration/Resources work.
 #
-# sysctl.kernel.dmesg_restrict=0 makes the kernel log readable without
+# sysctl.kernel.dmesg_restrict=0 is NOT on the default entry, and that is the
+# whole point of it not being there. It makes the kernel log readable without
 # CAP_SYSLOG, which is the only way to see it on this device: shell is an
 # appdomain and may hold no capability, the machine has no serial header, and
 # /proc/sys/kernel/dmesg_restrict is proc_security, which domain.te lets only
@@ -125,8 +126,13 @@ search --no-floppy --label ANDROIDESP --set=root
 # before init starts, so no policy is involved at all -- the kernel parses
 # sysctl.* itself (fs/proc/proc_sysctl.c, process_sysctl_arg).
 #
-# This is a bring-up decision with a real cost: kernel addresses and hardware
-# detail become readable by any app. Drop it before anything ships.
+# It carries a real cost -- kernel addresses and hardware detail become
+# readable by any app -- so it is now confined to the entries where that trade
+# is worth making and the exposure is bounded: the verbose entry, which exists
+# to be debugged from, and the two install entries, which run once from
+# removable media and reboot. A normally booted, installed system does not
+# have it. pc_kmsg_file.sh already degrades cleanly when /dev/kmsg is refused,
+# writing a note saying so rather than restarting forever.
 #
 # loglevel=4 keeps warnings and above on the console; everything else is still
 # in the ring buffer via dmesg. Logcat comes over virtio-console regardless,
@@ -160,9 +166,8 @@ menuentry "Android pc_x86_64" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=enforcing \\
-           sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           console=ttyS0,115200 loglevel=7
+           console=ttyS0,115200 loglevel=4
     initrd /ramdisk.img
 }
 

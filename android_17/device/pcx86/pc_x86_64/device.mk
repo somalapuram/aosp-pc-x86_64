@@ -626,47 +626,27 @@ PRODUCT_VENDOR_PROPERTIES += \
 PRODUCT_SYSTEM_PROPERTIES += \
     sys.use_memfd=true
 
-# The V4L2 reporter, brought back for the video-recording fix (BRING-UP ONLY).
+# The mixer setup. NOT bring-up: this device has no sound without it.
 #
-# Retired in 2328f8c along with the verbose HAL logging, but for a different
-# reason than that logging was: this is a oneshot writing to
-# /data/vendor/pc/v4l2_info.txt, not four lines per frame at 30fps, so it does
-# not reintroduce the ring-buffer flooding that made the ExtCam log tags
-# untenable while a recording crash was being chased.
+# It used to be labelled BRING-UP ONLY, and the note underneath said its unmute
+# was "redundant now that output works". That is backwards, and acting on it
+# would ship a silent machine: pc_audio_setup is the ONLY thing in this tree
+# that touches the mixer. There is no mixer_paths.xml, no UCM, no alsactl. The
+# SOF/HDA card comes up with its analog outputs muted, which is normal for HDA
+# -- a desktop has alsactl or UCM to fix it and a phone has a vendor HAL's
+# mixer_paths.xml, and this device has neither -- and AOSP's default audio HAL
+# only drives a handful of control names that a SOF topology does not use. So
+# the stream opens, frames are written, and nothing is audible, with no error
+# anywhere. See init.pc_x86_64.rc, which starts it from sys.boot_completed
+# because SOF registers card0 around 3.7s, well after `on boot`.
 #
-# It is here because the fps bounds in external_camera_config.xml were just
-# raised to let the camera's own frame rates through, and the one fact needed
-# to confirm that worked -- which rates this sensor actually offers per
-# resolution -- cannot be read anywhere else. The HAL logs it only at ALOGV,
-# which LOG_NDEBUG=1 compiles out, and the build host is a workstation with no
-# webcam to interrogate. The tool now enumerates VIDIOC_ENUM_FRAMEINTERVALS
-# per size and marks each against API1's 29.97fps floor, so the next boot
-# either shows MJPEG sizes reading PASSES or names the rates that still fall
-# short.
+# It also unmutes capture ("Capture Switch" off, "Capture Volume" 0 of 63 and
+# "Dmic0 Capture Switch" off at boot, and they stay that way otherwise).
 #
-# Drop this entry again once recording is confirmed; the init.rc service that
-# starts it is harmless without it.
-PRODUCT_PACKAGES += \
-    pc_v4l2_info
-
-# The mixer and PCM reporter, also brought back for one boot (BRING-UP ONLY).
-#
-# Capture cannot open: proxy_open(card:0 device:0 PCM_IN) is refused with
-# "cannot set hw params: Invalid argument", so the input stream sits in state
-# ERROR and recording gets no audio. PCM_OUT on the same card opens cleanly,
-# so this is specific to the capture endpoint.
-#
-# The channel count in primary_audio_policy_configuration.xml has been changed
-# from mono to stereo, which is the likely cause and the usual shape of an HDA
-# capture endpoint. That is a hypothesis, not a measurement: the build host has
-# no such card to interrogate, and the HAL does not log what the driver would
-# accept. dump_pcm_caps() in pc_audio_setup.c prints the real rate and channel
-# ranges for every capture and playback device on the card, so the next boot
-# either confirms stereo or names what to use instead, rather than costing
-# another guess.
-#
-# Drop this again once capture opens. Note it also unmutes and maxes the
-# playback controls, which is redundant now that output works.
+# The diagnostic half IS bring-up: dump_pcm_caps() prints the rate and channel
+# ranges for every device on the card, and exists because mic capture still
+# arrives at the encoder as silence. Drop that part -- not the unmute -- once
+# capture is fixed.
 PRODUCT_PACKAGES += \
     pc_audio_setup
 

@@ -288,9 +288,6 @@ service pc-logcat-file /system_ext/bin/pc_logcat_file.sh
 # sepolicy/property_contexts, and vendor_init may both set and read it.
 on boot
     setprop vendor.pc.boot 1
-    # Bring-up probe: prove what init actually sees. Remove once the installer
-    # is trusted. <3> so it survives the install entry's loglevel=4.
-    write /dev/kmsg "<3>pc_probe: ro.boot.pc_install=[${ro.boot.pc_install}]"
 
 on property:vendor.pc.boot=1
     class_start hal
@@ -316,14 +313,6 @@ on property:vendor.pc.boot=1
 # well after `on boot`. The existing pc-kmsg-file inventory runs at `on boot`
 # and that is exactly why it kept reporting "sound cards: (none)" even on boots
 # where the card did come up.
-service pc-v4l2-info /vendor/bin/pc_v4l2_info
-    class core
-    user root
-    group root camera
-    oneshot
-    disabled
-    seclabel u:r:vendor_shell:s0
-
 service pc-audio-setup /vendor/bin/pc_audio_setup
     class core
     user root
@@ -343,7 +332,6 @@ service console /system/bin/sh
 
 on property:sys.boot_completed=1
     start pc-audio-setup
-    start pc-v4l2-info
 
 on property:ro.debuggable=1
     start console
@@ -443,6 +431,4 @@ on boot && property:ro.boot.pc_install=1
     # last word. It stays in post-fs-data as well, to keep the shell off the
     # screen for the whole install rather than only from boot onwards.
     stop console
-    write /dev/kmsg "<3>pc_probe: install trigger fired"
     start pc-installer
-    write /dev/kmsg "<3>pc_probe: start command returned"
