@@ -174,6 +174,7 @@ EOF
         -Dgbm=enabled -Dglx=disabled -Dandroid-libbacktrace=disabled \
         -Degl-lib-suffix=_mesa -Dgles-lib-suffix=_mesa \
         -Dmesa-clc=system -Dprecomp-compiler=system \
+        -Dexpat:default_library=static \
         >/dev/null
 
     info "[$ABI] building with $JOBS jobs"
