@@ -88,7 +88,25 @@
                  One value, not a list. A comma separated channelMasks converts
                  to -1 and aborts the HAL during config parsing, which stops the
                  device booting at all; that mistake cost a boot already. -->
-            <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+            <!-- 32-bit, not 16. The internal mics are the SOF DMIC array on
+                 card 0 DEVICE 6 ("DMIC Raw" in /proc/asound/pcm), and that
+                 endpoint is S32_LE only:
+
+                   tinypcminfo -D 0 -d 6
+                     Format Name: S32_LE
+                     Rate:        min=48000Hz max=48000Hz
+                     Channels:    min=2      max=2
+                     Sample bits: min=32     max=32
+
+                 Asking it for 16 bits is refused exactly like asking device 0
+                 for one channel was ("cannot set hw params: Invalid argument"),
+                 because openProxyForAttachedDevice() never asks the card what it
+                 supports; profile_fill_builtin_device_info() fills the profile
+                 from this file and demands it verbatim of the driver. The
+                 samples carry about 27 significant bits left-justified in the
+                 32-bit container; AudioFlinger converts down to whatever the
+                 recording client asked for. -->
+            <profile name="" format="AUDIO_FORMAT_PCM_32_BIT"
                      samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_STEREO"/>
         </mixPort>
    </mixPorts>
@@ -96,7 +114,19 @@
         <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
         </devicePort>
 
-        <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source">
+        <!-- address is what selects the ALSA capture device.
+             StreamPrimary::getCardAndDeviceId() rfind()s "CARD_" in this string
+             and sscanf()s "CARD_%d_DEV_%d" from there; with no match it returns
+             kDefaultCardAndDeviceId, which is card 0 device 0. This machine has
+             two capture PCMs: 00-00 "HDA Analog", the analog jack, and 00-06
+             "DMIC Raw", the internal mics, so the default recorded an empty
+             socket. Measured: the jack sat at RMS -66.5 dBFS and did not move
+             (-66.6) while a 1 kHz tone played through the speaker; the DMIC went
+             from -60.2 to -29.1, i.e. +31 dB. The "bottom_" prefix is ignored by
+             the parser and kept only so the address still reads as a microphone
+             position, matching the value the HAL would otherwise have forced. -->
+        <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source"
+                    address="bottom_CARD_0_DEV_6">
         </devicePort>
     </devicePorts>
     <routes>

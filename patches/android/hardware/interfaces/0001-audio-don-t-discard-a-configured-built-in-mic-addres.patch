@@ -1,0 +1,76 @@
+From c5febf64f6daa2fbcd70ee4416a6a45391f786af Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 4 Sep 2026 10:53:04 +0530
+Subject: [PATCH] audio: don't discard a configured built-in mic address
+
+createAudioDevice() reads the devicePort address out of the XML and then
+overwrites it with "bottom" for every IN_MICROPHONE whose connection is
+empty (and "back" for IN_MICROPHONE_BACK). The two literals look like
+harmless positional hints, but the address is load-bearing:
+StreamPrimary::getCardAndDeviceId() rfind()s "CARD_" in it and sscanf()s
+"CARD_%d_DEV_%d" from there, falling back to kDefaultCardAndDeviceId --
+PrimaryMixer::kAlsaCard 0, kAlsaDevice 0 -- when there is no match.
+
+So the clobber pins every built-in mic to ALSA card 0 device 0 and
+silently discards the only mechanism a config author has for saying
+otherwise. On a phone that is harmless. On a PC it is not: card 0
+device 0 is whatever the HDA codec enumerates first, typically the
+analog mic jack, while the internal mics are a separate DMIC PCM. With
+nothing plugged into the jack, every recording is its noise floor, and
+nothing anywhere reports an error.
+
+Measured on an HP ZBook Firefly 16 G11 (sof-hda-dsp), playing a 1 kHz
+tone through the speaker and capturing with tinycap:
+
+    card 0 device 0  "HDA Analog"  ambient RMS -66.5 dBFS
+                                   with tone  -66.6 dBFS   (+0.0 dB)
+    card 0 device 6  "DMIC Raw"    ambient RMS -60.2 dBFS
+                                   with tone  -29.1 dBFS  (+31.1 dB)
+
+Only default the address when the config did not supply one. A config
+that says nothing keeps the previous value, so no existing device
+changes behaviour.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TEuEUJYn8gjRcyxBBzgcEN
+Change-Id: I2025f00b295d3c59356b86e5c0b091b1fe2743f3
+---
+ audio/aidl/default/XsdcConversion.cpp | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/audio/aidl/default/XsdcConversion.cpp b/audio/aidl/default/XsdcConversion.cpp
+index fbda7aac5e..bfe30d9c10 100644
+--- a/audio/aidl/default/XsdcConversion.cpp
++++ b/audio/aidl/default/XsdcConversion.cpp
+@@ -236,11 +236,23 @@ ConversionResult<AudioDevice> createAudioDevice(
+                                ? AudioDeviceAddress::make<AudioDeviceAddress::Tag::id>(
+                                          xDevicePort.getAddress())
+                                : AudioDeviceAddress{}};
+-    if (device.type.type == AudioDeviceType::IN_MICROPHONE && device.type.connection.empty()) {
+-        device.address = "bottom";
+-    } else if (device.type.type == AudioDeviceType::IN_MICROPHONE_BACK &&
+-               device.type.connection.empty()) {
+-        device.address = "back";
++    // Only default the address when the config did not give one. These two
++    // literals are positional hints for the common phone layout, but the address
++    // is not decorative: StreamPrimary::getCardAndDeviceId() rfind()s "CARD_" in
++    // it and sscanf()s "CARD_%d_DEV_%d" out, falling back to card 0 device 0
++    // otherwise. Overwriting an address the config author wrote therefore pins
++    // every built-in mic to ALSA card 0 device 0 and silently discards the only
++    // mechanism there is for saying otherwise -- which on a PC, where device 0
++    // is typically the analog jack and the internal mics are a separate DMIC
++    // PCM, means recording the noise floor of an empty socket.
++    if (!xDevicePort.hasAddress()) {
++        if (device.type.type == AudioDeviceType::IN_MICROPHONE &&
++            device.type.connection.empty()) {
++            device.address = "bottom";
++        } else if (device.type.type == AudioDeviceType::IN_MICROPHONE_BACK &&
++                   device.type.connection.empty()) {
++            device.address = "back";
++        }
+     }
+     return device;
+ }
+-- 
+2.43.0
+

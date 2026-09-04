@@ -65,8 +65,9 @@ continuing would produce a subtly wrong build.
 | `linux/0001-drm-virtio-accept-ABGR8888-and-XBGR8888-framebuffers` | virtio-gpu advertises only the ARGB orderings, so a guest composing into `RGBA_8888` (`DRM_FORMAT_ABGR8888`) cannot scan out at all |
 | `android/external/minigbm/0001-…-pc-platform` | a linear-only `pc` gralloc platform for bare-metal x86, so buffers are not tiled for a GPU that is not doing the compositing |
 | `android/external/minigbm/0002-…-virgl-context` | create the virgl context before allocating buffers; on a context-init host the kernel makes no virgl context otherwise |
+| `android/hardware/interfaces/0001-audio-don-t-discard-…` | the AIDL audio HAL overwrites the built-in mic's configured address, which is what selects the ALSA capture device; on a PC that pins capture to the analog jack instead of the internal DMIC array |
 
 Everything else this port needs lives in `android_17/device/pcx86/pc_x86_64/`,
 which is a new device directory rather than a change to an existing project.
-That is why this list is three entries long: the kernel is otherwise stock
+That is why this list is four entries long: the kernel is otherwise stock
 mainline and AOSP is otherwise stock `android17-release`.
