@@ -27,6 +27,19 @@
 # libEGL_mesa.so, so it sits on the plain library path rather than under egl/,
 # which is why the blanket egl/ rule does not cover it.
 /vendor/lib(64)?/hw/mapper\.minigbm\.so      u:object_r:same_process_hal_file:s0
+# gralloc.minigbm.so is the legacy gralloc0 module, installed for ONE caller:
+# Mesa's u_gralloc fallback backend, which asks libhardware for it by name and
+# uses its lock_ycbcr hook to describe YUV planes (see device.mk). It is
+# dlopen'd inside every GL client, so it needs the same label as its
+# neighbours. Left at the default vendor_file it is found and then refused,
+# and hw_get_module silently falls back to the gralloc.default.so stub that
+# has no lock_ycbcr -- i.e. exactly the state adding the module was meant to
+# cure, with no error beyond the audit line:
+#     avc: denied { getattr } path="/vendor/lib64/hw/gralloc.minigbm.so"
+#          scontext=u:r:surfaceflinger:s0 tcontext=u:object_r:vendor_file:s0
+# AOSP labels gralloc.default.so this way in system/sepolicy/vendor/
+# file_contexts; that rule is an exact path match and does not cover ours.
+/vendor/lib(64)?/hw/gralloc\.minigbm\.so     u:object_r:same_process_hal_file:s0
 /vendor/lib(64)?/libminigbm_gralloc\.so      u:object_r:same_process_hal_file:s0
 /vendor/lib(64)?/libgallium_dri\.so          u:object_r:same_process_hal_file:s0
 /vendor/lib(64)?/libdrm\.so                  u:object_r:same_process_hal_file:s0

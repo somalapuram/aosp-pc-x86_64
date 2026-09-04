@@ -119,6 +119,49 @@ PRODUCT_PACKAGES += \
     android.hardware.graphics.allocator-service.minigbm \
     mapper.minigbm \
 
+# gralloc0, for Mesa's YUV path only. Nothing in the Android framework loads
+# this -- SurfaceFlinger and apps use mapper.minigbm (IMapper 5) above. Mesa
+# does not, because we build it with -Dandroid-stub=true (tools/build-mesa.sh):
+# that leaves dep_android_ui and dep_android_mapper4 as null_dep, so
+# u_gralloc_imapper5_api.cpp and the gralloc4 backend are never compiled and
+# u_gralloc falls all the way through CROS -> GRALLOC4 -> LIBDRM -> QCOM to the
+# fallback backend. The fallback asks libhardware for a legacy gralloc0 module
+# and describes YUV planes with its lock_ycbcr hook:
+#     u_gralloc_fallback.c:181  hw_get_module(GRALLOC_HARDWARE_MODULE_ID, ...)
+#     u_gralloc_fallback.c:187  else if (!gr->gralloc_module->lock_ycbcr)
+#                                 "Gralloc doesn't support lock_ycbcr
+#                                  (video buffers won't be supported)"
+# hw_get_module SUCCEEDS without this package -- it finds the gralloc.default.so
+# that base_vendor.mk installs -- and that stub has a NULL lock_ycbcr. So Mesa
+# cannot describe an NV12 buffer, eglCreateImage refuses the camera's 1280x720
+# preview (returning NULL with eglGetError() == EGL_SUCCESS, no diagnostic), and
+# hwui aborts the app's RenderThread:
+#     F libc: Fatal signal 6 (SIGABRT) in tid N (RenderThread), pid M
+#            (android.camera2)
+#     Abort message: 'frameworks/base/libs/hwui/AutoBackendTextureRelease.cpp
+#                     Invalid GrBackendTexture. Width==1280, height==720'
+#
+# gralloc.minigbm, NOT gralloc.minigbm_intel. Both exist and both would load,
+# but gralloc.minigbm links libminigbm_gralloc -- the same library the allocator
+# service and mapper.minigbm above link, and the only one that picks up
+# pc_cflags through the soong_config_variable("minigbm","platform") select.
+# gralloc.minigbm_intel links a separate libminigbm_gralloc_intel, so its view
+# of a buffer's layout would be built from a different backend set than the one
+# that allocated it.
+#
+# ro.hardware.gralloc is what makes hw_get_module find it: the module filename
+# is gralloc.minigbm.so, and hw_get_module tries gralloc.<ro.hardware.gralloc>,
+# then gralloc.<ro.hardware> (= gralloc.pc_x86_64, absent), then gralloc.default.
+# The library is opened by app processes in the sphal namespace, alongside Mesa
+# itself; it needs no new sepolicy because cros_gralloc_driver.cc:122 tries
+# render nodes before card nodes, and /dev/dri/renderD128 is already reachable
+# from gpu_sphal_domain.
+PRODUCT_PACKAGES += \
+    gralloc.minigbm \
+
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.hardware.gralloc=minigbm
+
 # Software rendering: SwiftShader (Vulkan) + ANGLE (GLES on top of Vulkan).
 #
 # SwiftShader alone is NOT enough. It provides Vulkan only, while SurfaceFlinger
