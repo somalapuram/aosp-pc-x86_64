@@ -89,8 +89,15 @@ Deliberately **before** Mesa, so graphics driver work is off the critical path.
 
 **Exit:** accelerated Android on an Intel iGPU.
 
-**Risk:** **high.** The Mesa build is the schedule risk in this project.
-`iris` is chosen first specifically because it has no LLVM dependency.
+**Risk:** ~~**high**~~ — **done for Intel.** `iris` builds and runs; hardware GL
+on Meteor Lake at GLES 3.2, 9.4x SwiftShader (README).
+
+The stated reason for choosing `iris` first was wrong: in Mesa 26.1 it needs
+LLVM as well, because `with_gallium_iris` is in `with_driver_using_cl` and that
+forces CLC on. `-Dmesa-clc=system` is what avoids it, by keeping LLVM a
+build-host dependency instead of a cross-compiled one. Intel-first was still the
+right call — minigbm has an `i915` backend and `amdgpu.c` needs the DRI loader —
+just not for the reason recorded here. See doc/05-graphics.md 4.
 
 ---
 
@@ -104,7 +111,10 @@ Deliberately **before** Mesa, so graphics driver work is off the critical path.
 
 **Exit:** one image, accelerated on both vendors.
 
-**Risk:** **high**, concentrated entirely in the LLVM dependency.
+**Risk:** **high**, concentrated entirely in the LLVM dependency — and unlike
+Intel, `-Dmesa-clc=system` does not rescue this one. `radeonsi` links LLVM into
+the driver itself, so it needs LLVM cross-compiled for Android, not merely
+present on the build host.
 
 ---
 
@@ -144,7 +154,7 @@ usual sinkholes.
 | Risk | Severity | Mitigation |
 |---|---|---|
 | **Mesa native drivers not buildable in AOSP** | 🔴 Critical | SwiftShader keeps it off the critical path (Phase 4 before 5). Option B (out-of-tree) as the real answer. |
-| **LLVM dependency blocks `radeonsi`** | 🔴 High | Ship Intel-only first. `iris` needs no LLVM. AMD becomes a second pass. |
+| **LLVM dependency blocks `radeonsi`** | 🔴 High | Ship Intel-only first — done. `iris` does need LLVM in Mesa 26.1, but only on the build host (`-Dmesa-clc=system`); `radeonsi` needs it on the target, which is still unsolved. |
 | **meson2hermetic fork unmaintained/incomplete** | 🟠 Medium | Hard 1-week timebox, then switch to Option B. |
 | **6.18 fragments vs. 7.2 kernel drift** | 🟠 Medium | Audit dropped symbols explicitly. ACK `android16-6.18` as fallback. |
 | **SELinux scope discovered late** | 🟠 Medium | Flip to enforcing early on a throwaway branch to size it. |

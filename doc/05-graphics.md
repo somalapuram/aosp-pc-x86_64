@@ -288,9 +288,11 @@ You would regenerate with the driver set you want, roughly:
 - The `aosp_mesa3d` preset is not in the tree either — it ships with that fork
 - Unknown whether the converter handles the full native driver set; it was
   plainly exercised for the gfxstream subset only
-- LLVM dependency: `radeonsi` and `llvmpipe` need LLVM. AOSP's prebuilt LLVM
-  is not packaged as a Mesa-consumable library. **This is the sharpest edge
-  in the whole approach.**
+- LLVM dependency: `radeonsi`, `llvmpipe` **and `iris`** need LLVM in Mesa 26.1
+  (see §4 — `with_driver_using_cl` forces CLC). AOSP's prebuilt LLVM is not
+  packaged as a Mesa-consumable library. **This was the sharpest edge in the
+  whole approach**, and `-Dmesa-clc=system` is what blunts it: LLVM is needed to
+  *build* the CL compiler on the host, never to link the target driver.
 
 **Verdict:** try this first, timebox it hard (a week). If the converter
 chokes on `radeonsi`/LLVM, switch to Option B without sunk-cost hesitation.
@@ -362,10 +364,28 @@ Mesa on the critical path for first boot** — use SwiftShader (§5).
 
 Build them all in. Runtime PCI-ID matching handles selection.
 
-⚠️ `radeonsi` and `llvmpipe` both require LLVM. `iris` does not. **If LLVM
-becomes a blocker, Intel-only is achievable much sooner than AMD.** Consider
-shipping Intel first and adding AMD in a second pass — the minigbm patch in
-§3 is vendor-neutral and can land either way.
+⚠️ **`iris` requires LLVM too, in Mesa 26.1.** This section said it did not,
+and that was true of older Mesa. `meson.build` now puts `with_gallium_iris` in
+`with_driver_using_cl`, which forces `with_clc` on, and `with_clc` enables LLVM
+unconditionally:
+
+```
+meson.build:935: ERROR: Feature llvm cannot be disabled: CLC requires LLVM
+```
+
+There is no option to turn that off — it is computed from the driver list, not
+read from user input.
+
+The way through is `-Dmesa-clc=system`, which takes the other branch of that
+`if`: `with_clc` collapses to `with_gallium_rusticl` (off here), so **no LLVM is
+cross-compiled for Android at all** — it stays a build-host dependency, which is
+the part that actually mattered. The price is two native binaries, `mesa_clc`
+and `vtn_bindgen2`, built once from the same tree with `-Dinstall-mesa-clc=true`
+against the host's LLVM. `tools/build-mesa.sh` does this.
+
+So Intel-first is still right, but not for the reason given here. It is right
+because `iris` needs no LLVM *on the target*, and because minigbm already has an
+`i915` backend while `amdgpu.c` does not work without the Mesa DRI loader.
 
 ---
 
@@ -586,8 +606,8 @@ but know it is there.
 2. SwiftShader UI — display path proven without any GPU driver
 3. minigbm `pc` platform builds and loads; gralloc allocations succeed
 4. drm_hwcomposer composites — hardware planes, real vsync
-5. Mesa GL (`iris` first — no LLVM dependency)
-6. Mesa GL `radeonsi` (LLVM required)
+5. Mesa GL (`iris` first — needs host LLVM via `-Dmesa-clc=system`, not target)
+6. Mesa GL `radeonsi` (LLVM required on the target; still unsolved)
 7. Vulkan ANV, then RADV
 
 Steps 1–4 are tractable. Step 5 is where the schedule risk lives.
