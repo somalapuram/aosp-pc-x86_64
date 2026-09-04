@@ -15,7 +15,7 @@ Boots to Launcher on Intel Meteor Lake.
 | Display / KMS | ✅ real scanout via drm_hwcomposer, eDP-1 at 60 Hz |
 | GPU firmware | ✅ GuC / DMC / HuC / GSC linked into the image |
 | gralloc | ✅ Intel (i915 + xe) — ❌ AMD, blocked on Mesa |
-| Rendering | ✅ hardware **Mesa iris** on Intel, GLES 3.2 — ❌ AMD/NVIDIA fall back to SwiftShader |
+| Rendering | ✅ hardware **Mesa iris** on Intel, GLES 3.2, **9.4× SwiftShader** — ❌ AMD/NVIDIA still fall back |
 | QEMU display | ✅ boot animation and UI render (needs `DISPLAY_MODE=gtk` or `-vnc`) |
 | Audio | ✅ AIDL HAL from the `com.android.hardware.audio` APEX |
 | SELinux | ✅ enforcing |
@@ -30,6 +30,21 @@ laptop and in QEMU:
 ```
 GLES: Intel, Mesa Intel(R) Graphics (MTL), OpenGL ES 3.2 Mesa 26.1.0-devel
 ```
+
+It is worth 9.4x. SuperTuxKart on Candela City, measured with
+`dumpsys SurfaceFlinger --timestats` over 20 s, same image and same track with
+only `pc_select_egl.sh` changed:
+
+| Renderer | frames / 20 s | average fps | ms/frame |
+|---|---|---|---|
+| ANGLE over SwiftShader (CPU) | 65 | **3.2** | 310 |
+| Mesa iris (Intel GPU) | 599 | **30.3** | 33 |
+
+Take 9.4x as a floor rather than a result. iris was pacing at 30 fps against a
+60 Hz panel with the GPU at 18% of its 2250 MHz ceiling, so it was capped, not
+saturated -- where the next performance work is. Both renderers named
+themselves in SuperTuxKart's own log, so there is no ambiguity about what ran;
+the raw dumps are in `doc/bench/`.
 
 Three things had to be true, and none of them is in `doc/05-graphics.md` yet:
 
