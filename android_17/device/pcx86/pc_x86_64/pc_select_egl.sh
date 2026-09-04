@@ -8,11 +8,13 @@
 #   virtio-gpu (QEMU)  -> mesa   Mesa's virgl driver forwards GL to the host
 #                                GPU. Real acceleration; SwiftShader is not
 #                                involved at all.
-#   i915 / xe          -> mesa   Mesa's iris driver. Real acceleration on the
-#                                Intel GPU; SwiftShader is not involved.
-#   amdgpu / radeon /  -> angle  This Mesa carries iris and virgl only.
-#   nouveau                      radeonsi needs LLVM and nouveau has no minigbm
-#                                backend, so neither has a driver here.
+#   i915 / amdgpu      -> angle  Mesa here is built with virgl ONLY. iris
+#                                cannot be built yet: meson.build puts
+#                                with_gallium_iris in with_driver_using_cl
+#                                unconditionally, CLC hard-requires LLVM, and
+#                                there is no LLVM cross-built for Android in
+#                                this tree (doc/05-graphics.md 4.2 calls that
+#                                "the sharpest edge in the whole approach").
 #
 # Getting this wrong is not subtle. Point real hardware at a Mesa with no
 # driver for its GPU and EGL fails to initialise, so SurfaceFlinger aborts and
@@ -26,11 +28,7 @@
 # start, which is the point of no return: ro.* properties can only be set once,
 # and the first GL client to load libEGL fixes the choice.
 #
-# iris became buildable in "mesa: Let iris configure without cross-building
-# LLVM"; Mesa is now built as iris,virgl so one image serves both a VM and
-# Intel metal. This script still earns its place -- AMD and NVIDIA have no
-# driver here, and virtio-gpu and i915 want different gallium drivers out of
-# the same image.
+# Delete this and set ro.hardware.egl=mesa directly once iris is buildable.
 
 TAG=pc-select-egl
 
@@ -49,27 +47,17 @@ if [ -n "$(ls /sys/bus/virtio/drivers/virtio_gpu/ 2>/dev/null | grep '^virtio')"
     egl=mesa
     why="virtio_gpu"
 else
-    # Intel first: iris is in this Mesa, so these get real acceleration.
-    for d in i915 xe; do
+    for d in i915 xe amdgpu radeon nouveau; do
         if [ -n "$(ls /sys/bus/pci/drivers/$d/ 2>/dev/null | grep '^0000:')" ]; then
-            egl=mesa
+            # Mesa here has no driver for real GPUs yet -- iris needs LLVM,
+            # which is not cross-built for Android in this tree. ANGLE over
+            # SwiftShader is slow but correct, and it is what got this port to
+            # Launcher on Meteor Lake.
+            egl=angle
             why="$d"
             break
         fi
     done
-    # Anything else real falls back. radeonsi needs LLVM and nouveau has no
-    # minigbm backend, so this Mesa has nothing for them; ANGLE over SwiftShader
-    # is slow but correct, and it is what got this port to Launcher on Meteor
-    # Lake.
-    if [ -z "$why" ]; then
-        for d in amdgpu radeon nouveau; do
-            if [ -n "$(ls /sys/bus/pci/drivers/$d/ 2>/dev/null | grep '^0000:')" ]; then
-                egl=angle
-                why="$d"
-                break
-            fi
-        done
-    fi
 fi
 
 # No DRM device recognised: ANGLE needs no kernel driver at all, so a slow UI
