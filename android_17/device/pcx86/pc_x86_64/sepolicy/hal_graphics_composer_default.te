@@ -48,3 +48,7 @@ allow hal_graphics_composer_default sysfs_pci:dir search;
 # set the level and to blank the panel, max_brightness and scale are read.
 allow hal_graphics_composer_default sysfs_leds:dir search;
 allow hal_graphics_composer_default sysfs_leds:file rw_file_perms;
+
+# Same traversal, now that the GPU node is sysfs_gpu rather than sysfs_pci.
+allow hal_graphics_composer_default sysfs_gpu:dir search;
+allow hal_graphics_composer_default sysfs_gpu:file r_file_perms;

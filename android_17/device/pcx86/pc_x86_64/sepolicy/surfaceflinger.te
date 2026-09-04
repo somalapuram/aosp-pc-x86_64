@@ -32,3 +32,34 @@ allow { priv_app platform_app system_app } sysfs_pci:dir r_dir_perms;
 # system_suspend"), and system_ext private policy cannot see sysfs_pci, which is
 # declared here. The read is informational -- a wakeup source's name -- so
 # neither half is worth relocating for.
+
+# The GPU's own PCI node is sysfs_gpu now (see genfs_contexts), so the domains
+# that read device topology need it under that type as well. Apps are not listed
+# here on purpose: AOSP's gpu_sphal_domain already grants them sysfs_gpu.
+allow surfaceflinger sysfs_gpu:file r_file_perms;
+allow surfaceflinger sysfs_gpu:dir r_dir_perms;
+allow bootanim sysfs_gpu:file r_file_perms;
+allow bootanim sysfs_gpu:dir r_dir_perms;
+allow system_server sysfs_gpu:file r_file_perms;
+allow system_server sysfs_gpu:dir r_dir_perms;
+allow { priv_app platform_app system_app } sysfs_gpu:file r_file_perms;
+allow { priv_app platform_app system_app } sysfs_gpu:dir r_dir_perms;
+
+# Apps need to walk THROUGH /sys/devices/pci0000:00 to reach the GPU.
+#
+# The GPU itself and libdrm's route to it are sysfs_gpu now (genfs_contexts),
+# which AOSP already grants every GL client. What was still missing is the one
+# directory in between:
+#
+#     avc: denied { search } for comm="RenderThread" name="pci0000:00"
+#          scontext=u:r:untrusted_app tcontext=u:object_r:sysfs_pci
+#
+# so enumeration stopped one level short and every app aborted on
+# EGL_NOT_INITIALIZED.
+#
+# 'search' only, exactly as hal_graphics_composer_default already does for the
+# backlight: it permits walking down to the GPU without reading a single PCI
+# attribute on the way. That is why it does not run into the neverallows
+# private/pc_graphics.te warns about -- those forbid sysfs *file* reads
+# (app_neverallows.te 118-124, all ":file"), not directory traversal.
+allow appdomain sysfs_pci:dir search;

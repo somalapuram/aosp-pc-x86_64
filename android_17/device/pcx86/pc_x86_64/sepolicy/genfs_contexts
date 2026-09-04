@@ -70,3 +70,44 @@ genfscon sysfs /devices/platform/ACPI0003:01/power_supply u:object_r:sysfs_batte
 # genfscon resolves by longest prefix, so this wins over the /devices/pci0000:00
 # rule above without disturbing it.
 genfscon sysfs /devices/pci0000:00/0000:00:02.0/drm/card0/card0-eDP-1/intel_backlight u:object_r:sysfs_leds:s0
+
+# The GPU itself, so app processes can enumerate DRM devices.
+#
+# libdrm walks /sys/dev/char/226:128 -> device -> device/drm to build the list
+# EGL then picks from, and every GL client does that in-process. Under the
+# sysfs_pci label above, an untrusted_app cannot read it, so the list comes back
+# empty and Mesa gives up before it ever opens the render node:
+#     I MESA    : Using fallback gralloc implementation
+#     W EGL-MAIN: Failed to open any DRM device
+#     W EGL-MAIN: egl: failed to create dri2 screen
+#     F HWUI    : Failed to create context, error = EGL_NOT_INITIALIZED
+# which aborts every app that draws.
+#
+# The fix is not to widen sysfs_pci -- five neverallows refuse that, as
+# private/pc_graphics.te records. sysfs_gpu is AOSP's own type for exactly this
+# subtree, and its policy already grants the read to every GPU client:
+#     private/gpu_sphal_domain.te:  r_dir_file(gpu_sphal_domain, sysfs_gpu)
+# so labelling the device correctly grants apps what they need without a single
+# new allow rule for them.
+#
+# Longest prefix still wins, so the intel_backlight rule below is unaffected and
+# the rest of /devices/pci0000:00 stays sysfs_pci.
+genfscon sysfs /devices/pci0000:00/0000:00:02.0 u:object_r:sysfs_gpu:s0
+
+# ...and the path libdrm reaches it through. Labelling the GPU alone was not
+# enough: xf86drm.c only ever looks at
+#
+#     /sys/dev/char/226:128
+#     /sys/dev/char/226:128/device
+#     /sys/dev/char/226:128/device/drm
+#
+# and /sys/dev/char is plain sysfs, which appdomain may not read. So the GPU
+# node came back sysfs_gpu while the route to it did not, enumeration still
+# returned nothing, and apps kept aborting on EGL_NOT_INITIALIZED.
+#
+# Narrower than it looks: what lives here is one symlink per char device named
+# <major>:<minor>. Each symlink's target keeps its own label, so an app can see
+# that 226:128 exists and follow it to the GPU -- already sysfs_gpu -- and gets
+# nowhere on anything else. /class/drm has the same shape.
+genfscon sysfs /dev/char u:object_r:sysfs_gpu:s0
+genfscon sysfs /class/drm u:object_r:sysfs_gpu:s0

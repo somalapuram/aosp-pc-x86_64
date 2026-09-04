@@ -36,3 +36,7 @@ allow shell sysfs_pci:dir r_dir_perms;
 # question; nothing here needs to open a controller or write to one.
 allow shell sysfs_udc:dir r_dir_perms;
 
+
+# The GPU node moved to sysfs_gpu; keep shell able to read it for debugging.
+allow shell sysfs_gpu:file r_file_perms;
+allow shell sysfs_gpu:dir r_dir_perms;
