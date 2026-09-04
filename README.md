@@ -15,18 +15,39 @@ Boots to Launcher on Intel Meteor Lake.
 | Display / KMS | ✅ real scanout via drm_hwcomposer, eDP-1 at 60 Hz |
 | GPU firmware | ✅ GuC / DMC / HuC / GSC linked into the image |
 | gralloc | ✅ Intel (i915 + xe) — ❌ AMD, blocked on Mesa |
-| Rendering | ⚠️ **software only** (SwiftShader + ANGLE). Slow. See below. |
+| Rendering | ✅ hardware **Mesa iris** on Intel, GLES 3.2 — ❌ AMD/NVIDIA fall back to SwiftShader |
 | QEMU display | ✅ boot animation and UI render (needs `DISPLAY_MODE=gtk` or `-vnc`) |
 | Audio | ✅ AIDL HAL from the `com.android.hardware.audio` APEX |
-| SELinux | ⚠️ permissive |
-| adb over TCP | ❌ refused, though `adbd` is listening |
+| SELinux | ✅ enforcing |
+| adb over TCP | ✅ works (wireless debugging; the port changes each time adbd restarts) |
 | Verified boot | ❌ AVB disabled; static partitions, no dynamic partitions |
 
-The largest remaining piece of work is **Mesa**. Nothing renders on the GPU
-yet: everything goes through SwiftShader on the CPU, which is why the UI is
-sluggish. Building `iris`/`anv` is what unlocks real performance, lets the
-`DRV_PC_FORCE_LINEAR` workaround be dropped, and is a prerequisite for AMD
-gralloc — `amdgpu.c` needs the Mesa DRI loader. See `doc/05-graphics.md` §4.
+**Mesa now renders on the GPU on Intel.** `./build.sh mesa` cross-builds
+`iris` and `virgl` into one driver, and `pc_select_egl.sh` picks between them
+from the DRM driver at boot, so the same image accelerates on a Meteor Lake
+laptop and in QEMU:
+
+```
+GLES: Intel, Mesa Intel(R) Graphics (MTL), OpenGL ES 3.2 Mesa 26.1.0-devel
+```
+
+Three things had to be true, and none of them is in `doc/05-graphics.md` yet:
+
+- `iris` **does** need LLVM in Mesa 26.1 — `with_gallium_iris` is in
+  `with_driver_using_cl`, which forces CLC on. `-Dmesa-clc=system` collapses
+  that to `with_gallium_rusticl` (off), so LLVM stays a build-host concern and
+  is never cross-compiled for Android.
+- expat is linked statically. Mesa builds its own subproject copy and points
+  `RUNPATH` at the build tree, so shipping AOSP's identically-named libexpat
+  does not satisfy it.
+- apps have to enumerate the GPU themselves. Every GL client calls
+  `drmGetDevices2()` in-process, which reads sysfs, and that needed three
+  sepolicy labels — see `sepolicy/genfs_contexts`.
+
+Still outstanding: **AMD** (`radeonsi` needs LLVM cross-built, and `amdgpu.c`
+gralloc needs the Mesa DRI loader) and **NVIDIA** (no minigbm backend for
+nouveau). Both keep ANGLE. Whether `DRV_PC_FORCE_LINEAR` can now be dropped is
+untested.
 
 AMD is supported *kernel-side* (amdgpu with Display Core is built in) but not
 in gralloc, so an AMD machine will not get a working display stack yet.
@@ -164,6 +185,7 @@ those are reported, not "fixed".
 ```sh
 ./build.sh deps      # host prerequisites
 ./build.sh kernel    # mainline kernel + config fragment
+./build.sh mesa      # cross-build iris+virgl -- REQUIRED before android
 ./build.sh android   # AOSP for pc_x86_64
 ./build.sh image     # assemble a GPT disk image
 ./build.sh run       # boot it in QEMU
@@ -173,6 +195,18 @@ those are reported, not "fixed".
 ```
 
 `./build.sh all` does kernel + android + image.
+
+`mesa` is not optional and not part of `all`. `device/pcx86/pc_x86_64/Android.bp`
+declares the Mesa libraries as `cc_prebuilt_library_shared`, and `mesa/` is
+gitignored -- the recipe is version-controlled, the ~30 MB of `.so` is not -- so
+without it Soong stops on missing srcs:
+
+```
+error: device/pcx86/pc_x86_64/Android.bp:67:1: module "libgallium_dri" ...
+       module source path ".../mesa/lib64/libgallium_dri.so" does not exist
+```
+
+It only has to be re-run when the driver set changes, not on every build.
 
 ### Viewing the UI over SSH
 
