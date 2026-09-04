@@ -132,6 +132,42 @@ CONFIG_FRAME_WARN=4096
 CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin"
 CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
 
+# --- GSC transport ---------------------------------------------------------
+#
+# mtl_gsc_1.bin above is only the blob. Talking to the GSC needs the MEI
+# transport as well, and without it i915 says so at every boot:
+#
+#     i915 0000:00:02.0: [drm] GT1: can't init GSC proxy due to missing mei
+#                        component
+#     i915 0000:00:02.0: [drm] *ERROR* GT1: GSC proxy handler failed to init
+#
+# INTEL_MEI and INTEL_MEI_ME were already set; the GSC-specific halves were
+# not, so the component i915 looks for never registered and the firmware this
+# fragment already ships went unused. With them:
+#
+#     mei_gsc_proxy ...: bound 0000:00:02.0 (ops i915_gsc_proxy_component_ops)
+#     GT1: Loaded GSC firmware i915/mtl_gsc_1.bin (cv1.0, r102.1.15.1926)
+#     GT1: HuC: authenticated for all workloads
+#
+# That last line is the real gain: HuC authentication goes through the GSC, and
+# it previously reached only "authenticated for clear media", so hardware media
+# acceleration was half-enabled.
+#
+# It does NOT change GPU clocks, which is what it was tried for. Measured on
+# SuperTuxKart/Candela City before and after, 60 samples each: peak 450 MHz,
+# mean ~405 MHz, 18% of the 2250 MHz ceiling, identical either way. The
+# apparent gap between punit_req_freq_mhz (2250) and rps_act_freq_mhz (400) is
+# not throttling -- GuC SLPC owns the frequency here ("GUC: SLPC enabled"), so
+# those sysfs values are the permitted ceiling rather than live demand. The GPU
+# sits at 400 MHz because that is all this workload asks of it.
+#
+# PXP is enabled alongside because MEI_PXP is the other consumer of the same
+# transport and costs nothing here.
+CONFIG_INTEL_MEI_GSC=y
+CONFIG_INTEL_MEI_GSC_PROXY=y
+CONFIG_INTEL_MEI_PXP=y
+CONFIG_DRM_I915_PXP=y
+
 
 # --- Camera: V4L2 + UVC ----------------------------------------------------
 # The external camera HAL enumerates /dev/video*, and without MEDIA_SUPPORT
