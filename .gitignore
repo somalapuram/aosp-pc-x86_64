@@ -50,3 +50,8 @@
 # Disk images and UEFI vars for the QEMU dev VM (see doc/02-host-setup.md)
 *.img
 OVMF_*.fd
+
+# Demo capture working material -- media stays out of git (see demo/README.md)
+demo-capture/
+*.mp4
+*.mkv

@@ -1,0 +1,16 @@
+2|Everything from here is a screen recording taken on that same machine.
+10|About tablet. The model is Android on P C x86 sixty four. That is our own device target, not a phone profile borrowed from somewhere else.
+38|Android version, Baklava. That is Android seventeen, from A O S P, on the stock release branch.
+66|And the kernel version. Seven point two, release candidate six, mainline Linux. Not a vendor board support package. The build number underneath is our own.
+100|The camera. A U V B webcam through the external camera H A L, with a live preview in colour.
+130|Photos taken and reviewed in the gallery. Under hardware rendering this used to abort, because a gralloc call succeeded and handed back a stub.
+160|F-Droid. There is no Play Store on this image, so this is how software gets installed. A real catalogue, fetched over wifi.
+195|A browser, installed from that catalogue, loading the desktop YouTube site.
+225|And playing it. Full screen, video decoded, audio out. That is the whole media pipeline working.
+260|Two applications side by side, each in its own window, both live.
+280|SuperTuxKart. A three D game, on the Intel G P U through Mesa iris. Measured at twenty nine frames per second against three on the software renderer.
+320|The desktop, with a widget. Right click, add widget, and an analog clock is running on the wallpaper.
+350|Network and internet. Wifi is connected. That is how the machine is reachable.
+390|Bluetooth, scanning. It has found a Samsung phone and a Samsung television, in the room. This is a real radio, not a stub.
+430|And back to the desktop. The widget can be resized or removed, the taskbar holds the running apps, and the whole thing behaves like a desktop because it is one.
+465|Android seventeen, on a laptop, from stock sources. Five patches against upstream.

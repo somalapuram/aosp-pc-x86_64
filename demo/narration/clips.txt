@@ -1,0 +1,6 @@
+02-versions|This is stock Android seventeen, from A O S P, running on an ordinary Intel laptop. Not an emulator. The kernel is mainline Linux seven point two, not a vendor B S P. The build number is our own device target, built from source.
+04-supertuxkart-iris|Hardware OpenGL E S three point two, through Mesa iris on the Intel integrated GPU. Measured at twenty nine point three frames per second, against three point two on the software renderer. That is nine times faster, and it is a floor, not a ceiling.
+05-camera|The camera. Preview and video recording, in colour. Under hardware rendering this used to crash, because a gralloc lookup succeeded and returned a stub that could not describe the buffer.
+01-fdroid|There is no Play Store here. This is plain A O S P, so F-Droid ships instead, and it works. A real catalogue, fetched over wifi.
+03-youtube-fennec|So the machine installs a browser for itself, from F-Droid. Then loads the desktop YouTube site, and plays it. Video decoded, audio out, in a window, with a taskbar.
+06-hardware-onetake|A start menu with live search. Desktop widgets. Bluetooth. Wifi. A trackpad with a real pointer. Two applications side by side. None of this is remarkable, and that is the point. Lighting the panel is the easy half of a port.

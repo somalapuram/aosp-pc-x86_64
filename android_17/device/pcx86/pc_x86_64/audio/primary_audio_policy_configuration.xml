@@ -127,6 +127,19 @@
              position, matching the value the HAL would otherwise have forced. -->
         <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source"
                     address="bottom_CARD_0_DEV_6">
+            <!-- The device port needs the profile too, not just the mix port.
+                 Module::setAudioPortConfigImpl() matches the requested config
+                 against THIS port's profiles, and an empty devicePort has none
+                 to match, so a 32-bit request is refused here even though the
+                 mix port accepted it:
+                   W AHAL_Module: requested format ...pcm: INT_32_BIT... is not
+                     found in the profiles of port 2
+                   W AHAL_Module: requested channel mask ...layoutMask: 3... is
+                     not supported for the format ... by the port 2
+                 Leaving it empty worked only while the request was 16-bit,
+                 which the converter synthesises as the default. -->
+            <profile name="" format="AUDIO_FORMAT_PCM_32_BIT"
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_IN_STEREO"/>
         </devicePort>
     </devicePorts>
     <routes>

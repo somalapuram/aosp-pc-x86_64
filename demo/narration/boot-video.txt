@@ -1,0 +1,6 @@
+2|This is an H P Zbook Firefly sixteen, a Core Ultra laptop with Intel Meteor Lake graphics. Ordinary hardware, bought in a shop.
+14|What is booting is not the operating system it shipped with. Android seventeen has been installed to the internal S S D, and the firmware is booting it directly.
+30|This is GRUB, our own boot menu, written to the internal disk. No emulator, no virtual machine, no U S B stick. The disk in the machine is the disk it boots from.
+46|The kernel is mainline Linux, seven point two. It brings up the panel, the Intel graphics, wifi, bluetooth, the trackpad and the sound hardware on the way past.
+64|And then Android. This is the desktop launcher, on a laptop, with a taskbar and real windows.
+80|Settings shows the internal drive and the battery. This machine is running Android as its only operating system.
