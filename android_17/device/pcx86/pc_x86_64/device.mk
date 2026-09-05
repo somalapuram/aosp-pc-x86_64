@@ -631,6 +631,30 @@ PRODUCT_COPY_FILES += \
 PRODUCT_VENDOR_PROPERTIES += \
     media.c2.hal.selection=aidl
 
+# Enable the Codec2 AIDL *input surface*, which is a second gate behind the one
+# above and defaults OFF. Without it there is no way to encode from a Surface,
+# so screen recording is impossible and the failure is a SIGSEGV rather than an
+# error:
+#
+#     screenrecord: signal 11 (SIGSEGV), fault addr 0x0 (read)
+#     #00 libsfplugin_ccodec.so (android::CCodec::createInputSurface()+190)
+#
+# The crash is upstream's, not ours. HalSelection.cpp:70
+# IsCodec2AidlInputSurfaceSelected() reads debug.stagefright.c2inputsurface and
+# returns false when it is <= 0, which is the default. CCodec.cpp
+# createCompatibleInputSurface() then returns nullptr -- Codec2 declined, and
+# the CreateOmxInputSurface() fallback has nothing to answer it on a device with
+# no OMX -- and createInputSurface() dereferences that nullptr on the very next
+# line to call getType(), with no check. Every other failure path in that
+# function reports onInputSurfaceCreationFailed(); this one just dies.
+#
+# Encoders were never the problem, which is worth recording because it is the
+# obvious wrong conclusion: `dumpsys media.player` lists 14 of them here,
+# c2.android.avc.encoder included. The component exists and is fine. What was
+# missing was permission to hand it a Surface to read from.
+PRODUCT_VENDOR_PROPERTIES += \
+    debug.stagefright.c2inputsurface=1
+
 # Force shared memory onto memfd. This kernel has no ashmem, and the fallback
 # that is supposed to cover that is gated shut on this device.
 #
