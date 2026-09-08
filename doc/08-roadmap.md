@@ -101,20 +101,124 @@ just not for the reason recorded here. See doc/05-graphics.md 4.
 
 ---
 
-## Phase 6 — AMD GPU (3–6 weeks)
+## Phase 6 — One image, every desktop GPU (2–4 weeks)
 
-- [ ] `-DDRV_AMDGPU` path validated against `libdrm_amdgpu`
-- [ ] amdgpu firmware loading confirmed (fails quietly — check `dmesg`)
-- [ ] **Mesa `radeonsi`** — requires LLVM. Expect this to be the hardest build
-      problem in the project.
-- [ ] Single image auto-selects Intel or AMD by PCI ID
+**Goal: the Ubuntu model.** A single image that boots on Intel, AMD or NVIDIA
+and picks the right driver by itself. No per-vendor build, no user choice.
 
-**Exit:** one image, accelerated on both vendors.
+That is already how Mesa works. One `libgallium_dri.so` can carry `iris`,
+`radeonsi`, `nouveau` and `virgl`, and the DRI loader selects between them at
+runtime from the kernel driver name. The work is not "make a driver"; it is
+"stop excluding three of them, and make gralloc allocate on all of them".
 
-**Risk:** **high**, concentrated entirely in the LLVM dependency — and unlike
-Intel, `-Dmesa-clc=system` does not rescue this one. `radeonsi` links LLVM into
-the driver itself, so it needs LLVM cross-compiled for Android, not merely
-present on the build host.
+### What this phase costs was badly overestimated
+
+The previous version of this phase said radeonsi "requires LLVM. Expect this to
+be the hardest build problem in the project", with risk **high**, "concentrated
+entirely in the LLVM dependency", needing LLVM cross-compiled for Android.
+
+**That is no longer true and the correction is one meson flag.** In this Mesa:
+
+- `meson.build:57` — `amd_with_llvm = with_llvm.allowed() and get_option('amd-use-llvm')`,
+  so the LLVM requirement is *conditional*, not absolute.
+- `radeonsi/si_pipe.c:663` — `#if !AMD_LLVM_AVAILABLE` sets `use_aco = 1` on
+  every shader stage. ACO is Mesa's own AMD compiler backend, the one RADV has
+  always used, and it needs no LLVM.
+
+So `-Damd-use-llvm=false` alongside the existing `-Dllvm=disabled` gives a
+working radeonsi. The hardest-problem-in-the-project framing was correct when
+written and is now simply stale.
+
+`nouveau` never needed LLVM at all — `nvc0` carries its own codegen.
+
+### The actual work
+
+- [x] Mesa builds `iris,nouveau,virgl` into one 33 MB `libgallium_dri.so`,
+      verified to carry `nouveau_drm`, `nv50` and `nvc0`
+- [x] libdrm cross-build enables `-Damdgpu=enabled -Dnouveau=enabled`
+- [x] minigbm compiles `-DDRV_AMDGPU` and links `libdrm_amdgpu`
+- [x] `CONFIG_DRM_NOUVEAU=y` with GSP defaults
+- [x] `pc_select_egl.sh` sends i915, xe, amdgpu and nouveau to Mesa
+- [ ] **radeonsi — blocked on libelf, not LLVM.** See below.
+- [ ] Boot on NVIDIA and confirm `GLES:` names nouveau
+- [ ] Boot on AMD once radeonsi builds
+
+### radeonsi: the blocker moved, it did not disappear
+
+`-Damd-use-llvm=false` works exactly as expected — meson gets past the LLVM
+requirement. It then stops on a different one:
+
+    ERROR: Problem encountered: Gallium driver radeonsi requires libelf
+
+`src/amd/common/ac_rtld.c` includes `<gelf.h>` and `<libelf.h>` unconditionally
+and is compiled into `ac_common` whatever the shader compiler is, so the libelf
+check at `meson.build:2037` fires for any radeonsi build. libelf is not in the
+NDK and Mesa has no `libelf.wrap` to fall back on.
+
+Worth noting *why this looks wrong*: `USE_LIBELF` appears in exactly two places
+in the tree, `ac_rgp.c` (Radeon GPU Profiler capture) and `radv_shader.c` (the
+Vulkan driver, which this build does not compile). It appears nowhere in
+radeonsi's own gallium code. The dependency is real at compile time and close to
+pointless at run time for an ACO, no-RADV build.
+
+Two ways out, in preference order:
+
+1. **Cross-build libelf.** `android_17/external/elfutils` is already in the tree.
+   It has no meson build and elfutils is unfriendly to Android libc, so this is
+   real work — but it is contained, and it leaves Mesa unpatched.
+2. **Guard `ac_rtld` behind `AMD_LLVM_AVAILABLE`** and make the libelf check
+   conditional on `amd_with_llvm`. Smaller, and plausibly upstreamable, since
+   ac_rtld exists to parse LLVM's ELF output and ACO does not produce any. It
+   does mean carrying a sixth patch.
+
+Do not reach for zink-over-RADV as an escape: RADV's own libelf use is optional
+(`#if defined(USE_LIBELF)`), so it would build, but it trades a known compile
+problem for an extra translation layer and a second driver stack to debug.
+- [ ] Boot on AMD, confirm `dumpsys SurfaceFlinger | grep GLES` names radeonsi
+- [ ] Boot on NVIDIA, same
+- [ ] Confirm gralloc allocates on both (SurfaceFlinger not crash-looping *is*
+      the test — it aborts within seconds if it cannot get a buffer)
+
+### What NVIDIA needs that AMD does not
+
+NVIDIA's blocker was never Mesa. `backend_nouveau` is already in minigbm's
+dispatch list, unconditionally, built from `INIT_DUMB_DRIVER(nouveau)` — linear
+dumb buffers, no tiling, but it allocates and scans out. Nothing had to be
+added for it.
+
+What it needs instead is **GSP firmware**. From Turing onward, display and
+memory init live behind the GPU System Processor, and nouveau drives them by
+handing it signed firmware. Without that the driver binds and then cannot light
+a display — which reads as a nouveau bug and is not one. The blobs are tens of
+MB per generation, so they go through the userspace firmware helper already
+enabled for wifi, not `CONFIG_EXTRA_FIRMWARE`.
+
+Expect NVIDIA to be **slower than AMD**, not equal. nouveau cannot reclock most
+cards, so the GPU may sit at boot clocks. That is a driver limitation, not a
+port bug, and it should be measured and stated rather than explained away.
+
+### Test hardware
+
+The development workstation has both vendors in one box:
+
+    01:00.0  NVIDIA GA104 [GeForce RTX 3070 Ti]
+    17:00.0  AMD Raphael integrated
+
+So both halves can be tested by booting the USB image on the workstation
+itself, with no extra hardware and no risk to the ZBook.
+
+**On a two-GPU machine, check which node is which.** `card0` is probe order,
+not preference. `pc_select_egl.sh` prefers integrated over discrete because on
+a hybrid laptop the panel hangs off the integrated part, but a desktop with a
+discrete card driving the monitor inverts that. If the display comes up blank
+with a driver bound, that ordering is the first thing to check.
+
+**Exit:** one image, hardware accelerated on Intel, AMD and NVIDIA, selecting
+itself.
+
+**Risk:** medium, and now concentrated in *runtime* rather than the build —
+gralloc format/modifier negotiation per vendor, and GSP firmware on NVIDIA.
+The build risk that dominated this phase for a year is gone.
 
 ---
 

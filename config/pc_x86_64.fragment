@@ -93,6 +93,22 @@ CONFIG_DRM_AMDGPU_CIK=y
 CONFIG_DRM_AMD_DC=y
 CONFIG_DRM_AMD_DC_FP=y
 
+# NVIDIA, via nouveau. Mesa's nouveau gallium driver drives Fermi and newer
+# through this; there is no proprietary blob anywhere in the picture.
+#
+# GSP is not optional on Turing and later. From Turing the display and memory
+# init paths moved behind the GPU System Processor, and nouveau drives them by
+# handing signed firmware to the GSP rather than touching the hardware itself.
+# Without NVIDIA_GSP_FIRMWARE the driver still binds on those cards and then
+# fails to bring up a display, which looks like a nouveau bug and is not one.
+#
+# The firmware is large (tens of MB per chip generation) and chip-specific, so
+# it is served by the userspace helper below rather than linked in with
+# CONFIG_EXTRA_FIRMWARE the way the four small i915 blobs are.
+CONFIG_DRM_NOUVEAU=y
+CONFIG_NOUVEAU_LEGACY_CTX_SUPPORT=n
+CONFIG_DRM_NOUVEAU_GSP_DEFAULT=y
+
 # AMD Display Core's DML (display mode library) has very large stack frames,
 # and clang generates larger ones than GCC. With the 2048 default and
 # CONFIG_WERROR=y the build fails outright:

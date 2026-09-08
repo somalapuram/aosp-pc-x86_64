@@ -29,7 +29,34 @@ DRM_SRC="$X86_ROOT/android_17/external/libdrm"
 WORK="$X86_ROOT/out/mesa"
 INSTALL="$X86_ROOT/android_17/device/pcx86/pc_x86_64/mesa"
 
-DRIVERS="${DRIVERS:-virgl}"
+# One image, every desktop GPU. Mesa's DRI loader picks the driver at runtime
+# from the kernel driver name, exactly the way it does on a Linux distro, so a
+# single libgallium_dri.so carrying all of them auto-detects the hardware and
+# no per-vendor image is needed.
+#
+#   iris      Intel Gen8+       i915 / xe
+#   radeonsi  AMD GCN+          amdgpu
+#   nouveau   NVIDIA Fermi+     nouveau
+#   virgl     virtio-gpu        QEMU
+#
+# radeonsi without LLVM is the part that changed. meson.build:57 makes the LLVM
+# requirement conditional on amd-use-llvm, and radeonsi/si_pipe.c:663 switches
+# every shader stage to ACO when AMD_LLVM_AVAILABLE is 0. ACO is Mesa's own AMD
+# compiler and needs no LLVM at all. doc/08-roadmap.md called this "the hardest
+# build problem in the project" on the assumption that LLVM had to be
+# cross-compiled for Android; that is no longer true, and -Damd-use-llvm=false
+# below is the whole of it.
+#
+# nouveau never needed LLVM -- nvc0 carries its own codegen under
+# src/gallium/drivers/nouveau/codegen.
+# radeonsi is NOT in this list yet, and the reason is not LLVM. See
+# doc/08-roadmap.md Phase 6: -Damd-use-llvm=false does work, but
+# src/amd/common/ac_rtld.c includes <gelf.h> and <libelf.h> unconditionally and
+# is compiled into ac_common whatever the compiler backend, so meson stops with
+#     ERROR: Problem encountered: Gallium driver radeonsi requires libelf
+# and libelf is not in the NDK. Enable it with DRIVERS=... once elfutils is
+# cross-built, or once ac_rtld is guarded behind AMD_LLVM_AVAILABLE.
+DRIVERS="${DRIVERS:-iris,nouveau,virgl}"
 ABIS="${ABIS:-x86_64 x86}"
 NDK_VERSION="${NDK_VERSION:-r27c}"
 JOBS="${JOBS:-$(nproc)}"
@@ -128,10 +155,17 @@ EOF
     # actually runs against.
     if [[ ! -f "$PFX/lib/pkgconfig/libdrm.pc" ]]; then
         info "[$ABI] building libdrm"
+        # amdgpu and nouveau are enabled because radeonsi and the nouveau
+        # gallium driver link them. mesa/meson.build:1841 does a hard
+        # dependency('libdrm_amdgpu') and fails configure outright without
+        # it -- "Dependency libdrm_amdgpu not found (tried pkg-config)",
+        # with nothing pointing at the libdrm built a few lines above as
+        # the thing that has to provide it. intel stays disabled: iris does
+        # not use libdrm_intel, it drives i915/xe through ioctls directly.
         rm -rf "$WORK/drm-$ABI"
         meson setup "$WORK/drm-$ABI" "$DRM_SRC" --cross-file "$CROSS" \
             --prefix "$PFX" --libdir lib -Dbuildtype=release \
-            -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled \
+            -Dintel=disabled -Dradeon=disabled -Damdgpu=enabled -Dnouveau=enabled \
             -Dvmwgfx=disabled -Dvc4=disabled -Dfreedreno=disabled -Detnaviv=disabled \
             -Dman-pages=disabled -Dtests=false -Dcairo-tests=disabled -Dvalgrind=disabled \
             >/dev/null
@@ -170,7 +204,8 @@ EOF
         --prefix "$PFX" --libdir lib -Dbuildtype=release \
         -Dplatforms=android -Dandroid-stub=true \
         -Dgallium-drivers="$DRIVERS" -Dvulkan-drivers= \
-        -Dllvm=disabled -Degl=enabled -Dgles1=disabled -Dgles2=enabled \
+        -Dllvm=disabled -Damd-use-llvm=false \
+        -Degl=enabled -Dgles1=disabled -Dgles2=enabled \
         -Dgbm=enabled -Dglx=disabled -Dandroid-libbacktrace=disabled \
         -Degl-lib-suffix=_mesa -Dgles-lib-suffix=_mesa \
         -Dmesa-clc=system -Dprecomp-compiler=system \

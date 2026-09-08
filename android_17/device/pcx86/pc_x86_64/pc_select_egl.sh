@@ -49,26 +49,31 @@ if [ -n "$(ls /sys/bus/virtio/drivers/virtio_gpu/ 2>/dev/null | grep '^virtio')"
     egl=mesa
     why="virtio_gpu"
 else
-    # Intel first: iris is in this Mesa, so these get real acceleration.
-    for d in i915 xe; do
+    # Every KMS driver this Mesa can drive. One libgallium_dri.so carries
+    # iris, radeonsi, nouveau and virgl, and the DRI loader picks between them
+    # at runtime from the kernel driver name -- the same mechanism a Linux
+    # distro uses, which is why one image covers all of them and there is no
+    # per-vendor build.
+    #
+    # Order matters only on a hybrid machine. Intel and AMD integrated parts
+    # are listed before nouveau because on a laptop with a discrete NVIDIA card
+    # the integrated GPU is the one wired to the panel; the discrete card is
+    # usually render-only and cannot scan out.
+    for d in i915 xe amdgpu nouveau; do
         if [ -n "$(ls /sys/bus/pci/drivers/$d/ 2>/dev/null | grep '^0000:')" ]; then
             egl=mesa
             why="$d"
             break
         fi
     done
-    # Anything else real falls back. radeonsi needs LLVM and nouveau has no
-    # minigbm backend, so this Mesa has nothing for them; ANGLE over SwiftShader
-    # is slow but correct, and it is what got this port to Launcher on Meteor
-    # Lake.
+    # radeon is the pre-GCN driver. Mesa's r300/r600 are not built here, and
+    # minigbm's backend_radeon is a dumb-buffer stub, so this is genuinely a
+    # fallback rather than an oversight.
     if [ -z "$why" ]; then
-        for d in amdgpu radeon nouveau; do
-            if [ -n "$(ls /sys/bus/pci/drivers/$d/ 2>/dev/null | grep '^0000:')" ]; then
-                egl=angle
-                why="$d"
-                break
-            fi
-        done
+        if [ -n "$(ls /sys/bus/pci/drivers/radeon/ 2>/dev/null | grep '^0000:')" ]; then
+            egl=angle
+            why="radeon"
+        fi
     fi
 fi
 
