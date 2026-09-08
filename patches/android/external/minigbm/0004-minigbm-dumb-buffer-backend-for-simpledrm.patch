@@ -1,0 +1,72 @@
+From 1b2d1bf39ec61213c5450c58c908fe6761d22a7d Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Tue, 8 Sep 2026 20:57:25 +0530
+Subject: [PATCH] minigbm: dumb-buffer backend for simpledrm
+
+simpledrm owns the UEFI framebuffer until a real GPU driver binds, and on any
+machine where that never happens it is the only card present. Nothing in
+drv_backend_list matched the name "simpledrm", so the allocator found no
+backend and gralloc failed at init:
+
+    android.hardware.graphics.allocator-service.minigbm: Failed to initialize driver.
+
+SurfaceFlinger then crash-looped instead of falling back to software
+rendering. On the AMD workstation that was 749 restarts in 62 minutes, one
+every five seconds, and no boot animation at all -- which read as a dead
+system rather than a slow one.
+
+simpledrm uses DRM_GEM_SHMEM_DRIVER_OPS (drm/sysfb/simpledrm.c:825), which
+supplies drm_gem_shmem_dumb_create, so dumb allocation is exactly what it
+supports. This is a fallback, not a destination: when amdgpu or i915 binds,
+simpledrm is evicted and its backend is never consulted. But it is the
+difference between a usable software-rendered UI and a crash loop on any
+machine whose GPU driver does not come up.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_013xcfd55Mu7LYThpBRCzRvD
+Change-Id: If4481f2561e93ba7541a7f95860847375f243fb8
+---
+ drv.c         | 3 ++-
+ dumb_driver.c | 8 ++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drv.c b/drv.c
+index 6799762..f4f7998 100644
+--- a/drv.c
++++ b/drv.c
+@@ -51,6 +51,7 @@ extern const struct backend backend_mediatek;
+ extern const struct backend backend_meson;
+ extern const struct backend backend_nouveau;
+ extern const struct backend backend_amdgpu_dumb;
++extern const struct backend backend_simpledrm;
+ extern const struct backend backend_komeda;
+ extern const struct backend backend_radeon;
+ extern const struct backend backend_rockchip;
+@@ -78,7 +79,7 @@ static const struct backend *drv_backend_list[] = {
+ #ifdef DRV_XE
+ 	&backend_xe,
+ #endif
+-	&backend_amdgpu_dumb,
++	&backend_amdgpu_dumb, &backend_simpledrm,
+ 	&backend_evdi,	    &backend_komeda,	&backend_marvell, &backend_mediatek,
+ 	&backend_meson,	    &backend_nouveau,	&backend_radeon,  &backend_rockchip,
+ 	&backend_sun4i_drm, &backend_synaptics, &backend_udl,	  &backend_virtgpu,
+diff --git a/dumb_driver.c b/dumb_driver.c
+index fe498fd..9fb9b9e 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -76,6 +76,14 @@ INIT_DUMB_DRIVER(nouveau)
+  * and Mesa 26.1 exports no such symbol from libgallium_dri.so. Without an
+  * entry here "amdgpu" matches no backend at all and gralloc fails at init. */
+ INIT_DUMB_DRIVER_WITH_NAME(amdgpu_dumb, "amdgpu")
++/* simpledrm owns the UEFI framebuffer until a real GPU driver binds, and on any
++ * machine where that never happens it is the ONLY card present. Without an entry
++ * here the allocator finds no backend, gralloc fails at init, and SurfaceFlinger
++ * crash-loops rather than falling back to software rendering -- observed on the
++ * AMD workstation as 749 restarts in 62 minutes and no boot animation. simpledrm
++ * uses DRM_GEM_SHMEM_DRIVER_OPS, which supplies drm_gem_shmem_dumb_create, so
++ * dumb allocation is exactly what it supports. */
++INIT_DUMB_DRIVER(simpledrm)
+ INIT_DUMB_DRIVER(radeon)
+ INIT_DUMB_DRIVER_WITH_NAME(sun4i_drm, "sun4i-drm")
+ INIT_DUMB_DRIVER(synaptics)
