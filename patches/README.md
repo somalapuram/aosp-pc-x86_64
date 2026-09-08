@@ -65,7 +65,7 @@ continuing would produce a subtly wrong build.
 | `linux/0001-drm-virtio-accept-ABGR8888-and-XBGR8888-framebuffers` | virtio-gpu advertises only the ARGB orderings, so a guest composing into `RGBA_8888` (`DRM_FORMAT_ABGR8888`) cannot scan out at all |
 | `android/external/minigbm/0001-…-pc-platform` | a linear-only `pc` gralloc platform for bare-metal x86, so buffers are not tiled for a GPU that is not doing the compositing |
 | `android/external/minigbm/0002-…-virgl-context` | create the virgl context before allocating buffers; on a context-init host the kernel makes no virgl context otherwise |
-| `android/external/minigbm/0003-…-AMD-backend` | `backend_amdgpu` is the only backend matching the `amdgpu` kernel driver name, so without `DRV_AMDGPU` gralloc exits at init on any Radeon. NVIDIA needs nothing: `backend_nouveau` is already in the dispatch list unconditionally |
+| `android/external/minigbm/0003-…-amdgpu-dumb` | Nothing in `drv_backend_list` matches the `amdgpu` kernel driver name (`INIT_DUMB_DRIVER(radeon)` covers pre-GCN only), so gralloc exits at init on any Radeon. Adds a dumb-buffer backend, the same one NVIDIA gets. `-DDRV_AMDGPU` is *not* the fix: `dri.c` is in no build file, and `amdgpu.c` resolves `__driDriverGetExtensions_radeonsi`, which Mesa 26.1 does not export |
 | `android/hardware/interfaces/0001-audio-don-t-discard-…` | the AIDL audio HAL overwrites the built-in mic's configured address, which is what selects the ALSA capture device; on a PC that pins capture to the analog jack instead of the internal DMIC array |
 
 Everything else this port needs lives in `android_17/device/pcx86/pc_x86_64/`,

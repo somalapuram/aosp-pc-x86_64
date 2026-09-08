@@ -1,0 +1,74 @@
+From fb2d9f82451bead60ce71cc8e1a57f3a0fa0b414 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Tue, 8 Sep 2026 16:32:42 +0530
+Subject: [PATCH] minigbm: dumb-buffer backend for amdgpu on the pc platform
+
+drv_backend_list matches on the kernel driver name, and nothing in it is
+called "amdgpu": INIT_DUMB_DRIVER(radeon) covers the pre-GCN driver only.
+So on any Radeon the gralloc allocator finds no backend and fails at init.
+
+The obvious fix -- -DDRV_AMDGPU, to compile the real tiling-aware
+backend_amdgpu in amdgpu.c -- does not work in this tree, twice over:
+
+  - dri.c, which amdgpu.c depends on, is in no build file at all, so the
+    link fails on dri_dlopen/dri_init/dri_query_modifiers/dri_close.
+  - adding dri.c would not help. amdgpu.c dlopens
+    DRI_DRIVER_DIR/radeonsi_dri.so and resolves
+    __driDriverGetExtensions_radeonsi; Mesa 26.1 exports no
+    __driDriverGetExtensions* symbol from libgallium_dri.so at all, and
+    DRI_DRIVER_DIR is never defined anywhere in the tree, so the path
+    stringizes to a literal. That backend is not buildable here.
+
+So give AMD what NVIDIA already gets: a dumb-buffer backend. Linear only,
+no tiling and no modifiers, which is a performance ceiling rather than a
+correctness problem, and the same ceiling backend_nouveau has. Named
+amdgpu_dumb because backend_amdgpu is taken by the unbuildable DRI one.
+
+Tiled allocation on AMD needs either a minigbm backend ported to Mesa's
+current API or a gbm-backed allocator. Separate work.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01T25srwc2c161osFbwoP4Di
+Change-Id: Ied8d1541efb1f559160618a0713bfd1290c823ba
+---
+ drv.c         | 2 ++
+ dumb_driver.c | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/drv.c b/drv.c
+index b74ed99..6799762 100644
+--- a/drv.c
++++ b/drv.c
+@@ -50,6 +50,7 @@ extern const struct backend backend_marvell;
+ extern const struct backend backend_mediatek;
+ extern const struct backend backend_meson;
+ extern const struct backend backend_nouveau;
++extern const struct backend backend_amdgpu_dumb;
+ extern const struct backend backend_komeda;
+ extern const struct backend backend_radeon;
+ extern const struct backend backend_rockchip;
+@@ -77,6 +78,7 @@ static const struct backend *drv_backend_list[] = {
+ #ifdef DRV_XE
+ 	&backend_xe,
+ #endif
++	&backend_amdgpu_dumb,
+ 	&backend_evdi,	    &backend_komeda,	&backend_marvell, &backend_mediatek,
+ 	&backend_meson,	    &backend_nouveau,	&backend_radeon,  &backend_rockchip,
+ 	&backend_sun4i_drm, &backend_synaptics, &backend_udl,	  &backend_virtgpu,
+diff --git a/dumb_driver.c b/dumb_driver.c
+index 98c9ba7..fe498fd 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -70,6 +70,12 @@ INIT_DUMB_DRIVER(komeda)
+ INIT_DUMB_DRIVER(marvell)
+ INIT_DUMB_DRIVER(meson)
+ INIT_DUMB_DRIVER(nouveau)
++/* amdgpu. Named explicitly because backend_amdgpu is already taken by the
++ * tiling-aware DRI backend in amdgpu.c, which this tree cannot build: it
++ * dlopens radeonsi_dri.so and resolves __driDriverGetExtensions_radeonsi,
++ * and Mesa 26.1 exports no such symbol from libgallium_dri.so. Without an
++ * entry here "amdgpu" matches no backend at all and gralloc fails at init. */
++INIT_DUMB_DRIVER_WITH_NAME(amdgpu_dumb, "amdgpu")
+ INIT_DUMB_DRIVER(radeon)
+ INIT_DUMB_DRIVER_WITH_NAME(sun4i_drm, "sun4i-drm")
+ INIT_DUMB_DRIVER(synaptics)

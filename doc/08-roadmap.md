@@ -137,7 +137,8 @@ written and is now simply stale.
       verified to carry all four driver descriptors, `aco_compiler`, `amdgpu`,
       `nouveau_drm`, `nv50` and `nvc0`, and zero LLVM
 - [x] libdrm cross-build enables `-Damdgpu=enabled -Dnouveau=enabled`
-- [x] minigbm compiles `-DDRV_AMDGPU` and links `libdrm_amdgpu`
+- [x] minigbm gets a dumb-buffer backend for `amdgpu` (`0003`). **Not**
+      `-DDRV_AMDGPU` — see below
 - [x] `CONFIG_DRM_NOUVEAU=y` with GSP defaults
 - [x] `pc_select_egl.sh` sends i915, xe, amdgpu and nouveau to Mesa
 - [x] **radeonsi builds**, on ACO, against a cross-built libelf. See below.
@@ -206,6 +207,34 @@ The hardware test is short: boot, then `dumpsys SurfaceFlinger | grep GLES`
 should name radeonsi on AMD and nouveau on NVIDIA. SurfaceFlinger not
 crash-looping *is* the gralloc test — it aborts within seconds if it cannot get
 a buffer.
+
+### gralloc on AMD: `-DDRV_AMDGPU` is a dead end in this tree
+
+The first attempt at AMD gralloc was `-DDRV_AMDGPU`, to compile the real
+tiling-aware `backend_amdgpu` in `amdgpu.c`. It does not build, and it would not
+work if it did:
+
+- `dri.c`, which `amdgpu.c` depends on, appears in **no build file** —
+  not `Android.bp`, not `Makefile`, not `meson.build`. The link fails on
+  `dri_dlopen`, `dri_init`, `dri_query_modifiers`, `dri_close`.
+- Adding `dri.c` only moves the problem. `amdgpu.c` does
+  `dlopen(DRI_DRIVER_DIR/radeonsi_dri.so)` and resolves
+  `__driDriverGetExtensions_radeonsi`. Our `libgallium_dri.so` exports **zero**
+  `__driDriverGetExtensions*` symbols — Mesa 26.1 dropped that loader ABI — and
+  `DRI_DRIVER_DIR` is never defined anywhere in the tree, so the path
+  stringizes to a literal. AOSP never intended this backend to be buildable.
+
+The dependency on a backend existing at all is real, though: `drv_backend_list`
+matches on the kernel driver name and nothing in it is called `amdgpu`.
+`INIT_DUMB_DRIVER(radeon)` is the *pre-GCN* driver. So without something,
+gralloc fails at init on any Radeon.
+
+Fix: `INIT_DUMB_DRIVER_WITH_NAME(amdgpu_dumb, "amdgpu")` — the same dumb-buffer
+treatment NVIDIA already has. **Linear only, no tiling, no modifiers.** That is
+a performance ceiling, not a correctness problem, and it is the identical
+ceiling `backend_nouveau` runs under. Tiled allocation on AMD needs either a
+minigbm backend ported to Mesa's current API or a gbm-backed allocator; both are
+separate work and neither blocks a first boot.
 
 ### What NVIDIA needs that AMD does not
 
