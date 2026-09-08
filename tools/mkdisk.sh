@@ -94,11 +94,12 @@ unsparse() {
 
 # ------------------------------------------------------------------ GRUB ----
 info "building standalone GRUB EFI image"
-# GRUB_DEFAULT=1 selects the verbose entry; KERNEL_EXTRA_ARGS appends to both.
+# GRUB_DEFAULT=1 selects the on-screen verbose entry, which is the one to use on
+# a machine you have not booted before; KERNEL_EXTRA_ARGS appends to every entry.
 #
 # GRUB_TIMEOUT is 5 rather than 3 because the menu is not decoration: the
 # install entry is the last one, and three seconds is not enough time to read
-# three entries and arrow down to it before the default boots.
+# the entries and arrow down to it before the default boots.
 cat > "$WORK/grub.cfg" <<EOF
 set timeout=${GRUB_TIMEOUT:-5}
 set default=${GRUB_DEFAULT:-0}
@@ -175,6 +176,31 @@ menuentry "Android pc_x86_64" {
 # policy change makes the default entry unbootable, pick this one at the GRUB
 # menu and the denials are logged instead of enforced, which is the only way to
 # see what the new policy actually broke.
+# The entry to reach for on a machine you have never booted before.
+#
+# Every other non-install entry sends the console to ttyS0 and nothing else, so
+# on a desktop or laptop with no serial header they are all silent: the screen
+# stays black whether the boot succeeded, panicked, or hung, and there is no way
+# to tell which. That cost a whole boot cycle on the AMD/NVIDIA workstation,
+# where the fix turned out to be hand-editing this line from the GRUB menu.
+#
+# console=tty0 is LAST on purpose, and it is the same load-bearing ordering the
+# installer entries document below: Linux points /dev/console at the last
+# console= on the command line, so putting tty0 there gives init's own stdout to
+# the screen as well as the kernel's printk.
+menuentry "Android pc_x86_64 (verbose, on screen)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           androidboot.logcat_serial=1 \\
+           androidboot.verifiedbootstate=orange \\
+           console=ttyS0,115200 console=tty0 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img
+}
+
 menuentry "Android pc_x86_64 (verbose, serial only)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
