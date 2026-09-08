@@ -26,6 +26,7 @@ set -euo pipefail
 X86_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MESA_SRC="$X86_ROOT/android_17/external/mesa3d"
 DRM_SRC="$X86_ROOT/android_17/external/libdrm"
+ELF_SRC="$X86_ROOT/android_17/external/elfutils"
 WORK="$X86_ROOT/out/mesa"
 INSTALL="$X86_ROOT/android_17/device/pcx86/pc_x86_64/mesa"
 
@@ -49,14 +50,7 @@ INSTALL="$X86_ROOT/android_17/device/pcx86/pc_x86_64/mesa"
 #
 # nouveau never needed LLVM -- nvc0 carries its own codegen under
 # src/gallium/drivers/nouveau/codegen.
-# radeonsi is NOT in this list yet, and the reason is not LLVM. See
-# doc/08-roadmap.md Phase 6: -Damd-use-llvm=false does work, but
-# src/amd/common/ac_rtld.c includes <gelf.h> and <libelf.h> unconditionally and
-# is compiled into ac_common whatever the compiler backend, so meson stops with
-#     ERROR: Problem encountered: Gallium driver radeonsi requires libelf
-# and libelf is not in the NDK. Enable it with DRIVERS=... once elfutils is
-# cross-built, or once ac_rtld is guarded behind AMD_LLVM_AVAILABLE.
-DRIVERS="${DRIVERS:-iris,nouveau,virgl}"
+DRIVERS="${DRIVERS:-iris,radeonsi,nouveau,virgl}"
 ABIS="${ABIS:-x86_64 x86}"
 NDK_VERSION="${NDK_VERSION:-r27c}"
 JOBS="${JOBS:-$(nproc)}"
@@ -170,6 +164,82 @@ EOF
             -Dman-pages=disabled -Dtests=false -Dcairo-tests=disabled -Dvalgrind=disabled \
             >/dev/null
         ninja -C "$WORK/drm-$ABI" -j"$JOBS" install >/dev/null
+    fi
+
+    # libelf, for radeonsi.
+    #
+    # Mesa stops configure with "Gallium driver radeonsi requires libelf", and
+    # that check (meson.build:2037) is stale -- it predates ACO and demands
+    # libelf whatever the shader compiler is. The build system already knows
+    # better: src/amd/common/meson.build:206 compiles ac_rtld.c only when
+    # dep_elf is found, and si_shader_llvm.c is gated on amd_with_llvm. But
+    # si_shader_binary.c and si_debug_gfx_compute.c call ac_rtld unguarded, so
+    # deleting the error just trades a configure failure for a link failure.
+    # Supplying libelf is the smaller, patch-free answer.
+    #
+    # elfutils is already in the tree and already builds for Android:
+    # external/elfutils/Android.bp marks libelf vendor_available and ships a
+    # ready-made config.h, so these sources are known good against bionic.
+    # No autotools or meson run here -- compile the file list that Android.bp
+    # names and hand-write the .pc meson looks for.
+    if [[ ! -f "$PFX/lib/pkgconfig/libelf.pc" ]]; then
+        info "[$ABI] building libelf (radeonsi needs it)"
+        rm -rf "$WORK/elf-$ABI"; mkdir -p "$WORK/elf-$ABI"
+        local ECC="$TOOLCHAIN/bin/$TRIPLE$API-clang"
+        # These four flags are not optional and are not guesswork: they are what
+        # external/elfutils/Android.bp's elfutils_defaults + the android: target
+        # block pass. bionic has no libintl.h and no error(), so the tree ships
+        # bionic-fixup/ with stubs for both, force-included through AndroidFixup.h.
+        # Drop either and every single file fails on <libintl.h>.
+        # elf_compress.c is not optional -- elf_strptr() calls into it, and
+        # ac_rtld.c calls elf_strptr() -- but elfutils' config.h turns on
+        # USE_ZSTD, and there is no zstd in the NDK sysroot. Rather than
+        # cross-build all of external/zstd for a path that cannot run (AMD
+        # shader ELFs are never compressed), shadow config.h with a two-line
+        # shim that chains to the real one and switches zstd back off. zlib is
+        # in the sysroot, so USE_ZLIB stays as it is.
+        cat > "$WORK/elf-$ABI/config.h" <<'SHIM'
+#include_next <config.h>
+#undef USE_ZSTD
+#undef USE_ZSTD_COMPRESS
+SHIM
+        local ECFLAGS=(-DHAVE_CONFIG_H -D_GNU_SOURCE -DNMNES=1000 -D_FILE_OFFSET_BITS=64
+                       -std=gnu99 -O2 -fPIC -Wno-everything
+                       -include AndroidFixup.h
+                       -I"$WORK/elf-$ABI"
+                       -I"$ELF_SRC" -I"$ELF_SRC/include" -I"$ELF_SRC/lib"
+                       -I"$ELF_SRC/libelf" -I"$ELF_SRC/bionic-fixup")
+        local c b
+        for c in "$ELF_SRC"/libelf/*.c "$ELF_SRC"/lib/*.c; do
+            b=$(basename "${c%.c}")
+            # lib/Android.bp excludes these from libeu: color.c and printversion.c
+            # want argp, dynamicsizehash*.c are templates included by other files
+            # rather than compiled, and crc32.c collides with libz.
+            case "$b" in color|printversion|crc32|dynamicsizehash*) continue ;; esac
+            "$ECC" "${ECFLAGS[@]}" -c "$c" -o "$WORK/elf-$ABI/$b.o" \
+                || die "libelf: $c failed to compile"
+        done
+        local nobj
+        nobj=$(ls "$WORK/elf-$ABI"/*.o 2>/dev/null | wc -l)
+        [[ "$nobj" -gt 0 ]] || die "libelf: nothing compiled from $ELF_SRC"
+        mkdir -p "$PFX/lib/pkgconfig" "$PFX/include"
+        "$TOOLCHAIN/bin/llvm-ar" rcs "$PFX/lib/libelf.a" "$WORK/elf-$ABI"/*.o
+        # gelf.h pulls in libelf.h and elf.h, and it must be elfutils' own elf.h:
+        # the NDK sysroot one is missing the AMD relocation and note constants
+        # ac_rtld.c reads. Same set Android.bp exports (export_include_dirs: libelf).
+        cp "$ELF_SRC"/libelf/{libelf.h,gelf.h,elf.h,nlist.h} "$PFX/include/"
+        cat > "$PFX/lib/pkgconfig/libelf.pc" <<PC
+prefix=$PFX
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
+
+Name: libelf
+Description: elfutils libelf, cross-built for Android
+Version: 0.191
+Libs: -L\${libdir} -lelf -lz
+Cflags: -I\${includedir}
+PC
+        ok "libelf: $nobj objects, $(du -h "$PFX/lib/libelf.a" | cut -f1)"
     fi
 
     # Always configure from scratch rather than 'meson configure' on an existing

@@ -133,17 +133,18 @@ written and is now simply stale.
 
 ### The actual work
 
-- [x] Mesa builds `iris,nouveau,virgl` into one 33 MB `libgallium_dri.so`,
-      verified to carry `nouveau_drm`, `nv50` and `nvc0`
+- [x] Mesa builds `iris,radeonsi,nouveau,virgl` into one 41 MB `libgallium_dri.so`,
+      verified to carry all four driver descriptors, `aco_compiler`, `amdgpu`,
+      `nouveau_drm`, `nv50` and `nvc0`, and zero LLVM
 - [x] libdrm cross-build enables `-Damdgpu=enabled -Dnouveau=enabled`
 - [x] minigbm compiles `-DDRV_AMDGPU` and links `libdrm_amdgpu`
 - [x] `CONFIG_DRM_NOUVEAU=y` with GSP defaults
 - [x] `pc_select_egl.sh` sends i915, xe, amdgpu and nouveau to Mesa
-- [ ] **radeonsi — blocked on libelf, not LLVM.** See below.
+- [x] **radeonsi builds**, on ACO, against a cross-built libelf. See below.
+- [ ] Boot on AMD and confirm `GLES:` names radeonsi
 - [ ] Boot on NVIDIA and confirm `GLES:` names nouveau
-- [ ] Boot on AMD once radeonsi builds
 
-### radeonsi: the blocker moved, it did not disappear
+### radeonsi: the second blocker, and how it was cleared
 
 `-Damd-use-llvm=false` works exactly as expected — meson gets past the LLVM
 requirement. It then stops on a different one:
@@ -158,26 +159,53 @@ NDK and Mesa has no `libelf.wrap` to fall back on.
 Worth noting *why this looks wrong*: `USE_LIBELF` appears in exactly two places
 in the tree, `ac_rgp.c` (Radeon GPU Profiler capture) and `radv_shader.c` (the
 Vulkan driver, which this build does not compile). It appears nowhere in
-radeonsi's own gallium code. The dependency is real at compile time and close to
-pointless at run time for an ACO, no-RADV build.
+radeonsi's own gallium code.
 
-Two ways out, in preference order:
+It is nevertheless real, and deleting the meson check would only have traded a
+configure failure for a link failure: `src/amd/common/meson.build:206` does gate
+`ac_rtld.c` behind `dep_elf.found()`, but `si_shader_binary.c` and
+`si_debug_gfx_compute.c` call `ac_rtld_*` **unguarded**. So the answer was to
+supply libelf, not to remove the requirement — and it leaves Mesa unpatched.
 
-1. **Cross-build libelf.** `android_17/external/elfutils` is already in the tree.
-   It has no meson build and elfutils is unfriendly to Android libc, so this is
-   real work — but it is contained, and it leaves Mesa unpatched.
-2. **Guard `ac_rtld` behind `AMD_LLVM_AVAILABLE`** and make the libelf check
-   conditional on `amd_with_llvm`. Smaller, and plausibly upstreamable, since
-   ac_rtld exists to parse LLVM's ELF output and ACO does not produce any. It
-   does mean carrying a sixth patch.
+**`tools/build-mesa.sh` now cross-builds it** from `android_17/external/elfutils`,
+which is already in the tree and already marked `vendor_available`. Three things
+made it work, none of them obvious from the source alone:
+
+- **`-include AndroidFixup.h` and `-I bionic-fixup`.** bionic has no
+  `libintl.h` and no `error()`. elfutils ships stubs for both in
+  `bionic-fixup/`, and `Android.bp`'s `android:` target block force-includes
+  them. Without this, *every* file fails on `#include <libintl.h>` — which is
+  what the first attempt did, silently, because the compile loop had
+  `2>/dev/null || true` on it. That swallow is gone; a failed file is now fatal.
+- **`-DHAVE_CONFIG_H -D_GNU_SOURCE -DNMNES=1000 -D_FILE_OFFSET_BITS=64
+  -std=gnu99`**, copied from `elfutils_defaults`. `external/elfutils/config.h`
+  is pre-made for Android, so no autoconf run is needed.
+- **A two-line `config.h` shim that turns `USE_ZSTD` back off.** `elf_strptr()`
+  — which `ac_rtld.c` calls — pulls in `elf_compress.c`, and the tree's
+  `config.h` sets `USE_ZSTD 1`. There is no zstd in the NDK sysroot. Rather than
+  cross-build all 26 files of `external/zstd` for a path that cannot execute
+  (AMD shader ELFs are never compressed), the build drops a `config.h` earlier
+  on the include path that does `#include_next <config.h>` and then `#undef
+  USE_ZSTD`. zlib *is* in the sysroot, so `USE_ZLIB` stays on and the `.pc`
+  carries `-lz`.
+
+Result: 124 objects, a 292 KB `libelf.a`, a generated `libelf.pc`, and a
+`libgallium_dri.so` that links `ac_rtld_open`/`ac_rtld_upload`/`elf_strptr`
+with no undefined symbols. `strings` finds `aco_compiler`, `ACO_DEBUG`,
+`radeonsi_dri` and the `GFX10`–`GFX125` family names, and zero `LLVM ERROR`.
 
 Do not reach for zink-over-RADV as an escape: RADV's own libelf use is optional
 (`#if defined(USE_LIBELF)`), so it would build, but it trades a known compile
 problem for an extra translation layer and a second driver stack to debug.
-- [ ] Boot on AMD, confirm `dumpsys SurfaceFlinger | grep GLES` names radeonsi
-- [ ] Boot on NVIDIA, same
-- [ ] Confirm gralloc allocates on both (SurfaceFlinger not crash-looping *is*
-      the test — it aborts within seconds if it cannot get a buffer)
+
+**Still untested on hardware.** Everything above is build-level. The workstation
+has an AMD Raphael iGPU at `17:00.0` and an NVIDIA GA104 at `01:00.0`, so both
+paths can be tested on it.
+
+The hardware test is short: boot, then `dumpsys SurfaceFlinger | grep GLES`
+should name radeonsi on AMD and nouveau on NVIDIA. SurfaceFlinger not
+crash-looping *is* the gralloc test — it aborts within seconds if it cannot get
+a buffer.
 
 ### What NVIDIA needs that AMD does not
 
@@ -258,7 +286,7 @@ usual sinkholes.
 | Risk | Severity | Mitigation |
 |---|---|---|
 | **Mesa native drivers not buildable in AOSP** | 🔴 Critical | SwiftShader keeps it off the critical path (Phase 4 before 5). Option B (out-of-tree) as the real answer. |
-| **LLVM dependency blocks `radeonsi`** | 🔴 High | Ship Intel-only first — done. `iris` does need LLVM in Mesa 26.1, but only on the build host (`-Dmesa-clc=system`); `radeonsi` needs it on the target, which is still unsolved. |
+| **LLVM dependency blocks `radeonsi`** | ⚪ Closed | Wrong premise. `-Damd-use-llvm=false` moves radeonsi to ACO; the real dependency was libelf, now cross-built from `external/elfutils`. `iris` still needs LLVM, but only on the build host (`-Dmesa-clc=system`). |
 | **meson2hermetic fork unmaintained/incomplete** | 🟠 Medium | Hard 1-week timebox, then switch to Option B. |
 | **6.18 fragments vs. 7.2 kernel drift** | 🟠 Medium | Audit dropped symbols explicitly. ACK `android16-6.18` as fallback. |
 | **SELinux scope discovered late** | 🟠 Medium | Flip to enforcing early on a throwaway branch to size it. |
