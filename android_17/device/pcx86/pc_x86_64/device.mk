@@ -58,10 +58,27 @@ PRODUCT_COPY_FILES += \
 #
 # Generated, not committed: mesa/ is gitignored. Run ./build.sh mesa first or
 # Soong fails on missing srcs.
+#
+# libdrm_amdgpu is NOT decoration and it is not optional. It is a direct NEEDED
+# of libgallium_dri.so -- enabling radeonsi turned on -Damdgpu=enabled in the
+# libdrm cross-build, which made Mesa link it -- and AOSP ships libdrm to
+# /vendor but none of the per-vendor helpers unless something asks. Leaving it
+# out is silent and total: dlopen of libgallium_dri.so fails, libEGL_mesa.so
+# fails with it, Android's EGL loader reports no implementation at all, and
+# zygote aborts on every start --
+#
+#     Abort message: 'couldn't find an OpenGL ES implementation, make sure one
+#     of persist.graphics.egl, ro.hardware.egl and ro.board.platform is set'
+#
+# -- a boot loop with no GUI that names neither library and reads as a GPU
+# driver problem. AOSP's module is used rather than a prebuilt copy: it builds
+# from the same external/libdrm source the Mesa cross-build used, and shipping
+# a second copy collides on the install path.
 PRODUCT_PACKAGES += \
     libEGL_mesa \
     libGLESv2_mesa \
-    libgallium_dri
+    libgallium_dri \
+    libdrm_amdgpu
 
 # --- Graphics --------------------------------------------------------------
 # drm_hwcomposer composites over a real DRM/KMS node, which is what both

@@ -73,6 +73,7 @@ cc_prebuilt_library_shared {
     },
 }
 
+
 // wpa_supplicant's config template, installed to
 // /vendor/etc/wifi/wpa_supplicant.conf.
 //

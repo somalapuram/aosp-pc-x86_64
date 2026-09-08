@@ -310,6 +310,7 @@ PC
     # dlopened out of a dri/ directory, so it belongs on the plain library path.
     found=$(find "$WORK/build-$ABI" -path '*android_stub*' -prune -o -name libgallium_dri.so -print | head -1)
     cp "$found" "$INSTALL/$LIBDIR/libgallium_dri.so"
+
 }
 
 # Stage into a temporary directory and swap at the end. An earlier version
