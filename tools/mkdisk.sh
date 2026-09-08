@@ -231,7 +231,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
 #
 # CONSOLE ORDER IS LOAD-BEARING, and it is the opposite of the other two
 # entries. Linux points /dev/console at the LAST console= on the command line,
-# and init gives a service marked `console` that device for its stdin and
+# and init gives a service marked 'console' that device for its stdin and
 # stdout. With tty0 first and ttyS0 last -- the order every other entry uses,
 # because for them serial is the debugging channel -- the installer's banner and
 # its "Type ERASE to continue" prompt go out the serial port, and a user looking
