@@ -73,6 +73,34 @@ CONFIG_DM_SNAPSHOT=y
 # Missing this presents as an fstab bug. See doc/06-boot-and-storage.md.
 CONFIG_EFI_PARTITION=y
 
+# --- A display before any GPU driver binds ---------------------------------
+#
+# Without this there is NO console on real hardware until amdgpu/i915/nouveau
+# successfully probes. CONFIG_FB is off, there is no FB_EFI or FB_VESA, and the
+# machine boots via BOOTX64.EFI so UEFI has already left VGA text mode behind --
+# CONFIG_VGA_CONSOLE is therefore worth nothing. fbcon only appears once a real
+# DRM driver comes up and DRM_FBDEV_EMULATION creates it.
+#
+# That is fine right up until the GPU driver is what hangs, and then it is the
+# difference between a diagnosis and a black screen. On the AMD/NVIDIA
+# workstation the machine locked up hard during early boot -- NumLock dead, USB
+# power gone -- and console=tty0 with loglevel=8 produced not one character,
+# because tty0 did not exist yet.
+#
+# SYSFB_SIMPLEFB hands the UEFI GOP framebuffer the kernel inherited to
+# DRM_SIMPLEDRM, which registers a real DRM device immediately, at which point
+# fbcon exists and the screen works. The GPU driver takes over later:
+# drm_aperture_remove_conflicting_framebuffers() evicts simpledrm when amdgpu
+# binds, so there is no conflict and nothing to unload by hand. This is exactly
+# how a Linux distro shows you a boot log before it has a GPU driver.
+CONFIG_SYSFB=y
+CONFIG_SYSFB_SIMPLEFB=y
+CONFIG_DRM_SIMPLEDRM=y
+# Writes to the UEFI framebuffer from the very first instants of kernel
+# execution, before even simpledrm. `earlycon=efifb keep_bootcon` on the command
+# line is what makes an early hang visible at all.
+CONFIG_EFI_EARLYCON=y
+
 # --- Graphics: one kernel, both vendors ------------------------------------
 # Runtime PCI-ID matching selects the driver. See doc/05-graphics.md section 2.
 CONFIG_DRM=y

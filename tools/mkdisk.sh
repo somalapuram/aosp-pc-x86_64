@@ -188,6 +188,17 @@ menuentry "Android pc_x86_64" {
 # installer entries document below: Linux points /dev/console at the last
 # console= on the command line, so putting tty0 there gives init's own stdout to
 # the screen as well as the kernel's printk.
+#
+# earlycon=efifb is not decoration and it is not redundant with console=tty0.
+# tty0 does not exist until a DRM driver binds and DRM_FBDEV_EMULATION builds
+# fbcon on top of it, so if the kernel dies before or during GPU probe -- which
+# is precisely when you most need to see it -- console=tty0 prints nothing at
+# all. earlycon writes to the UEFI framebuffer immediately, and keep_bootcon
+# stops it being torn down the moment the real console registers, so the two
+# overlap rather than leaving a blind window between them.
+#
+# Append initcall_debug by hand when hunting a hang: the last line printed then
+# names the driver that never returned.
 menuentry "Android pc_x86_64 (verbose, on screen)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
@@ -197,6 +208,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange \\
+           earlycon=efifb keep_bootcon \\
            console=ttyS0,115200 console=tty0 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img
 }
