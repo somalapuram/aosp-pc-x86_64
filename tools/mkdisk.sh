@@ -93,6 +93,29 @@ unsparse() {
 }
 
 # ------------------------------------------------------------------ GRUB ----
+# TEMPORARY, until NVIDIA firmware ships. Delete this and the ${NOUVEAU_OFF}
+# references below in one go when it does.
+#
+# nouveau declares 65 nvidia/ga10x/* firmware files and this image ships none of
+# them, because GA10x GSP alone is 26-52 MB compressed and will not fit in a
+# kernel image. That would be harmless if a miss failed fast. It does not:
+# CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y sets
+# fw_fallback_config.force_sysfs_fallback (fallback_table.c:21), so EVERY miss
+# takes the sysfs path and blocks for .loading_timeout = 60 seconds
+# (fallback_table.c:22) waiting for a userspace helper that does not exist yet.
+# nouveau is built in and drivers/Makefile puts gpu/ (line 68) before usb/
+# (line 107), so this happens before USB is even initialised.
+#
+# On the AMD/NVIDIA workstation that presented as a dead machine: black screen,
+# NumLock unresponsive, mouse light off. It was not hung, it was stalling, and
+# three boots were abandoned during it. Do not re-derive this.
+#
+# nouveau.modeset=0 is checked at nouveau_drm.c:1495, before the driver is
+# registered at all, so no probe happens and no firmware is ever requested.
+# It costs nothing here: without GSP firmware nouveau cannot drive an Ampere
+# card anyway. modprobe.blacklist would NOT work -- nouveau is built in.
+NOUVEAU_OFF="nouveau.modeset=0"
+
 info "building standalone GRUB EFI image"
 # GRUB_DEFAULT=1 selects the on-screen verbose entry, which is the one to use on
 # a machine you have not booted before; KERNEL_EXTRA_ARGS appends to every entry.
@@ -168,6 +191,7 @@ menuentry "Android pc_x86_64" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_OFF} \\
            console=ttyS0,115200 loglevel=4
     initrd /ramdisk.img
 }
@@ -208,6 +232,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange \\
+           ${NOUVEAU_OFF} \\
            earlycon=efifb keep_bootcon \\
            console=ttyS0,115200 console=tty0 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img
@@ -219,6 +244,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
            sysctl.kernel.dmesg_restrict=0 \\
+           ${NOUVEAU_OFF} \\
            console=ttyS0,115200 \\
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
@@ -284,6 +310,7 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            androidboot.pc_install=1 \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_OFF} \\
            console=ttyS0,115200 console=tty0 loglevel=1
     initrd /ramdisk.img
 }
@@ -315,6 +342,7 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
            androidboot.pc_install_confirm=ERASE \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_OFF} \\
            console=ttyS0,115200 console=tty0 loglevel=1
     initrd /ramdisk.img
 }
