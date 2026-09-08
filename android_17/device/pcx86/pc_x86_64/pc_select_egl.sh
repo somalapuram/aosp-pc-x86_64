@@ -41,7 +41,7 @@ TAG=pc-select-egl
 # virtio_gpu. That silently selected the fallback and left the VM running
 # SwiftShader while reporting success. The bus binding is unambiguous -- a
 # device only appears under drivers/<name>/ when that driver has claimed it.
-egl=angle
+egl=mesa
 why=""
 
 if [ -n "$(ls /sys/bus/virtio/drivers/virtio_gpu/ 2>/dev/null | grep '^virtio')" ]; then
@@ -71,14 +71,32 @@ else
     # fallback rather than an oversight.
     if [ -z "$why" ]; then
         if [ -n "$(ls /sys/bus/pci/drivers/radeon/ 2>/dev/null | grep '^0000:')" ]; then
-            egl=angle
+            egl=mesa
             why="radeon"
         fi
     fi
 fi
 
-# No DRM device recognised: ANGLE needs no kernel driver at all, so a slow UI
-# beats a boot loop.
+# No DRM device recognised. This used to select ANGLE, on the reasoning that it
+# needs no kernel driver at all -- but ANGLE is NOT INSTALLED. The only EGL
+# implementation on these partitions is Mesa:
+#
+#     /vendor/lib64/egl/libEGL_mesa.so      /vendor/lib/egl/libEGL_mesa.so
+#     /vendor/lib64/hw/vulkan.pastel.so     (SwiftShader Vulkan, not GL)
+#
+# so selecting "angle" pointed the loader at a library that does not exist, and
+# zygote aborted on every start:
+#
+#     Abort message: 'couldn't find an OpenGL ES implementation, make sure one of
+#     persist.graphics.egl, ro.hardware.egl and ro.board.platform is set'
+#     #04 libEGL.so android::Loader::open   #08 ZygoteInit.preload
+#
+# That is a crash loop with no GUI whatsoever, once every 15 seconds, and it is
+# what the AMD workstation did when amdgpu failed to bind. Mesa is the only
+# answer that can ever succeed here, and it now carries softpipe, so it produces
+# a context even when the only DRM device is simpledrm on the UEFI framebuffer.
+# Slow, but a usable desktop rather than a boot loop.
+
 [ -z "$why" ] && why="none"
 
 # Report the finding; init.pc_x86_64.rc turns it into ro.hardware.egl.

@@ -50,7 +50,17 @@ INSTALL="$X86_ROOT/android_17/device/pcx86/pc_x86_64/mesa"
 #
 # nouveau never needed LLVM -- nvc0 carries its own codegen under
 # src/gallium/drivers/nouveau/codegen.
-DRIVERS="${DRIVERS:-iris,radeonsi,nouveau,virgl}"
+# softpipe is the safety net, and it is not optional on a machine you have not
+# booted before. mesa is the ONLY EGL implementation this image installs -- there
+# is no libEGL_angle.so and no SwiftShader GL anywhere on the partitions -- so if
+# Mesa cannot produce a context, zygote aborts with "couldn't find an OpenGL ES
+# implementation" and the device crash-loops with no GUI at all. That is exactly
+# what the AMD workstation did when amdgpu failed to bind and simpledrm was the
+# only DRM card present: no gallium driver matched, EGL failed, zygote died every
+# 15 seconds. softpipe matches anything, needs no LLVM (llvmpipe would, and LLVM
+# is disabled for the target), and is slow -- but slow is a usable desktop and a
+# crash loop is not.
+DRIVERS="${DRIVERS:-iris,radeonsi,nouveau,virgl,softpipe}"
 ABIS="${ABIS:-x86_64 x86}"
 NDK_VERSION="${NDK_VERSION:-r27c}"
 JOBS="${JOBS:-$(nproc)}"
