@@ -88,6 +88,30 @@ on post-fs-data
     # shell_data_file, and the capture runs in vendor_shell because shell -- an
     # appdomain -- is neverallowed syslog_read.
     mkdir /data/vendor/pc 0770 root system
+
+    # Start the log capture HERE, from post-fs-data, and not only from the
+    # vendor.pc.boot=1 trigger further down.
+    #
+    # That trigger does not reliably fire. Five boots in a row on the AMD
+    # workstation produced an empty /data/vendor/pc and an empty
+    # /data/local/tmp, while /data itself was fully populated -- so
+    # post-fs-data ran (these very mkdirs exist on the disk afterwards) and the
+    # boot trigger did not. This rc already documents the same thing happening
+    # to an apexd.status=activated trigger, so it is a pattern here, not a
+    # one-off.
+    #
+    # The cost of that is not a missing convenience. pc_kmsg_vendor.sh is
+    # `exec cat /dev/kmsg`, the only way the kernel log reaches disk on a
+    # machine with no serial port, and without it a failed boot leaves NO
+    # evidence at all -- five boot cycles were spent learning nothing about why
+    # amdgpu will not bind. post-fs-data is the earliest trigger that is proven
+    # to fire and has /data writable.
+    #
+    # Starting an already-running service is a no-op, so the later trigger is
+    # left in place as a second chance rather than removed.
+    start pc-kmsg-vendor
+    start pc-logcat-file
+    start pc-kmsg-file
     mkdir /data/vendor/hardware 0771 root root
 
     # wpa_supplicant's control-socket directory. Its init service runs with
