@@ -145,7 +145,24 @@ CONFIG_FRAME_WARN=4096
 # (the distro ships them zstd-compressed; CONFIG_EXTRA_FIRMWARE needs plain
 # files). Add entries for other hardware -- adl_/tgl_ for older Intel,
 # amdgpu/* for AMD -- and keep the list narrow, since each blob is linked in.
-CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin"
+#
+# AMD Raphael (the Ryzen 7000 iGPU, 1002:164e, gfx1036) is linked in for the
+# same reason as the i915 blobs and one more: amdgpu asks with the synchronous
+# request_firmware() during a built-in driver's probe, so the userspace helper
+# below cannot answer in time and the GPU never initialises at all. Twelve
+# files, 2.7 MB uncompressed -- small enough to link, unlike NVIDIA.
+#
+#   gc_10_3_6_*      graphics core: CP (ce/me/pfp), compute (mec/mec2), RLC
+#   psp_13_0_5_*     platform security processor: asd, ta, toc
+#   sdma_5_2_6       DMA engine
+#   vcn_3_1_2        video codec
+#   dcn_3_1_6_dmcub  display microcontroller
+#
+# NVIDIA is deliberately NOT here. GA10x nouveau needs GSP, and that blob alone
+# is 26-52 MB compressed -- it does not belong in a kernel image. Serving GPU
+# firmware from an initramfs, the way every Linux distro does, is the change
+# that makes NVIDIA possible; see doc/08-roadmap.md.
+CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin amdgpu/gc_10_3_6_ce.bin amdgpu/gc_10_3_6_me.bin amdgpu/gc_10_3_6_mec.bin amdgpu/gc_10_3_6_mec2.bin amdgpu/gc_10_3_6_pfp.bin amdgpu/gc_10_3_6_rlc.bin amdgpu/psp_13_0_5_asd.bin amdgpu/psp_13_0_5_ta.bin amdgpu/psp_13_0_5_toc.bin amdgpu/sdma_5_2_6.bin amdgpu/vcn_3_1_2.bin amdgpu/dcn_3_1_6_dmcub.bin"
 CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
 
 # --- GSC transport ---------------------------------------------------------
