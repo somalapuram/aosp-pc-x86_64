@@ -319,14 +319,46 @@ apply_patches() {
         [[ -d "$project/.git" ]] || die "no such project for $rel: $project
      Run './build.sh sync aosp' first."
 
-        # Reverse-applying cleanly means it is already in the tree. Checking
-        # that, rather than just running git am, keeps this re-runnable.
+        # Is it already in the tree?
+        #
+        # Reverse-applying cleanly is the cheap test, but it is only reliable
+        # for the LAST patch to touch a given hunk. Patches stack: 0004 rewrites
+        # the same drv_backend_list lines 0003 added, so once both are in, 0003
+        # no longer reverse-applies -- and it does not forward-apply either,
+        # being already present. That combination used to fall through to the
+        # die below and abort the whole run with "may be at a different
+        # revision", which is both wrong and silent about every patch after it
+        # that never got its turn. That is how 0003, 0004 and the audio mic-
+        # address fix all went missing from a tree whose patches/ listed them.
+        #
+        # git am records a patch's Subject as the commit subject, so the git log
+        # is the authoritative record of what has been applied. git mailinfo
+        # parses that header exactly the way git am does -- unwrapping long
+        # subjects and decoding any encoding -- rather than guessing at it.
+        local subject
+        subject=$(git mailinfo /dev/null /dev/null < "$patch" 2>/dev/null \
+                  | sed -n 's/^Subject: //p')
+
         if git -C "$project" apply --check -R "$patch" 2>/dev/null; then
             skipped=$((skipped + 1)); continue
         fi
+        # Read the log into a variable rather than piping it into grep -q.
+        # grep -q exits at the first match, git log is then killed by SIGPIPE
+        # (exit 141), and `set -o pipefail` makes the pipeline non-zero even
+        # though the subject WAS found -- so the check would report "not
+        # applied" for a patch that is. It needs a log bigger than the 64 KB
+        # pipe buffer to bite, which this one is: 1909 commits, 126 KB of
+        # subjects.
+        local subjects
+        subjects=$(git -C "$project" log --format=%s)
+        if [[ -n "$subject" ]] && grep -Fxq -- "$subject" <<<"$subjects"; then
+            skipped=$((skipped + 1)); continue
+        fi
         git -C "$project" apply --check "$patch" 2>/dev/null \
-            || die "$rel does not apply to $project.
-     The project may be at a different revision than this patch expects."
+            || die "$rel does not apply to $project, and its subject is not in
+     that project's git log -- so it is neither already applied nor appliable.
+     Either the project is at a different revision than this patch expects, or
+     an earlier patch that it builds on is missing."
 
         info "applying $rel"
         git -C "$project" am "$patch" >/dev/null \
