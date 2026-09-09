@@ -186,7 +186,30 @@ GPU_FW_EXCLUDE="${GPU_FW_EXCLUDE:-nvidia/595.84}"
 # driver registers, so there is no probe and no firmware request at all --
 # modprobe.blacklist would NOT work, because nouveau is built in.
 NOUVEAU_MODESET="${NOUVEAU_MODESET:-1}"
-NOUVEAU_ARG="nouveau.modeset=${NOUVEAU_MODESET}"
+
+# nouveau.atomic=1 is REQUIRED, not a tuning knob.
+#
+# nouveau keeps the atomic ioctl behind a module parameter that defaults OFF:
+#     MODULE_PARM_DESC(atomic, "Expose atomic ioctl (default: disabled)");
+#     static int nouveau_atomic = 0;                    nouveau_drm.c:106-108
+#     if (nouveau_atomic)
+#             driver_pci.driver_features |= DRIVER_ATOMIC;   nouveau_drm.c:882
+# so without it the driver never advertises DRIVER_ATOMIC and
+# drmSetClientCap(DRM_CLIENT_CAP_ATOMIC) fails. drm_hwcomposer is atomic-only,
+# so that is fatal rather than a downgrade -- observed on an RTX 2000 Ada
+# (AD107) where the kernel side was perfect (GSP 570.144 loaded, 16380 MiB VRAM,
+# nouveaudrmfb primary) and userspace still went:
+#     E drmhwc: Failed to set atomic cap -1
+#     I drmhwc: No pipelines available. Creating null-display for headless mode
+#     F SurfaceFlinger: output buffer not gpu writeable   <- abort, 13 times
+# The SurfaceFlinger abort is downstream of the null display, not a gralloc bug:
+# minigbm's dumb backend does grant BO_USE_RENDER_MASK|BO_USE_SCANOUT for
+# ARGB/XRGB8888 (dumb_driver.c:38-39).
+#
+# The parameter is 0400 -- readable but not writable after boot -- so it has to
+# be on the command line; there is no runtime way to set it.
+NOUVEAU_ATOMIC="${NOUVEAU_ATOMIC:-1}"
+NOUVEAU_ARG="nouveau.modeset=${NOUVEAU_MODESET} nouveau.atomic=${NOUVEAU_ATOMIC}"
 
 # Build the GPU firmware initramfs. See the NVIDIA GSP note above for why the
 # firmware is delivered this way rather than linked into the kernel.
@@ -236,7 +259,7 @@ if (( FW_COUNT > 0 )); then
     GPUFW_INITRD=" /gpufw.img"
 else
     warn "no GPU firmware bundled; nouveau left disabled"
-    NOUVEAU_ARG="nouveau.modeset=0"
+    NOUVEAU_ARG="nouveau.modeset=0"   # atomic is moot with the driver off
     GPUFW_INITRD=""
 fi
 
