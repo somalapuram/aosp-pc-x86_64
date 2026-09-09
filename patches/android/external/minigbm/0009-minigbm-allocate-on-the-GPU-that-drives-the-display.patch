@@ -1,0 +1,141 @@
+From 968705956c9c76388778599ce5bf0290d08225f4 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Wed, 9 Sep 2026 18:03:10 +0530
+Subject: [PATCH] minigbm: allocate on the GPU that drives the display
+
+init_try_nodes() took the first node that merely worked. On a two-GPU machine
+that is whichever enumerated first, which is not necessarily the one with the
+monitor attached -- and gralloc must allocate on the GPU that scans out.
+
+With HDMI on the 3070 Ti, gralloc took card0 (amdgpu) while drm_hwcomposer
+correctly took HDMI-A-2 on nouveau, so every frame was an amdgpu buffer handed
+to nouveau to scan out:
+
+    gralloc: /dev/dri/card0 -> ACCEPTED, backend 'amdgpu'
+    drmhwc : Found Backend 'generic' for 'HDMI-A-2' and driver 'nouveau'
+    drmhwc : sync_wait(fd=17) returned: -1 (errno: 62)      [ETIME]
+    drmhwc : Failed to commit pset ret=-16 errno=16         [EBUSY]
+    nouveau 0000:01:00.0: drm: wndw-0: timeout
+
+The fence never signals, the atomic commit fails, and the screen stays blank
+while SurfaceFlinger renders happily on radeonsi. Everything looks healthy in
+isolation, which is why this took a while to see: the fault is the pairing, not
+either half.
+
+So try card nodes with a connected connector first. This needs no per-board
+configuration and picks correctly on both machines -- amdgpu has the panel on
+the AMD workstation, nouveau has it on the NVIDIA one. Render nodes have no
+connectors, so the check is only applied to card nodes, and the existing
+render-then-card order still runs afterwards as the fallback.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01M84mbyvwTqMKWDqkASw3c4
+Change-Id: Id1eaa299a0a73141e54f369a6eb347308b0a0abd
+---
+ cros_gralloc/cros_gralloc_driver.cc | 72 ++++++++++++++++++++++++++++-
+ 1 file changed, 71 insertions(+), 1 deletion(-)
+
+diff --git a/cros_gralloc/cros_gralloc_driver.cc b/cros_gralloc/cros_gralloc_driver.cc
+index e094a4c..9976e62 100644
+--- a/cros_gralloc/cros_gralloc_driver.cc
++++ b/cros_gralloc/cros_gralloc_driver.cc
+@@ -13,6 +13,7 @@
+ #include <sys/mman.h>
+ #include <syscall.h>
+ #include <xf86drm.h>
++#include <xf86drmMode.h>
+ 
+ #include "../drv_helpers.h"
+ #include "../drv_priv.h"
+@@ -94,7 +95,52 @@ std::shared_ptr<cros_gralloc_driver> cros_gralloc_driver::get_instance()
+ 	return s_instance;
+ }
+ 
+-static struct driver *init_try_node(int idx, char const *str)
++/*
++ * Does this DRM node actually drive a screen?
++ *
++ * gralloc must allocate on the GPU that scans out, and init_try_nodes() had no
++ * notion of that -- it took the first node that worked. On a two-GPU machine
++ * that is whichever enumerated first, which is not necessarily the one with the
++ * monitor attached.
++ *
++ * Observed on the AMD+NVIDIA workstation with HDMI on the 3070 Ti: gralloc took
++ * card0 (amdgpu) while drm_hwcomposer correctly took HDMI-A-2 on nouveau, so
++ * every frame was an amdgpu buffer handed to nouveau to scan out --
++ *
++ *     drmhwc: Found Backend 'generic' for 'HDMI-A-2' and driver 'nouveau'
++ *     drmhwc: sync_wait(fd=17) returned: -1 (errno: 62)      [ETIME]
++ *     drmhwc: Failed to commit pset ret=-16 errno=16         [EBUSY]
++ *     nouveau 0000:01:00.0: drm: wndw-0: timeout
++ *
++ * -- the fence never signals, the atomic commit fails, and the screen stays
++ * blank while SurfaceFlinger happily renders on radeonsi.
++ *
++ * Checking for a connected connector picks the right GPU on either machine with
++ * no per-board configuration: on the AMD box amdgpu has the panel, on the
++ * NVIDIA box nouveau does. Render nodes have no connectors at all, so this is
++ * only meaningful for card nodes and the caller only uses it for those.
++ */
++static bool node_drives_a_display(int fd)
++{
++	drmModeRes *res = drmModeGetResources(fd);
++	if (!res)
++		return false;
++
++	bool connected = false;
++	for (int i = 0; i < res->count_connectors && !connected; i++) {
++		drmModeConnector *c = drmModeGetConnector(fd, res->connectors[i]);
++		if (!c)
++			continue;
++		if (c->connection == DRM_MODE_CONNECTED && c->count_modes > 0)
++			connected = true;
++		drmModeFreeConnector(c);
++	}
++
++	drmModeFreeResources(res);
++	return connected;
++}
++
++static struct driver *init_try_node(int idx, char const *str, bool require_display = false)
+ {
+ 	int fd;
+ 	char *node;
+@@ -143,6 +189,13 @@ static struct driver *init_try_node(int idx, char const *str)
+ 	 */
+ 	drmDropMaster(fd);
+ 
++	if (require_display && !node_drives_a_display(fd)) {
++		ALOGI("gralloc: %s -> skipped, drives no display", node);
++		close(fd);
++		free(node);
++		return NULL;
++	}
++
+ 	drv = drv_create(fd, NULL);
+ 	if (!drv) {
+ 		drmVersionPtr v = drmGetVersion(fd);
+@@ -178,6 +231,23 @@ static struct driver *init_try_nodes()
+ 	uint32_t min_card_node = DRM_CARD_NODE_START;
+ 	uint32_t max_card_node = (min_card_node + num_nodes);
+ 
++	/*
++	 * First: a card node that actually drives a screen.
++	 *
++	 * gralloc has to allocate on the GPU that scans out. Taking the first
++	 * node that merely works picks whichever enumerated first, and on a
++	 * two-GPU machine that is not necessarily the one with the monitor --
++	 * which leaves the compositor importing foreign buffers, the fence never
++	 * signalling, and a blank screen. See node_drives_a_display().
++	 */
++	for (uint32_t i = min_card_node; i < max_card_node; i++) {
++		drv = init_try_node(i, card_nodes_fmt, /*require_display=*/true);
++		if (drv) {
++			ALOGI("gralloc: chose the node that drives the display");
++			return drv;
++		}
++	}
++
+ 	// Try render nodes...
+ 	for (uint32_t i = min_render_node; i < max_render_node; i++) {
+ 		drv = init_try_node(i, render_nodes_fmt);

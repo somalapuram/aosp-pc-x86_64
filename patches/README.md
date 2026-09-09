@@ -69,9 +69,10 @@ continuing would produce a subtly wrong build.
 | `android/external/minigbm/0004-…-simpledrm-dumb` | simpledrm owns the UEFI framebuffer until a real GPU driver binds, and nothing matched the name `simpledrm`, so gralloc failed at init and SurfaceFlinger crash-looped instead of falling back to software rendering — 749 restarts in 62 minutes on the AMD workstation. A fallback, never a destination: once amdgpu or i915 binds, simpledrm is evicted and this backend is never consulted |
 | `android/external/minigbm/0007-…-log-which-DRM-node` | `init_try_node()` discarded the one fact that matters when gralloc ends up with no backend: a failed `open()` was a silent `return NULL`, so a card node **refused** looked identical to one never reached. Each attempt now names the node, the kernel driver, and the decoded errno |
 | `android/external/minigbm/0008-…-mapping-only` | `0005`'s CREATE_DUMB probe is the right test for a process that must **allocate** and the wrong one for a process that only **maps**. Every app links the mapper in-process; the render node is declined, the card node is correctly refused (`private/app.te:606` neverallows it), and the mapper ends up with no driver — so HWUI aborts. Falls back to a render node with the probe suppressed |
+| `android/external/minigbm/0009-…-drives-the-display` | gralloc must allocate on the GPU that scans out, and `init_try_nodes()` took the first node that merely worked. On a two-GPU box that meant amdgpu buffers handed to nouveau: `sync_wait` ETIME, atomic commit EBUSY, `wndw-0: timeout`, blank screen — while every component looked healthy alone. Prefers a card node with a connected connector |
 | `android/hardware/interfaces/0001-audio-don-t-discard-…` | the AIDL audio HAL overwrites the built-in mic's configured address, which is what selects the ALSA capture device; on a PC that pins capture to the analog jack instead of the internal DMIC array |
 
 Everything else this port needs lives in `android_17/device/pcx86/pc_x86_64/`,
 which is a new device directory rather than a change to an existing project.
-That is why this list is nine entries long: the kernel is otherwise stock
+That is why this list is ten entries long: the kernel is otherwise stock
 mainline and AOSP is otherwise stock `android17-release`.
