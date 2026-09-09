@@ -239,10 +239,27 @@ PRODUCT_PACKAGES += \
 # runtime -- iris needing LLVM -- was resolved by building mesa_clc on the host.
 # pc_select_egl.sh stays for its log line; ro.* can only be set once, so this
 # wins and its setprop becomes a no-op.
+# vendor.hwc.drm.device is deliberately NOT set, and that is what makes this
+# image work on a machine with more than one GPU.
+#
+# It used to pin /dev/dri/card0. drm_hwcomposer only takes that path when the
+# property is non-empty; left unset it falls back to the wildcard
+# "/dev/dri/card%" and walks card0, card1, ... until stat() fails, opening each
+# one (ResourceManager::Init, ResourceManager.cpp:55-81). Cards with no
+# connectors contribute no displays and cost nothing, so enumeration is correct
+# on every machine while a pinned index is correct only by luck.
+#
+# The luck runs out on hybrid laptops. On the ZBook Firefly G11 the Intel iGPU
+# is 8086:7dd5 class 030000 and owns the eDP panel, while the NVIDIA GA107 is
+# 10de:25bb class 030200 -- a "3D controller" with no display outputs at all.
+# Whichever of those enumerates as card0 depends on probe order, and pinning the
+# wrong one is a black screen with nothing in the log to explain it.
+#
+# It also means adding a GPU family needs no change here: the kernel driver
+# binds, a DRM node appears, and hwcomposer finds it.
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
-    vendor.hwc.drm.device=/dev/dri/card0 \
     ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 
