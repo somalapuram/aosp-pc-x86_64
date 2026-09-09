@@ -155,6 +155,22 @@ unsparse() {
 GPU_FW_VENDORS="${GPU_FW_VENDORS:-nvidia amdgpu i915}"
 GPU_FW_SRC="${GPU_FW_SRC:-/lib/firmware}"
 
+# nvidia/595.84 is 99 MB -- half the nvidia tree -- and nouveau cannot ask for
+# it. nvkm/core/firmware.c:90-92 builds every nouveau firmware path as
+#     nvidia/<chip>/<name>.bin        e.g. nvidia/ga107/gsp/booter_load-570.144.bin
+# where <chip> is a chip codename, so a directory named after a PROPRIETARY
+# DRIVER VERSION is unreachable by construction; gsp_ga10x.bin and gsp_tu10x.bin
+# appear nowhere in drivers/gpu/drm/nouveau. They belong to NVIDIA's own
+# nvidia.ko, which is not in this image.
+#
+# The reason is disk, and only disk: 99 MB off a 512 MB ESP. It is NOT a boot-time
+# fix, and the archive's size turns out not to cost boot time at all -- across six
+# boots the initrd ranged 1.5 MB to 238 MB and i915 still probed at 21.7-22.1 s
+# every time, because what actually delays the probe is the verbose GRUB entry
+# (loglevel=8 ignore_loglevel earlycon=efifb keep_bootcon), which paints every
+# printk to the EFI framebuffer at ~35 ms each. Unpacking 238 MB costs 0.2 s.
+GPU_FW_EXCLUDE="${GPU_FW_EXCLUDE:-nvidia/595.84}"
+
 # nouveau.modeset is now passed EXPLICITLY, and defaults to on.
 #
 # Leaving it out would already enable the driver -- nouveau_modeset defaults to
@@ -193,10 +209,24 @@ for vendor in $GPU_FW_VENDORS; do
     # (ad107 -> ad102, and ad102's gsp blob -> ga102's), and dereferencing here
     # would turn 4 shared GSP blobs into a copy per chip.
     cp -a "$src" "$FWROOT/lib/firmware/"
-    n=$(find "$src" -type f | wc -l)
-    l=$(find "$src" -type l | wc -l)
+
+    # Drop what no in-tree driver can ask for. GPU_FW_EXCLUDE holds paths
+    # relative to $GPU_FW_SRC; see the note above for why 595.84 is in it.
+    for ex in $GPU_FW_EXCLUDE; do
+        case "$ex" in "$vendor"/*) ;; *) continue ;; esac
+        [[ -e "$FWROOT/lib/firmware/$ex" ]] || continue
+        rm -rf "$FWROOT/lib/firmware/$ex"
+        ok "$vendor: pruned $ex"
+    done
+
+    # Count what was actually STAGED, not what is in $src -- after a prune the
+    # source count overstates, and this number is what tells us at a glance
+    # whether the archive still holds what the drivers need.
+    dst="$FWROOT/lib/firmware/$vendor"
+    n=$(find "$dst" -type f | wc -l)
+    l=$(find "$dst" -type l | wc -l)
     FW_COUNT=$(( FW_COUNT + n + l ))
-    ok "$vendor: $n files + $l links, $(du -sh --apparent-size "$src" | cut -f1)"
+    ok "$vendor: $n files + $l links, $(du -sh --apparent-size "$dst" | cut -f1)"
 done
 
 if (( FW_COUNT > 0 )); then
