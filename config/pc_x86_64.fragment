@@ -133,6 +133,11 @@ CONFIG_DRM_AMD_DC_FP=y
 # The firmware is large (tens of MB per chip generation) and chip-specific, so
 # it is served by the userspace helper below rather than linked in with
 # CONFIG_EXTRA_FIRMWARE the way the four small i915 blobs are.
+
+# Pre-GCN AMD -- Radeon HD 2000..8000, Terascale 1/2/3 -- which amdgpu does not
+# cover. Without it those machines fall to simpledrm and get no GL at all.
+CONFIG_DRM_RADEON=y
+
 CONFIG_DRM_NOUVEAU=y
 CONFIG_NOUVEAU_LEGACY_CTX_SUPPORT=n
 CONFIG_DRM_NOUVEAU_GSP_DEFAULT=y
@@ -362,6 +367,14 @@ CONFIG_BT_INTEL=y
 # only one is needed and which one is not knowable at build time.
 CONFIG_FW_LOADER_USER_HELPER=y
 CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y
+
+# Read firmware straight out of its .zst, so the whole linux-firmware GPU corpus
+# ships compressed (202 MB of nvidia rather than ~280 MB expanded).
+# firmware_loader/main.c tries the bare name, then "<name>.zst", then "<name>.xz"
+# (873/881/886), so nothing on the driver side has to know.
+CONFIG_FW_LOADER_COMPRESS=y
+CONFIG_FW_LOADER_COMPRESS_ZSTD=y
+CONFIG_FW_LOADER_COMPRESS_XZ=y
 
 # --- GPIO / pinctrl: the touchpad's interrupt -------------------------------
 # The bring-up laptop's touchpad is SYNA311A on I2C. The driver finds it and
