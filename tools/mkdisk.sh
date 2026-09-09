@@ -200,7 +200,7 @@ menuentry "Android pc_x86_64" {
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_OFF} \\
-           console=ttyS0,115200 loglevel=4
+           console=tty0 loglevel=4
     initrd /ramdisk.img
 }
 
@@ -220,6 +220,15 @@ menuentry "Android pc_x86_64" {
 # installer entries document below: Linux points /dev/console at the last
 # console= on the command line, so putting tty0 there gives init's own stdout to
 # the screen as well as the kernel's printk.
+#
+# console=ttyS0 is deliberately ABSENT from this entry and from the default one.
+# This machine has no serial port, and the kernel does not know that: every
+# printk still gets written byte by byte to the 16550 I/O ports, each write
+# spinning on a transmitter-empty bit that never sets. At loglevel=8 with
+# ignore_loglevel that is thousands of messages, and the boot visibly crawls --
+# the user's words were "very slow in log printing". The UART cost is paid even
+# though nothing is attached to read it. The "serial only" entry below keeps
+# ttyS0 for anyone who does have a cable.
 #
 # earlycon=efifb is not decoration and it is not redundant with console=tty0.
 # tty0 does not exist until a DRM driver binds and DRM_FBDEV_EMULATION builds
@@ -242,7 +251,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            androidboot.verifiedbootstate=orange \\
            ${NOUVEAU_OFF} \\
            earlycon=efifb keep_bootcon \\
-           console=ttyS0,115200 console=tty0 ${KERNEL_EXTRA_ARGS:-}
+           console=tty0 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img
 }
 
