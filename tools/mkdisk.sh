@@ -414,6 +414,39 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
 # It is also the recovery path on any machine where the NVIDIA GPU misbehaves,
 # and the A/B half of "is the second DRM device the problem?" -- boot this and
 # the entry above, and the only difference is whether nouveau is present.
+# For the case where NVIDIA owns the display and the boot dies before /data.
+#
+# That failure leaves NO evidence at all: no font change, blank screen, /data
+# never mounted, so pc_kmsg_vendor.sh never runs and there is nothing on disk to
+# read afterwards. The only channel left is the screen itself, before whatever
+# takes the display blanks it -- so this entry is built to make that last
+# screenful name the culprit.
+#
+#   initcall_debug     prints every driver init as it starts AND returns, so the
+#                      last unpaired line is the one that never came back
+#   nouveau.debug=...  nouveau's own probe/GSP/modeset chatter
+#   drm.debug=0x1e     DRM core: driver, KMS, atomic, and lease messages
+#   keep_bootcon       earlycon is NOT torn down when the real console
+#                      registers, which is the window this failure lives in
+#
+# Photograph the last few lines. Expect it to be verbose and slow -- that is the
+# point; this entry exists to be read off a screen, not to be lived in.
+menuentry "Android pc_x86_64 (NVIDIA display debug)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           androidboot.verifiedbootstate=orange \\
+           nouveau.modeset=1 nouveau.atomic=1 \\
+           nouveau.debug=info,fb=debug,gsp=debug,disp=debug \\
+           drm.debug=0x1e initcall_debug \\
+           earlycon=efifb keep_bootcon \\
+           console=tty0 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
 menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
