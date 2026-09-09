@@ -1,0 +1,15 @@
+# Mesa's two-GPU hook, labelled here rather than in the vendor policy because
+# AOSP requires vendor property_contexts to use only vendor-prefixed names:
+#     vendor's and odm's property_contexts MUST use ONLY vendor-prefixed properties
+# and this name is Mesa's, not ours.
+#
+# platform_android.c:1114 reads drm.gpu.vendor_name and, when it is set, uses
+# ONLY a DRM device whose driver matches (droid_filter_device). Without it EGL
+# takes the first render node it can probe, which on a two-GPU machine is not
+# necessarily the card that owns the screen -- and rendering on one card while
+# gralloc and the compositor use another is a blank screen with 2448 EBUSY
+# commits and nothing obviously wrong in any single component.
+#
+# pc_select_egl.sh derives the value from whichever card has a connected
+# connector, so this is a runtime fact rather than board configuration.
+drm.gpu.vendor_name    u:object_r:vendor_pc_gpu_prop:s0 exact string

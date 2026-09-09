@@ -112,6 +112,41 @@ fi
 # blocks init, so polling for ro.hardware.egl here would deadlock -- init
 # cannot process the trigger until we exit. It fires immediately after, still
 # far ahead of zygote.
+# Which GPU actually drives the screen, for Mesa.
+#
+# On a two-GPU machine Mesa's EGL takes the first render node it can probe --
+# droid_open_device() walks _eglGlobal.DeviceList in order -- with no idea which
+# card owns the display. minigbm now allocates on the card with a connected
+# connector (patch 0009), so on the AMD+NVIDIA workstation with HDMI on the
+# 3070 Ti the buffers and the display were both nouveau while SurfaceFlinger
+# still rendered on radeonsi:
+#
+#     gralloc: /dev/dri/card1 -> ACCEPTED, backend 'nouveau'
+#     SurfaceFlinger: renderer : AMD Radeon Graphics (radeonsi, ...)
+#     drmhwc : Failed to commit pset ret=-16 errno=16    [EBUSY]   x2448
+#
+# Cross-GPU either way is a blank screen. platform_android.c:1114 reads
+# drm.gpu.vendor_name and, when set, uses ONLY a device matching it
+# (droid_filter_device), so publishing the display GPU's driver name here makes
+# Mesa, gralloc and drm_hwcomposer all land on the same card.
+#
+# Derived at runtime from the connectors, so it needs no per-board knowledge:
+# whichever card has something plugged into it wins, on any machine.
+for c in /sys/class/drm/card[0-9]; do
+    [ -e "$c" ] || continue
+    for conn in "$c"-*; do
+        [ -e "$conn/status" ] || continue
+        if [ "$(cat "$conn/status" 2>/dev/null)" = "connected" ]; then
+            drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
+            if [ -n "$drv" ] && [ "$drv" != "driver" ]; then
+                setprop drm.gpu.vendor_name "$drv"
+                log -t "$TAG" "display is on $(basename "$c") ($drv) -> drm.gpu.vendor_name=$drv"
+            fi
+            break 2
+        fi
+    done
+done
+
 setprop vendor.pc.gpu "$egl"
 
 log -t "$TAG" "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
