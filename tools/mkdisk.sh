@@ -348,7 +348,7 @@ menuentry "Android pc_x86_64" {
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=tty0 loglevel=4
+           console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
@@ -502,7 +502,7 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=1
+           console=ttyS0,115200 console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
@@ -534,7 +534,7 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=1
+           console=ttyS0,115200 console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
