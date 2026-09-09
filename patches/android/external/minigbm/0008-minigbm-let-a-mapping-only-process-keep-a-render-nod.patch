@@ -1,0 +1,148 @@
+From 44465c52bffe2f9b07c8eaefc7657e581eb00ebb Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Wed, 9 Sep 2026 16:39:20 +0530
+Subject: [PATCH] minigbm: let a mapping-only process keep a render node
+
+Patch 0005 is right for allocation and wrong for mapping, and the difference
+is what has been crash-looping every app.
+
+The CREATE_DUMB probe is the correct test for a process that must ALLOCATE --
+SurfaceFlinger and the allocator HAL both need a card node, and 0005 exists so
+they reach one. But every app also links the gralloc mapper in-process and
+builds its own driver for lock/unlock/import. It never allocates; it calls the
+allocator over binder. A render node serves mapping perfectly well.
+
+For those processes the walk is fatal and nothing is actually wrong:
+
+    gralloc: /dev/dri/renderD128 -> opened fd 7
+    dumb: kernel driver 'amdgpu' rejects CREATE_DUMB (errno 13: Permission denied)
+    gralloc: /dev/dri/renderD128 -> no usable backend (kernel driver 'amdgpu')
+    gralloc: /dev/dri/card0 -> open failed: Permission denied
+    F HWUI: drawRenderNode called on a context with no surface!
+
+card0 is refused because AOSP neverallows apps the card node
+(private/app.te:606) -- that denial is correct and must not be "fixed" by
+granting access. Measured on the AMD workstation: card0 ACCEPTED in 10
+processes, Permission denied in 20, and the 20 are exactly the set that
+crash-looped -- systemui, settings, inputmethod, pclauncher -- while
+SurfaceFlinger ran radeonsi and the allocator allocated happily.
+
+So after both loops fail, take a render node with the probe suppressed.
+Allocation on such a driver still fails loudly, so a process that genuinely
+needed to allocate is no worse off than before the fallback existed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011heNsRrLCYipNyKyiFSGdV
+Change-Id: I674ab2728de7531cb2bf8e0e0a24e7342f5e52bb
+---
+ cros_gralloc/cros_gralloc_driver.cc | 32 ++++++++++++++++++++++++++++
+ drv.h                               |  6 ++++++
+ dumb_driver.c                       | 33 +++++++++++++++++++++++++++++
+ 3 files changed, 71 insertions(+)
+
+diff --git a/cros_gralloc/cros_gralloc_driver.cc b/cros_gralloc/cros_gralloc_driver.cc
+index 38462c3..e094a4c 100644
+--- a/cros_gralloc/cros_gralloc_driver.cc
++++ b/cros_gralloc/cros_gralloc_driver.cc
+@@ -192,6 +192,38 @@ static struct driver *init_try_nodes()
+ 			return drv;
+ 	}
+ 
++	/*
++	 * Last resort: take a render node even though the dumb backend cannot
++	 * allocate on it.
++	 *
++	 * Reaching here means no node could both be opened and allocate. In an
++	 * app that is the normal, correct state of affairs: renderD128 opens but
++	 * CREATE_DUMB is -EACCES on a render node, and card0 is refused because
++	 * AOSP neverallows apps the card node (private/app.te:606). Apps do not
++	 * allocate -- they call the allocator HAL over binder -- but they do link
++	 * the mapper in-process and need a driver for lock/unlock/import, which a
++	 * render node serves perfectly well.
++	 *
++	 * Returning NULL instead leaves the mapper with no driver, so every buffer
++	 * is unusable and HWUI aborts the process outright with "drawRenderNode
++	 * called on a context with no surface!". On the AMD workstation that
++	 * crash-looped systemui, settings, the IME and the launcher, while
++	 * SurfaceFlinger and the allocator -- which do get card0 -- ran fine.
++	 *
++	 * Allocation still fails loudly on such a driver, so a process that really
++	 * did need to allocate is no worse off than before this fallback existed.
++	 */
++	drv_dumb_set_mapping_only(true);
++	for (uint32_t i = min_render_node; i < max_render_node; i++) {
++		drv = init_try_node(i, render_nodes_fmt);
++		if (drv) {
++			ALOGI("gralloc: mapping-only fallback, no node can allocate here");
++			drv_dumb_set_mapping_only(false);
++			return drv;
++		}
++	}
++	drv_dumb_set_mapping_only(false);
++
+ 	return nullptr;
+ }
+ 
+diff --git a/drv.h b/drv.h
+index 38ee79f..3ed04ad 100644
+--- a/drv.h
++++ b/drv.h
+@@ -180,6 +180,12 @@ void drv_preload(bool load);
+ 
+ struct driver *drv_create(int fd, const struct backend *backend);
+ 
++/*
++ * Accept a node the dumb backend cannot allocate on, for processes that only
++ * need to map. See dumb_driver.c.
++ */
++void drv_dumb_set_mapping_only(bool enable);
++
+ void drv_destroy(struct driver *drv);
+ 
+ int drv_get_fd(struct driver *drv);
+diff --git a/dumb_driver.c b/dumb_driver.c
+index c2d8c15..56b9118 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -80,8 +80,41 @@ static const uint32_t texture_only_formats[] = { DRM_FORMAT_R8, DRM_FORMAT_NV12,
+  * The check is a real allocation rather than a node-type test, because what
+  * matters is whether this fd can serve the only thing this backend does.
+  */
++/*
++ * Set for a second, mapping-only pass over the DRM nodes.
++ *
++ * The CREATE_DUMB probe below is the right test for a process that has to
++ * ALLOCATE -- SurfaceFlinger and the allocator HAL -- and the wrong one for a
++ * process that only has to MAP. Every app links the gralloc mapper in-process
++ * and builds its own driver for lock/unlock/import; it never allocates, it
++ * calls the allocator over binder. A render node serves mapping perfectly well.
++ *
++ * Without this the guard is fatal in exactly the processes that did nothing
++ * wrong: renderD128 is declined because CREATE_DUMB is -EACCES there, card0 is
++ * then refused because AOSP neverallows apps the card node
++ * (private/app.te:606), the mapper ends up with no driver at all, and HWUI
++ * aborts the process:
++ *
++ *     gralloc: /dev/dri/renderD128 -> no usable backend (kernel driver 'amdgpu')
++ *     gralloc: /dev/dri/card0 -> open failed: Permission denied
++ *     F HWUI: drawRenderNode called on a context with no surface!
++ *
++ * Observed on the AMD workstation: card0 ACCEPTED in 10 processes, Permission
++ * denied in 20 -- systemui, settings, pclauncher, inputmethod -- which is
++ * precisely the set that crash-looped.
++ */
++static bool dumb_mapping_only = false;
++
++void drv_dumb_set_mapping_only(bool enable)
++{
++	dumb_mapping_only = enable;
++}
++
+ static int dumb_driver_probe_create(struct driver *drv)
+ {
++	if (dumb_mapping_only)
++		return 0;
++
+ 	struct drm_mode_create_dumb create_dumb = { 0 };
+ 	struct drm_mode_destroy_dumb destroy_dumb = { 0 };
+ 	int ret;
