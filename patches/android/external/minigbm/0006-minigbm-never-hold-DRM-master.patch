@@ -1,0 +1,68 @@
+From 80392a0107dbbcaee5aa3d6a2550b355ba95dc1a Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Wed, 9 Sep 2026 13:55:22 +0530
+Subject: [PATCH] minigbm: never hold DRM master
+
+Opening a PRIMARY node makes the opener master whenever the device has no
+master yet (drm_master_open()), and gralloc starts early enough to win that
+race. Once the dumb backend started declining render nodes and falling through
+to card nodes, that is exactly what happened: the allocator took master and
+drm_hwcomposer could not,
+
+    drmSetMaster(*GetFd());
+    if (drmIsMaster(*GetFd()) == 0) {
+            ALOGE("DRM/KMS master access required");     DrmDevice.cpp:116-119
+
+so it fell back to a headless null-display -- a console with no GUI, on a
+machine whose display was working one commit earlier.
+
+Only the compositor should be master. The allocator needs the card node purely
+for DRM_IOCTL_MODE_CREATE_DUMB, which is declared with no flags
+(drm_ioctl.c:708) and therefore does not require master at all.
+
+Dropping it right after open is harmless on render nodes and whenever we did
+not become master -- it just returns an error, which is why the result is
+ignored.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Qqqf5AZFdnmaLmddmG16pW
+Change-Id: I4fe491b18c5d96be064181841ac7ed27364271cd
+---
+ cros_gralloc/cros_gralloc_driver.cc | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/cros_gralloc/cros_gralloc_driver.cc b/cros_gralloc/cros_gralloc_driver.cc
+index 706dee9..389fb5f 100644
+--- a/cros_gralloc/cros_gralloc_driver.cc
++++ b/cros_gralloc/cros_gralloc_driver.cc
+@@ -109,6 +109,27 @@ static struct driver *init_try_node(int idx, char const *str)
+ 	if (fd < 0)
+ 		return NULL;
+ 
++	/*
++	 * Never hold DRM master.
++	 *
++	 * Opening a PRIMARY node makes the opener master whenever the device has
++	 * no master yet (drm_master_open()), and gralloc is started early enough
++	 * to win that race. drm_hwcomposer then cannot get it:
++	 *
++	 *     drmSetMaster(*GetFd());
++	 *     if (drmIsMaster(*GetFd()) == 0) {
++	 *             ALOGE("DRM/KMS master access required");   DrmDevice.cpp:116-119
++	 *
++	 * and it falls back to a headless null-display -- a console with no GUI.
++	 * Only the compositor should be master; the allocator needs the node for
++	 * DRM_IOCTL_MODE_CREATE_DUMB, which carries no flags (drm_ioctl.c:708) and
++	 * so does not require it.
++	 *
++	 * Harmless on render nodes and whenever we did not become master: it
++	 * simply returns an error, which is why the result is ignored.
++	 */
++	drmDropMaster(fd);
++
+ 	drv = drv_create(fd, NULL);
+ 	if (!drv)
+ 		close(fd);
+-- 
+2.53.0
+
