@@ -184,13 +184,28 @@ CONFIG_FRAME_WARN=4096
 #   psp_13_0_5_*     platform security processor: asd, ta, toc
 #   sdma_5_2_6       DMA engine
 #   vcn_3_1_2        video codec
-#   dcn_3_1_6_dmcub  display microcontroller
+#   dcn_3_1_5_dmcub  display microcontroller -- THE one that matters here
+#   dcn_3_1_6_dmcub  display microcontroller for the 3.1.6 variant
+#
+# Both DCN revisions are shipped because the IP version is not guessable from
+# the part name and getting it wrong is fatal, not degraded. This board asks for
+# 3.1.5; only 3.1.6 was linked in, and the whole GPU died on it:
+#
+#   amdgpu: Direct firmware load for amdgpu/dcn_3_1_5_dmcub.bin failed, error -2
+#   amdgpu: Falling back to sysfs fallback for: amdgpu/dcn_3_1_5_dmcub.bin
+#   amdgpu: early_init of IP block <dm> failed -19
+#   amdgpu: Fatal error during GPU init
+#   amdgpu: MODE2 reset
+#
+# One missing display-microcontroller blob takes down the entire driver, so
+# there is no GPU at all, EGL falls back to software, and the desktop crawls.
+# The stall between those lines is 63 seconds of firmware_class timeout.
 #
 # NVIDIA is deliberately NOT here. GA10x nouveau needs GSP, and that blob alone
 # is 26-52 MB compressed -- it does not belong in a kernel image. Serving GPU
 # firmware from an initramfs, the way every Linux distro does, is the change
 # that makes NVIDIA possible; see doc/08-roadmap.md.
-CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin amdgpu/gc_10_3_6_ce.bin amdgpu/gc_10_3_6_me.bin amdgpu/gc_10_3_6_mec.bin amdgpu/gc_10_3_6_mec2.bin amdgpu/gc_10_3_6_pfp.bin amdgpu/gc_10_3_6_rlc.bin amdgpu/psp_13_0_5_asd.bin amdgpu/psp_13_0_5_ta.bin amdgpu/psp_13_0_5_toc.bin amdgpu/sdma_5_2_6.bin amdgpu/vcn_3_1_2.bin amdgpu/dcn_3_1_6_dmcub.bin"
+CONFIG_EXTRA_FIRMWARE="i915/mtl_guc_70.bin i915/mtl_dmc.bin i915/mtl_huc_gsc.bin i915/mtl_gsc_1.bin amdgpu/gc_10_3_6_ce.bin amdgpu/gc_10_3_6_me.bin amdgpu/gc_10_3_6_mec.bin amdgpu/gc_10_3_6_mec2.bin amdgpu/gc_10_3_6_pfp.bin amdgpu/gc_10_3_6_rlc.bin amdgpu/psp_13_0_5_asd.bin amdgpu/psp_13_0_5_ta.bin amdgpu/psp_13_0_5_toc.bin amdgpu/sdma_5_2_6.bin amdgpu/vcn_3_1_2.bin amdgpu/dcn_3_1_6_dmcub.bin amdgpu/dcn_3_1_5_dmcub.bin"
 CONFIG_EXTRA_FIRMWARE_DIR="@X86_ROOT@/firmware"
 
 # --- GSC transport ---------------------------------------------------------
