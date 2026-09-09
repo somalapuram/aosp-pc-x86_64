@@ -212,11 +212,35 @@ PRODUCT_PACKAGES += \
 # deliberately omitted it on the grounds that real i915/amdgpu present fences
 # are reliable -- true, but irrelevant while the test platform is virtio-gpu.
 # Re-evaluate when running on real hardware.
-# ro.hardware.egl is NOT set here on purpose. One image runs on virtio-gpu
-# (where Mesa/virgl works) and on i915 (where it does not, because iris needs
-# LLVM). pc_select_egl.sh picks the right one from the DRM driver at boot,
-# before any GL client starts. See that script.
+# ro.hardware.egl IS set here now, statically, and the runtime relay is no
+# longer trusted to do it.
+#
+# The old arrangement had pc_select_egl.sh publish vendor.pc.gpu and
+# init.pc_x86_64.rc translate it:
+#
+#     on property:vendor.pc.gpu=mesa
+#         setprop ro.hardware.egl mesa
+#
+# That rule is present on the device and it does not fire. Verified on the AMD
+# workstation: amdgpu bound (0000:17:00.0 driver=amdgpu, card0 and renderD128
+# both present), pc-select-egl ran at early-init and exited 0, and
+# ro.hardware.egl was still EMPTY -- so libEGL found no implementation and
+# zygote aborted in a loop with no GUI.
+#
+# It is not a one-off. The same rc's vendor.pc.boot=1 trigger never started the
+# log services either, which cost five boot cycles of no evidence, and the file
+# already documents an apexd.status=activated trigger failing identically.
+# Property triggers in this vendor rc cannot be relied on; anything that must
+# happen should be a build property or hang off a non-property trigger.
+#
+# Setting it statically is also simply correct now. Every branch of
+# pc_select_egl.sh resolves to mesa, Mesa carries softpipe so it produces a
+# context even with no GPU driver bound, and the original reason for choosing at
+# runtime -- iris needing LLVM -- was resolved by building mesa_clc on the host.
+# pc_select_egl.sh stays for its log line; ro.* can only be set once, so this
+# wins and its setprop becomes a no-op.
 PRODUCT_VENDOR_PROPERTIES += \
+    ro.hardware.egl=mesa \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
     vendor.hwc.drm.device=/dev/dri/card0 \
     ro.hardware.vulkan=pastel \
