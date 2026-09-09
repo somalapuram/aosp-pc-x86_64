@@ -181,9 +181,13 @@ cat <<'EOF'
     - Disable Secure Boot. The GRUB build here is unsigned.
     - Boot the USB device. It installs as /EFI/BOOT/BOOTX64.EFI (removable
       path), so firmware finds it without an NVRAM entry.
-    - Prefer a machine with Intel or AMD graphics. NVIDIA has no Android
-      driver and will not get past software rendering.
+    - Intel (iris), AMD (radeonsi) and NVIDIA (nouveau) all have a driver in
+      the image, and the GPU firmware for all three rides along in a second
+      initramfs, so no vendor needs a build of its own.
 
-  If it does not boot, a serial console is the fastest way to find out why:
-  the kernel command line already carries console=ttyS0,115200.
+  If it does not boot, pick "verbose, on screen" from the GRUB menu -- the
+  default entry is deliberately quiet and shows nothing on the way up.
+  "verbose, serial only" is the entry that adds console=ttyS0,115200; the
+  default does not carry it, because waiting on a UART that is not there
+  costs a machine without one several seconds per message.
 EOF

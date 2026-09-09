@@ -92,29 +92,124 @@ unsparse() {
     fi
 }
 
-# ------------------------------------------------------------------ GRUB ----
-# TEMPORARY, until NVIDIA firmware ships. Delete this and the ${NOUVEAU_OFF}
-# references below in one go when it does.
+# --------------------------------------------------------- GPU firmware ----
+# NVIDIA GSP ships in a SECOND INITRAMFS, not in the kernel.
 #
-# nouveau declares 65 nvidia/ga10x/* firmware files and this image ships none of
-# them, because GA10x GSP alone is 26-52 MB compressed and will not fit in a
-# kernel image. That would be harmless if a miss failed fast. It does not:
+# This is what finally makes nouveau possible here, and it is the answer
+# doc/08-roadmap.md predicted. CONFIG_EXTRA_FIRMWARE is how i915 and amdgpu are
+# served, and it cannot work for NVIDIA: one Ada GSP blob is 61 MB against a
+# 24 MB bzImage, and every additional GPU family would add tens of megabytes to
+# a kernel that has to be loaded whole on every machine.
+#
+# Firmware in an initramfs avoids all of that, and it works for a BUILT-IN
+# driver, which is the part that is easy to get wrong:
+#
+#   - init/initramfs.c:792 is rootfs_initcall(populate_rootfs), and the initcall
+#     order is fs(5) -> rootfs -> device(6). Built-in drivers probe at
+#     device_initcall, so the archive is already unpacked when nouveau probes.
+#   - firmware_loader/main.c:513 calls wait_for_initramfs() before searching, so
+#     even async unpacking is waited for rather than raced.
+#   - main.c:472 lists /lib/firmware among the search paths, and 881/886 accept
+#     .zst and .xz. CONFIG_FW_LOADER_COMPRESS_ZSTD is on, so the blobs ship
+#     exactly as linux-firmware stores them -- compressed, 202 MB of nvidia
+#     rather than ~280 MB -- and nothing here has to decompress anything.
+#
+# GRUB concatenates multiple initrd files into one image, which is how distros
+# ship early microcode, so this needs no change on the kernel side at all.
+#
+# WHY 570.144 AND NOT 535.113.01. gsp/ad102.c lists both, 570.144 FIRST:
+#     { 1, tu102_gsp_load, &ad102_gsp, &r570_rm_ga102, "570.144"    },
+#     { 0, tu102_gsp_load, &ad102_gsp, &r535_rm_ga102, "535.113.01" },
+# so shipping only the smaller 535 set (37 MB) would miss on 570 first, and a
+# miss is not free -- see the timeout note below. 61 MB and no stall beats
+# 37 MB and a guaranteed one.
+#
+# THE 60-SECOND TRAP, kept here because it is why this took so long to attempt.
 # CONFIG_FW_LOADER_USER_HELPER_FALLBACK=y sets
 # fw_fallback_config.force_sysfs_fallback (fallback_table.c:21), so EVERY miss
 # takes the sysfs path and blocks for .loading_timeout = 60 seconds
 # (fallback_table.c:22) waiting for a userspace helper that does not exist yet.
-# nouveau is built in and drivers/Makefile puts gpu/ (line 68) before usb/
-# (line 107), so this happens before USB is even initialised.
+# nouveau uses firmware_request_nowarn() (nvkm/core/firmware.c:94), which sets
+# FW_OPT_UEVENT without FW_OPT_USERHELPER -- exactly the combination that
+# fw_force_sysfs_fallback() grants the fallback to. So nouveau misses stall too.
+# nouveau is built in and drivers/Makefile runs gpu/ (line 68) before usb/
+# (line 107), so it happens before USB is even up: black screen, NumLock dead,
+# mouse light off. Three boots were abandoned as "hung" during exactly this.
 #
-# On the AMD/NVIDIA workstation that presented as a dead machine: black screen,
-# NumLock unresponsive, mouse light off. It was not hung, it was stalling, and
-# three boots were abandoned during it. Do not re-derive this.
+# The consequence for THIS file: a machine whose NVIDIA chip is not in
+# NVIDIA_FW_CHIPS below still stalls. Add the family rather than re-deriving it.
+# Every GPU family AMD, Intel and NVIDIA ship firmware for, not a chip list.
 #
-# nouveau.modeset=0 is checked at nouveau_drm.c:1495, before the driver is
-# registered at all, so no probe happens and no firmware is ever requested.
-# It costs nothing here: without GSP firmware nouveau cannot drive an Ampere
-# card anyway. modprobe.blacklist would NOT work -- nouveau is built in.
-NOUVEAU_OFF="nouveau.modeset=0"
+# A per-chip list does not survive contact with real machines: this project has
+# already been caught out twice by it, once assuming Ampere when the part was
+# Ada (AD107 vs GA10x), and once shipping ad107 to a laptop whose dGPU is a
+# GA107. The chip is not guessable from the model name and the failure is a
+# 60-second stall per missing file, so the answer is to ship the lot.
+#
+# It is affordable only because these stay COMPRESSED -- the kernel reads
+# firmware/foo.bin.zst directly (see CONFIG_FW_LOADER_COMPRESS_ZSTD). Measured
+# from linux-firmware: nvidia 202 MB, amdgpu 27 MB, i915 9.3 MB, so ~238 MB of
+# a 512 MB ESP against roughly 345 MB expanded. linux-firmware also symlinks
+# heavily -- 274 nvidia files share just 4 distinct GSP blobs -- and cp -a plus
+# cpio preserve those, so the archive never carries a blob twice.
+GPU_FW_VENDORS="${GPU_FW_VENDORS:-nvidia amdgpu i915}"
+GPU_FW_SRC="${GPU_FW_SRC:-/lib/firmware}"
+
+# nouveau.modeset is now passed EXPLICITLY, and defaults to on.
+#
+# Leaving it out would already enable the driver -- nouveau_modeset defaults to
+# -1 (auto) and nouveau_drm.c:1490 only turns that into 0 when
+# drm_firmware_drivers_only() is true, i.e. when `nomodeset` is on the command
+# line, which this image never passes. Stating it anyway is worth the eight
+# characters: the boot log then shows what was asked for rather than what was
+# defaulted to, so a boot that does not probe can be told apart from a boot that
+# probed and failed without re-deriving the kernel's default.
+#
+# NOUVEAU_MODESET=0 in the environment puts the old workaround back for a
+# machine whose GSP firmware is not in NVIDIA_FW_CHIPS. It is checked before the
+# driver registers, so there is no probe and no firmware request at all --
+# modprobe.blacklist would NOT work, because nouveau is built in.
+NOUVEAU_MODESET="${NOUVEAU_MODESET:-1}"
+NOUVEAU_ARG="nouveau.modeset=${NOUVEAU_MODESET}"
+
+# Build the GPU firmware initramfs. See the NVIDIA GSP note above for why the
+# firmware is delivered this way rather than linked into the kernel.
+#
+# The layout inside the archive is the kernel's search path with no leading
+# slash -- lib/firmware/nvidia/<chip>/gsp/... -- because a cpio's members are
+# relative and populate_rootfs unpacks them at /.
+info "building GPU firmware initramfs"
+FWROOT="$WORK/fwroot"
+rm -rf "$FWROOT"
+FW_COUNT=0
+mkdir -p "$FWROOT/lib/firmware"
+for vendor in $GPU_FW_VENDORS; do
+    src="$GPU_FW_SRC/$vendor"
+    if [[ ! -d "$src" ]]; then
+        warn "no $vendor firmware at $src -- that vendor's GPUs will stall 60s per missing file"
+        continue
+    fi
+    # -a keeps symlinks AS symlinks. linux-firmware leans on them heavily
+    # (ad107 -> ad102, and ad102's gsp blob -> ga102's), and dereferencing here
+    # would turn 4 shared GSP blobs into a copy per chip.
+    cp -a "$src" "$FWROOT/lib/firmware/"
+    n=$(find "$src" -type f | wc -l)
+    l=$(find "$src" -type l | wc -l)
+    FW_COUNT=$(( FW_COUNT + n + l ))
+    ok "$vendor: $n files + $l links, $(du -sh --apparent-size "$src" | cut -f1)"
+done
+
+if (( FW_COUNT > 0 )); then
+    # -H newc is the only format the kernel's initramfs unpacker accepts.
+    ( cd "$FWROOT" && find . -print0 | cpio --null -o -H newc --quiet ) > "$WORK/gpufw.img"
+    ok "gpufw.img $(du -h "$WORK/gpufw.img" | cut -f1) ($FW_COUNT files)"
+    GPUFW_INITRD=" /gpufw.img"
+else
+    warn "no GPU firmware bundled; nouveau left disabled"
+    NOUVEAU_ARG="nouveau.modeset=0"
+    GPUFW_INITRD=""
+fi
+
 
 info "building standalone GRUB EFI image"
 # The DEFAULT is entry 1, "verbose, on screen", not entry 0. On a machine that
@@ -199,9 +294,9 @@ menuentry "Android pc_x86_64" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           ${NOUVEAU_OFF} \\
+           ${NOUVEAU_ARG} \\
            console=tty0 loglevel=4
-    initrd /ramdisk.img
+    initrd /ramdisk.img${GPUFW_INITRD}
 }
 
 # The verbose entry stays PERMISSIVE on purpose. It is the escape hatch: if a
@@ -249,10 +344,36 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange \\
-           ${NOUVEAU_OFF} \\
+           ${NOUVEAU_ARG} \\
            earlycon=efifb keep_bootcon \\
            console=tty0 ${KERNEL_EXTRA_ARGS:-}
-    initrd /ramdisk.img
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
+# The same verbose on-screen boot with NVIDIA switched off, as a menu entry
+# rather than something to hand-edit at the GRUB prompt.
+#
+# It exists because editing the linux line by hand is unreliable: these entries
+# are wrapped across continuation lines, and an append that lands in the wrong
+# place is silently dropped -- a boot meant to test nouveau.modeset=0 came back
+# with nouveau.modeset=1 still on the command line and nouveau bound.
+#
+# It is also the recovery path on any machine where the NVIDIA GPU misbehaves,
+# and the A/B half of "is the second DRM device the problem?" -- boot this and
+# the entry above, and the only difference is whether nouveau is present.
+menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           androidboot.logcat_serial=1 \\
+           androidboot.verifiedbootstate=orange \\
+           nouveau.modeset=0 \\
+           earlycon=efifb keep_bootcon \\
+           console=tty0 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
 }
 
 menuentry "Android pc_x86_64 (verbose, serial only)" {
@@ -261,12 +382,12 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
            sysctl.kernel.dmesg_restrict=0 \\
-           ${NOUVEAU_OFF} \\
+           ${NOUVEAU_ARG} \\
            console=ttyS0,115200 \\
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange ${KERNEL_EXTRA_ARGS:-}
-    initrd /ramdisk.img
+    initrd /ramdisk.img${GPUFW_INITRD}
 }
 # The installer entry. Copies this image onto the machine's internal disk and
 # gives userdata whatever is left of it -- see pc_install.sh, which is what
@@ -327,9 +448,9 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            androidboot.pc_install=1 \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           ${NOUVEAU_OFF} \\
+           ${NOUVEAU_ARG} \\
            console=ttyS0,115200 console=tty0 loglevel=1
-    initrd /ramdisk.img
+    initrd /ramdisk.img${GPUFW_INITRD}
 }
 
 # The same install, confirmed HERE instead of at a prompt.
@@ -359,9 +480,9 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
            androidboot.pc_install_confirm=ERASE \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           ${NOUVEAU_OFF} \\
+           ${NOUVEAU_ARG} \\
            console=ttyS0,115200 console=tty0 loglevel=1
-    initrd /ramdisk.img
+    initrd /ramdisk.img${GPUFW_INITRD}
 }
 
 EOF
@@ -403,7 +524,8 @@ mcopy  -i "$WORK/esp.img" "$WORK/bootx64.efi" ::/EFI/BOOT/BOOTX64.EFI
 mcopy  -i "$WORK/esp.img" "$BZIMAGE"          ::/bzImage
 mcopy  -i "$WORK/esp.img" "$RAMDISK"          ::/ramdisk.img
 mcopy  -i "$WORK/esp.img" "$WORK/grub.cfg"    ::/grub.cfg
-ok "ESP populated: BOOTX64.EFI, grub.cfg, bzImage, ramdisk.img"
+[[ -n "$GPUFW_INITRD" ]] && mcopy -i "$WORK/esp.img" "$WORK/gpufw.img" ::/gpufw.img
+ok "ESP populated: BOOTX64.EFI, grub.cfg, bzImage, ramdisk.img${GPUFW_INITRD:+, gpufw.img}"
 
 # ------------------------------------------------------- partition images ----
 info "preparing partition images"
