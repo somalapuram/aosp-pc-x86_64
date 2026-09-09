@@ -1,0 +1,108 @@
+From 1aef32c05ff9fe39aa686761788c74f3d0c8a757 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Wed, 9 Sep 2026 12:48:53 +0530
+Subject: [PATCH] minigbm: decline a DRM node the dumb backend cannot allocate
+ on
+
+The dumb backend is built entirely on DRM_IOCTL_MODE_CREATE_DUMB, which is
+declared with no flags (drm_ioctl.c:708) while drm_ioctl_permit() refuses any
+ioctl not marked DRM_RENDER_ALLOW to a render client (drm_ioctl.c:627-630). So
+on a render node it can only ever return -EACCES.
+
+cros_gralloc_driver's init_try_nodes() tries render nodes first and keeps the
+first backend that accepts one, reaching card nodes only if none does. Since
+this backend accepted any node, every driver without a backend of its own --
+nouveau included -- bound renderD* and then failed every allocation:
+
+    [minigbm:drv_dumb_bo_create_ex(395)]: CREATE_DUMB failed (4, 13)
+    GraphicBufferAllocator: Failed to allocate (384 x 384) ... usage 300: -12
+    F SurfaceFlinger: output buffer not gpu writeable
+
+i915 and amdgpu never noticed: their backends allocate through
+driver-specific GEM ioctls that are render-allowed.
+
+Probe a 16x16 CREATE_DUMB in init and decline the node if it fails, so
+init_try_nodes() moves on. A real allocation rather than a node-type test,
+because what matters is whether this fd can serve the only thing this backend
+does.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012y6EEngXGfpE5SZAok7SgZ
+Change-Id: I3b99284d737811fa770af2f220065010861090ff
+---
+ dumb_driver.c | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/dumb_driver.c b/dumb_driver.c
+index 98c9ba7..6212ff2 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -5,6 +5,8 @@
+  */
+ 
+ #include <errno.h>
++#include <string.h>
++#include <xf86drm.h>
+ 
+ #include "drv_helpers.h"
+ #include "drv_priv.h"
+@@ -33,8 +35,56 @@ static const uint32_t scanout_render_formats[] = { DRM_FORMAT_ARGB8888, DRM_FORM
+ static const uint32_t texture_only_formats[] = { DRM_FORMAT_R8, DRM_FORMAT_NV12, DRM_FORMAT_NV21,
+ 						 DRM_FORMAT_YVU420, DRM_FORMAT_YVU420_ANDROID };
+ 
++/*
++ * Refuse a node that cannot create dumb buffers, so cros_gralloc_driver's
++ * init_try_nodes() moves on and eventually reaches a card node.
++ *
++ * It opens render nodes first and keeps the first backend that accepts one.
++ * Every driver without a backend of its own lands here, on a path built
++ * entirely out of DRM_IOCTL_MODE_CREATE_DUMB -- and that ioctl is declared
++ * with no flags at all (drm_ioctl.c:708), while drm_ioctl_permit() rejects
++ * any ioctl not marked DRM_RENDER_ALLOW when the caller is a render client
++ * (drm_ioctl.c:627-630). So on a render node it can only ever return -EACCES.
++ *
++ * i915 and amdgpu never notice, because their own backends allocate through
++ * driver-specific GEM ioctls that *are* render-allowed. nouveau has no
++ * backend, so on an NVIDIA machine gralloc bound renderD128 and then failed
++ * every single allocation:
++ *     [minigbm:drv_dumb_bo_create_ex(395)]: DRM_IOCTL_MODE_CREATE_DUMB failed (4, 13)
++ *     GraphicBufferAllocator: Failed to allocate (384 x 384) ... usage 300: -12
++ *     F SurfaceFlinger: output buffer not gpu writeable
++ * which is fatal: SurfaceFlinger aborts rather than run without buffers.
++ *
++ * The check is a real allocation rather than a node-type test, because what
++ * matters is whether this fd can serve the only thing this backend does.
++ */
++static int dumb_driver_probe_create(struct driver *drv)
++{
++	struct drm_mode_create_dumb create_dumb = { 0 };
++	struct drm_mode_destroy_dumb destroy_dumb = { 0 };
++	int ret;
++
++	create_dumb.width = 16;
++	create_dumb.height = 16;
++	create_dumb.bpp = 32;
++
++	ret = drmIoctl(drv_get_fd(drv), DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
++	if (ret) {
++		drv_logi("dumb: node rejects CREATE_DUMB (errno %d), declining it\n", errno);
++		return -errno;
++	}
++
++	destroy_dumb.handle = create_dumb.handle;
++	drmIoctl(drv_get_fd(drv), DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
++	return 0;
++}
++
+ static int dumb_driver_init(struct driver *drv)
+ {
++	int ret = dumb_driver_probe_create(drv);
++	if (ret)
++		return ret;
++
+ 	drv_add_combinations(drv, scanout_render_formats, ARRAY_SIZE(scanout_render_formats),
+ 			     &LINEAR_METADATA, BO_USE_RENDER_MASK | BO_USE_SCANOUT);
+ 
+-- 
+2.53.0
+

@@ -6,6 +6,32 @@
 allow { appdomain surfaceflinger bootanim system_server } gpu_device:dir r_dir_perms;
 allow { appdomain surfaceflinger bootanim system_server } graphics_device:chr_file getattr;
 
+# gralloc needs the CARD node, not just the render node, on any GPU whose
+# minigbm backend is the dumb-buffer one -- which is every driver without a
+# backend of its own, nouveau included.
+#
+# cros_gralloc_driver's init_try_nodes() opens render nodes first, and minigbm's
+# dumb backend is built entirely on DRM_IOCTL_MODE_CREATE_DUMB. That ioctl is
+# declared with no flags (drm_ioctl.c:708) while drm_ioctl_permit() refuses any
+# ioctl not marked DRM_RENDER_ALLOW to a render client (drm_ioctl.c:627-630), so
+# on renderD* it can only ever return -EACCES. i915 and amdgpu never notice --
+# their backends allocate through render-allowed driver-specific GEM ioctls --
+# but on an NVIDIA machine every allocation failed:
+#     [minigbm:drv_dumb_bo_create_ex(395)]: CREATE_DUMB failed (4, 13)   <- EACCES
+#     GraphicBufferAllocator: Failed to allocate (384 x 384) ... : -12
+#     F SurfaceFlinger: output buffer not gpu writeable
+#
+# dumb_driver.c now probes CREATE_DUMB in its init and declines a node that
+# cannot serve it, so init_try_nodes() falls through to the card node. This is
+# the other half of that: without it the fallback open is denied and gralloc
+# ends up with no device at all, which is worse than the render node.
+#
+# hal_graphics_allocator already holds gpu_device rw (prebuilts .../202504/
+# private/hal_graphics_allocator.te:10-11); card nodes are labelled
+# graphics_device by our file_contexts:7, and only untrusted_app, isolated_app
+# and shell are neverallow'd it (app.te:606).
+allow hal_graphics_allocator graphics_device:chr_file rw_file_perms;
+
 # The GPU's PCI uevent read that libdrm needs is handled by labelling the
 # subtree sysfs_pci -- see sepolicy/device.te, genfs_contexts and
 # surfaceflinger.te. Apps keep the denial: extending any sysfs read to
