@@ -100,6 +100,47 @@ ok "ndk: $("$TOOLCHAIN/bin/clang" --version | head -1 | sed 's/ (http.*//')"
 
 mkdir -p "$WORK"
 
+# ------------------------------------------------------- native mesa-clc ----
+# Mesa 26.1 compiles some driver internals from OpenCL C. iris, crocus and the
+# Intel/nouveau Vulkan drivers all appear in meson.build's with_driver_using_cl
+# list (915), so asking for iris turns with_clc on, and with_clc enables LLVM
+# unconditionally:
+#
+#     ERROR: Feature llvm cannot be disabled: CLC requires LLVM
+#
+# -Dmesa-clc=system takes the other branch: the cross build then does no CLC of
+# its own and instead calls two binaries that must already be on PATH. They are
+# ordinary host x86_64 programs -- they run at build time and nothing of them
+# ships -- so they link the *host's* LLVM and no LLVM is ever cross-compiled for
+# Android. That is what makes -Dllvm=disabled possible on the target side.
+#
+# Built once and cached; delete out/mesa/prefix-native to force a rebuild.
+CLC_PFX="$WORK/prefix-native"
+if [[ ! -x "$CLC_PFX/bin/mesa_clc" || ! -x "$CLC_PFX/bin/vtn_bindgen2" ]]; then
+    for t in llvm-config-21 llvm-config; do command -v "$t" >/dev/null && break; done
+    command -v llvm-config-21 >/dev/null || command -v llvm-config >/dev/null || die \
+"host LLVM missing, needed to build mesa_clc.
+  sudo apt install llvm-21-dev clang-21 libclang-21-dev \\
+                   libclc-21-dev libllvmspirvlib-21-dev spirv-tools-dev cmake"
+    info "building native mesa_clc + vtn_bindgen2 (host LLVM, one time)"
+    rm -rf "$WORK/native-clc"
+    # Everything a driver would need is switched off: this build exists only to
+    # produce the two compilers, so it wants no GPU driver, no window system.
+    meson setup "$WORK/native-clc" "$MESA_SRC" \
+        --prefix "$CLC_PFX" --libdir lib -Dbuildtype=release \
+        -Dinstall-mesa-clc=true -Dmesa-clc=enabled \
+        -Dgallium-drivers= -Dvulkan-drivers= -Dplatforms= \
+        -Dglx=disabled -Degl=disabled -Dgbm=disabled \
+        -Dopengl=false -Dgles2=disabled -Dvideo-codecs= \
+        -Dllvm=enabled -Dshared-llvm=enabled \
+        >/dev/null
+    ninja -C "$WORK/native-clc" -j"$JOBS"
+    ninja -C "$WORK/native-clc" install >/dev/null
+fi
+[[ -x "$CLC_PFX/bin/mesa_clc" ]] || die "mesa_clc did not build"
+export PATH="$CLC_PFX/bin:$PATH"
+ok "mesa-clc: $(command -v mesa_clc)"
+
 # Both ABIs are needed, not just 64-bit.
 #
 # Android forks a 32-bit zygote (app_process32) unless the product is
@@ -157,7 +198,17 @@ EOF
     # silently does nothing and meson still reports "tried pkgconfig". Build
     # AOSP's own libdrm instead -- the version this tree ships is what the guest
     # actually runs against.
-    if [[ ! -f "$PFX/lib/pkgconfig/libdrm.pc" ]]; then
+    # Guard on the sub-library pkg-config files, not just libdrm.pc. A prefix
+    # built when amdgpu/nouveau were disabled still has a perfectly good
+    # libdrm.pc, so keying the cache on that alone silently reuses a libdrm that
+    # is missing exactly what the current driver list needs, and configure then
+    # dies on "Dependency libdrm_amdgpu not found" with a prefix that looks
+    # populated.
+    drm_stale=
+    for pc in libdrm libdrm_amdgpu libdrm_nouveau; do
+        [[ -f "$PFX/lib/pkgconfig/$pc.pc" ]] || drm_stale=1
+    done
+    if [[ -n "$drm_stale" ]]; then
         info "[$ABI] building libdrm"
         # amdgpu and nouveau are enabled because radeonsi and the nouveau
         # gallium driver link them. mesa/meson.build:1841 does a hard
