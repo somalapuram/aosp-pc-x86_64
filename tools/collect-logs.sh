@@ -67,7 +67,7 @@ sudo mount -o ro "$PART" "$MNT" 2>/dev/null \
 SUBDIRS=(local/tmp vendor/pc .)
 
 copied=0
-for f in kmsg.txt kmsg.prev.txt bootlog.txt bootlog.prev.txt pc_install.log; do
+for f in kmsg.txt kmsg.prev.txt bootlog.txt bootlog.prev.txt pc_install.log props.txt; do
     for d in "${SUBDIRS[@]}"; do
         src="$MNT/$d/$f"
         [[ -f "$src" ]] || continue
@@ -96,6 +96,27 @@ if [[ -f "$K" ]]; then
     printf '  %-28s %s\n' "firmware errors:" "$(grep -acE 'firmware.*fail|Direct firmware load.*failed' "$K" 2>/dev/null)"
     printf '  %-28s %s\n' "/dev/dri nodes:" "$(grep -aA6 'graphics ===' "$K" 2>/dev/null | grep -c 'card\|render')"
 fi
+
+# Which GPU each of the three components picked. Every cross-GPU pairing is a
+# blank screen with nothing obviously wrong in any single part, so print them
+# side by side -- that comparison is the whole diagnosis, and reading it out of
+# three different logs by hand cost several boot cycles.
+echo; info "GPU selection (all three must agree)"
+P="$OUT/props.txt"
+printf '  %-28s %s\n' "gralloc allocates on:" \
+    "$(grep -aoE "gralloc: /dev/dri/[a-zA-Z0-9]+ -> ACCEPTED, backend '[a-z]+'" "$L" 2>/dev/null | head -1 | sed -E "s/.*(card[0-9]|renderD[0-9]+).*'([a-z]+)'/\1 (\2)/" || echo '?')"
+printf '  %-28s %s\n' "hwcomposer displays on:" \
+    "$(grep -aoE "Found Backend '[a-z]+' for '[A-Za-z0-9-]+' and driver '[a-z]+'" "$L" 2>/dev/null | head -1 | sed -E "s/.*for '([A-Za-z0-9-]+)' and driver '([a-z]+)'/\1 (\2)/" || echo '?')"
+printf '  %-28s %s\n' "Mesa renders on:" \
+    "$(grep -aoE 'SurfaceFlinger: renderer  : .*' "$L" 2>/dev/null | head -1 | sed 's/.*renderer  : //' || echo '?')"
+if [[ -f "$P" ]]; then
+    printf '  %-28s %s\n' "drm.gpu.vendor_name:" \
+        "$(grep -aoE 'drm\.gpu\.vendor_name = \[.*\]' "$P" 2>/dev/null | head -1 | sed -E 's/.*\[(.*)\]/\1/' | sed 's/^$/<unset>/')"
+else
+    printf '  %-28s %s\n' "drm.gpu.vendor_name:" "<no props.txt on disk>"
+fi
+# pc_select_egl.sh runs before logd exists, so its decision is in kmsg, not logcat.
+[[ -f "$K" ]] && grep -ao 'pc-select-egl: .*' "$K" 2>/dev/null | head -3 | sed 's/^/  /'
 
 echo; info "network (for adb)"
 [[ -f "$K" ]] && grep -aE 'inet ' "$K" 2>/dev/null | head -4 | sed 's/^/  /'

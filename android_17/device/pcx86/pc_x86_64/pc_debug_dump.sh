@@ -13,6 +13,35 @@
 
 OUT=/dev/hvc1
 
+# /dev/hvc1 is a virtio-console: it exists under QEMU and nowhere else, so on
+# real hardware this dump went to a device that was not there and the whole
+# thing was invisible. Write a second copy where tools/collect-logs.sh can find
+# it -- it already scans /data/local/tmp for kmsg.txt and bootlog.txt.
+#
+# Worth having on its own: whether a GL client got the GPU-selection property is
+# a one-line question, and answering it from logcat alone took a boot cycle.
+FILE=/data/local/tmp/props.txt
+
+gpu_state() {
+    echo "=== GPU SELECTION ==="
+    for p in drm.gpu.vendor_name vendor.pc.gpu ro.hardware.egl ro.hardware.gralloc \
+             ro.hardware.vulkan vendor.hwc.drm.device; do
+        echo "$p = [$(getprop $p)]"
+    done
+    echo "--- cards, connectors and who drives what ---"
+    for c in /sys/class/drm/card[0-9]; do
+        [ -e "$c" ] || continue
+        echo "$(basename "$c"): driver=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null) boot_vga=$(cat "$c/device/boot_vga" 2>/dev/null)"
+        for conn in "$c"-*; do
+            [ -e "$conn/status" ] || continue
+            echo "    $(basename "$conn") = $(cat "$conn/status" 2>/dev/null)"
+        done
+    done
+    echo "--- dri nodes ---"
+    ls -lZ /dev/dri/ 2>&1
+    echo "=== END GPU SELECTION ==="
+}
+
 {
     echo "=== PC DEBUG DUMP ==="
 
@@ -48,5 +77,6 @@ OUT=/dev/hvc1
     echo "--- bpffs labels ---"
     ls -ldZ /sys/fs/bpf /sys/fs/bpf/net_shared /sys/fs/bpf/netd_shared 2>&1
 
+    gpu_state
     echo "=== END PC DEBUG DUMP ==="
-} > "$OUT" 2>&1
+} 2>&1 | tee "$FILE" > "$OUT"

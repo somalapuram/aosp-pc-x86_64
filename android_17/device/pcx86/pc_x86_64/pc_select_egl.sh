@@ -34,6 +34,22 @@
 
 TAG=pc-select-egl
 
+# This script runs from `exec_start` on early-init, and logd does not exist
+# yet -- it starts several hundred ms later. Everything sent to `log -t` before
+# that is discarded, which is why a boot that took every decision correctly
+# still came back with zero pc-select-egl lines in logcat and no way to tell
+# what it had chosen.
+#
+# /dev/kmsg is available from the moment init runs, and tools/collect-logs.sh
+# already pulls the kernel log off the disk, so the decision lands somewhere
+# that survives a power-off. <3> is KERN_ERR, which clears the loglevel=4 the
+# default GRUB entry boots with; the logcat line is kept as well for the case
+# where something starts this later, once logd is up.
+say() {
+    echo "<3>$TAG: $*" > /dev/kmsg 2>/dev/null || true
+    log -t "$TAG" "$*" 2>/dev/null || true
+}
+
 # Detect by driver binding, not by the driver symlink on the DRM node.
 #
 # /sys/class/drm/card0/device/driver looked like the obvious source and is
@@ -180,12 +196,12 @@ done
 
 if [ -n "$best_drv" ]; then
     setprop drm.gpu.vendor_name "$best_drv"
-    log -t "$TAG" "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated)) -> drm.gpu.vendor_name=$best_drv"
+    say "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated)) -> drm.gpu.vendor_name=$best_drv"
 else
-    log -t "$TAG" "no card has a connected connector; leaving drm.gpu.vendor_name unset"
+    say "no card has a connected connector; leaving drm.gpu.vendor_name unset"
 fi
 
 setprop vendor.pc.gpu "$egl"
 
-log -t "$TAG" "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
+say "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
 
