@@ -447,6 +447,50 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
+# Render on the NVIDIA GPU, scan out on the one wired to the panel.
+#
+# On a muxless laptop the discrete GPU has no connectors at all, so it can never
+# be the display -- but it can still be the RENDERER, with the iGPU scanning out
+# what it draws. That is PRIME render offload, and this entry is what asks for it:
+# androidboot.pc_render_gpu=offload becomes ro.boot.pc_render_gpu, which
+# pc_select_egl.sh reads before it publishes drm.gpu.vendor_name.
+#
+# Nothing in the image is per-board. The script discovers the offload GPU by the
+# only property that matters -- a card with a render node and no connected
+# connector -- so this entry does the right thing on any machine, and does
+# nothing at all on one with a single GPU.
+#
+# Why this is a MENU ENTRY and not the default:
+#
+# droid_open_device() in Mesa does not fall back once drm.gpu.vendor_name is set.
+# It filters to the matching card, tries it, and breaks out of the loop whether
+# or not the screen was created:
+#     if (!droid_probe_device(disp, false)) { close(fd); fd = -1; }
+#     break;
+# So if nouveau cannot make a screen on this particular chip, EGL initialisation
+# fails, SurfaceFlinger cannot find a GL implementation, and it aborts in a loop
+# -- a black screen and no way in. The default entry keeps rendering on the card
+# that is known to work; picking this one is a deliberate act, and picking the
+# default again at the menu is the whole of the way back.
+#
+# PERMISSIVE and on-screen because this is a bring-up entry: if it fails, the
+# reason needs to be readable off the panel, and a policy denial must not be
+# what stops it before Mesa has even been asked the question.
+menuentry "Android pc_x86_64 (NVIDIA render offload)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           androidboot.pc_render_gpu=offload \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           loglevel=7 printk.devkmsg=on \\
+           androidboot.verifiedbootstate=orange \\
+           ${NOUVEAU_ARG} \\
+           earlycon=efifb keep_bootcon \\
+           console=tty0 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
 menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\

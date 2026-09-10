@@ -10,9 +10,17 @@
 #                                involved at all.
 #   i915 / xe          -> mesa   Mesa's iris driver. Real acceleration on the
 #                                Intel GPU; SwiftShader is not involved.
-#   amdgpu / radeon /  -> angle  This Mesa carries iris and virgl only.
-#   nouveau                      radeonsi needs LLVM and nouveau has no minigbm
-#                                backend, so neither has a driver here.
+#   amdgpu / nouveau   -> mesa   Both have a gallium driver here now. Mesa is
+#                                built gallium-drivers=iris,radeonsi,nouveau,
+#                                virgl,softpipe -- confirmed in
+#                                out/mesa/build-x86_64/meson-info/intro-buildoptions.json
+#                                and by nm -a on the shipped libgallium_dri.so.
+#                                (strings(1) cannot answer this: the
+#                                DRM_DRIVER_DESCRIPTOR_STUB macro emits a
+#                                pipe_<driver>_create_screen symbol for drivers
+#                                that were NOT built.)
+#   radeon             -> mesa   Pre-GCN. r300/r600 are not built, so this ends
+#                                up on softpipe rather than a real driver.
 #
 # Getting this wrong is not subtle. Point real hardware at a Mesa with no
 # driver for its GPU and EGL fails to initialise, so SurfaceFlinger aborts and
@@ -160,7 +168,7 @@ fi
 # a 3D controller with no connectors at all -- "Cannot find any crtc or sizes"
 # -- and the panel is wired to the iGPU, so no amount of preference can make it
 # the display. Rendering on it and scanning out on the iGPU is PRIME render
-# offload, which is a different feature and is not wired up here.
+# offload, which is what the render-GPU block below does when it is asked to.
 best_card= best_drv= best_rank=0
 for c in /sys/class/drm/card[0-9]; do
     [ -e "$c" ] || continue
@@ -195,8 +203,106 @@ for c in /sys/class/drm/card[0-9]; do
 done
 
 if [ -n "$best_drv" ]; then
+    say "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated))"
+else
+    say "no card has a connected connector"
+fi
+
+# ---------------------------------------------------------------- render GPU --
+# Which card Mesa RENDERS on, which is not necessarily the one that scans out.
+#
+# drm.gpu.vendor_name is read by exactly one thing in this whole tree:
+#
+#     external/mesa3d/src/egl/drivers/dri2/platform_android.c
+#         droid_open_device() -> property_get("drm.gpu.vendor_name")
+#                             -> droid_filter_device() vs drmGetVersion()->name
+#
+# Grep for it: minigbm never reads it, and neither does drm_hwcomposer. An
+# earlier comment here claimed it made "Mesa, gralloc and drm_hwcomposer all
+# land on the same card", and that is simply not what the code does. Those two
+# find their own device independently -- minigbm's init_try_nodes() prefers a
+# card node that HAS a display, and drm_hwcomposer takes the card it can master.
+#
+# So this property selects the RENDER device and nothing else, and pointing it
+# at a card that cannot scan out is not a bug. It is PRIME render offload:
+#
+#     gralloc  -> the display card    allocates scanout-capable buffers
+#     Mesa     -> the offload card    renders into those buffers
+#     drmhwc   -> the display card    scans them out
+#
+# The buffers are already shareable across vendors. minigbm is built with
+# -DDRV_PC_FORCE_LINEAR (external/minigbm/Android.bp), so the Intel backend
+# hands out DRM_FORMAT_MOD_LINEAR instead of the I915_FORMAT_MOD_4_TILED_MTL_RC_CCS
+# it would otherwise prefer on Meteor Lake -- and a linear buffer is the one
+# layout a non-Intel GPU can actually import.
+#
+# Discovery, generic and with no board knowledge, mirroring the rules above:
+#
+#   A card is an OFFLOAD candidate when it has a render node, drives no display,
+#   AND is not the boot VGA device -- it can render, it cannot scan out, and it
+#   is the add-in card. That is precisely what a muxless laptop's discrete GPU
+#   is. A card that drives a display is never a candidate, because then there is
+#   nothing to offload: it can render for itself, and rule 2 above already
+#   preferred the discrete one.
+#
+# The boot_vga test is not decoration, and leaving it out is wrong in a way that
+# is easy to miss. On a desktop with the monitor plugged into the DISCRETE card,
+# the integrated GPU also has a render node and also has nothing connected --
+# so "renders but drives no display" describes it perfectly, and offloading to
+# it would render on the weaker part and scan out on the faster one, which is
+# the exact inverse of the point. boot_vga is the firmware's own answer to
+# "which one is built in", so requiring boot_vga != 1 keeps the offload target
+# the add-in card on every machine, with no vendor list and no PCI ids.
+#
+# OFF BY DEFAULT, and gated on the kernel command line, because
+# droid_open_device() does NOT fall back once a vendor name is set:
+#
+#     if (!droid_probe_device(disp, false)) { close(fd); fd = -1; }
+#     break;                                  /* do not try any other device */
+#
+# If the offload card's Mesa driver cannot create a screen, EGL initialisation
+# fails outright, SurfaceFlinger cannot find a GL implementation and aborts in a
+# loop -- the exact failure this file's header exists to prevent. Making it a
+# GRUB choice keeps the default boot on the path that is known to work and
+# leaves a labelled way back at the menu.
+offload_card= offload_drv=
+if [ "$(getprop ro.boot.pc_render_gpu)" = "offload" ]; then
+    for c in /sys/class/drm/card[0-9]; do
+        [ -e "$c" ] || continue
+        [ "$c" = "$best_card" ] && continue
+
+        # Renders? A card only gets a render node when its driver offers one.
+        ls "$c/device/drm/" 2>/dev/null | grep -q '^renderD' || continue
+
+        # Add-in card? The built-in one is never the offload target.
+        [ "$(cat "$c/device/boot_vga" 2>/dev/null)" = "1" ] && continue
+
+        # Scans out? Any connected connector disqualifies it as an offload GPU.
+        drives_display=0
+        for conn in "$c"-*; do
+            [ -e "$conn/status" ] || continue
+            if [ "$(cat "$conn/status" 2>/dev/null)" = "connected" ]; then
+                drives_display=1
+                break
+            fi
+        done
+        [ "$drives_display" = 0 ] || continue
+
+        drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
+        [ -n "$drv" ] && [ "$drv" != "driver" ] || continue
+
+        offload_card=$c
+        offload_drv=$drv
+        break
+    done
+fi
+
+if [ -n "$offload_drv" ]; then
+    setprop drm.gpu.vendor_name "$offload_drv"
+    say "render offload: $(basename "$offload_card") ($offload_drv) renders, $(basename "${best_card:-none}") (${best_drv:-none}) scans out -> drm.gpu.vendor_name=$offload_drv"
+elif [ -n "$best_drv" ]; then
     setprop drm.gpu.vendor_name "$best_drv"
-    say "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated)) -> drm.gpu.vendor_name=$best_drv"
+    say "render on the display card $(basename "$best_card") -> drm.gpu.vendor_name=$best_drv"
 else
     say "no card has a connected connector; leaving drm.gpu.vendor_name unset"
 fi
