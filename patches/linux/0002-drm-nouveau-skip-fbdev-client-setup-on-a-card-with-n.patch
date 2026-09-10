@@ -1,7 +1,7 @@
 From 8a1d4772ad541bbba8adbdf11843828361f9330e Mon Sep 17 00:00:00 2001
 From: Somalapuram Amaranath <somalapuram@gmail.com>
 Date: Thu, 10 Sep 2026 13:25:38 +0530
-Subject: [PATCH 2/2] drm/nouveau: skip fbdev client setup on a card with no
+Subject: [PATCH 2/3] drm/nouveau: skip fbdev client setup on a card with no
  CRTCs
 
 Second, independent guard for the same oops. Clearing DRIVER_ATOMIC in

@@ -1,0 +1,154 @@
+From 7a0a2574f099c3052005310f0148bc57f9dd1be7 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 13:41:50 +0530
+Subject: [PATCH 3/3] drm/nouveau: clear DRIVER_ATOMIC where no goto can skip
+ it
+
+The previous placement in nouveau_display_create() was dead code on the very
+device it was written for. That function has two display-less exits and the
+clear sat on only one of them:
+
+    ret = nvif_disp_ctor(&drm->client.device, "kmsDisp", 0, &disp->disp);
+    if (ret == -ENODEV) {
+            ret = 0;
+            drm->headless = true;
+            goto disp_create_err;      /* jumps over it, and returns 0 */
+    }
+
+disp_create_err runs poll_fini + mode_config_cleanup and returns ret, which is
+0 -- a SUCCESS return. Probe continues with DRIVER_ATOMIC still set and
+mode_config.funcs still nouveau_mode_config_funcs, whose ->atomic_commit is
+NULL, and the panic is unchanged.
+
+Confirmed in the machine code of the build that still oopsed:
+
+    +0x164  cmp  $0xffffffed,%eax        ; -ENODEV
+    +0x16d  movb $0x1,0x1658(%r14)       ; drm->headless = true
+    +0x177  jmp  +0x4e7                  ; -> epilogue, clear SKIPPED
+    +0x17c  cmpq $0x0,0x60(%r15)         ; disp->outp_mask
+    +0x18b  je   +0xf6                   ; the other exit, which DID reach it
+    +0x50d  andb $0xef,0x70(%rbx)        ; driver_features &= ~DRIVER_ATOMIC
+
+A class 030200 3D controller exposes no *_DISP class, so nvif_mclass() returns
+its initial -ENODEV and that is the arm this hardware takes. The boot that
+proved it printed "no CRTCs; skipping fbdev client setup" and NOT "no
+atomic_commit installed", which is exactly the signature of the skipped branch.
+
+Moved to nouveau_drm_probe(), downstream of every nouveau_display_create()
+exit and immediately upstream of the only in-kernel consumer. The !funcs guard
+is deliberate: drm_mode_config_cleanup() has already run on the headless path,
+though it does not clear mode_config.funcs.
+
+This is not redundant with the num_crtc guard. That one closes the in-kernel
+caller; the feature bit also gates userspace -- DRM_CLIENT_CAP_ATOMIC
+(drm_ioctl.c:338) and drm_mode_atomic_ioctl() (drm_atomic_uapi.c:1618) check
+nothing else -- and drm_hwcomposer opens every /dev/dri/cardN and sets that cap.
+Leaving the flag set would trade a probe-time oops for an ioctl-triggered one.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GyZRNL2xBh9BWrNiQX2Hsh
+---
+ drivers/gpu/drm/nouveau/nouveau_display.c | 30 ---------------
+ drivers/gpu/drm/nouveau/nouveau_drm.c     | 45 +++++++++++++++++++++++
+ 2 files changed, 45 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_display.c b/drivers/gpu/drm/nouveau/nouveau_display.c
+index 4f881ece88e5..d71dcfc6ee66 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_display.c
++++ b/drivers/gpu/drm/nouveau/nouveau_display.c
+@@ -710,36 +710,6 @@ nouveau_display_create(struct drm_device *dev)
+ 	if (ret)
+ 		goto disp_create_err;
+ 
+-	/* Do not claim DRIVER_ATOMIC on a device that installed no atomic_commit.
+-	 *
+-	 * nouveau.atomic=1 sets DRIVER_ATOMIC on the shared driver struct before
+-	 * any device exists (nouveau_drm.c), so it lands on every nouveau card in
+-	 * the machine. Only nv50+ display installs atomic funcs (dispnv50/disp.c);
+-	 * a card that reaches the else-branch above -- no outp_mask and no DCB
+-	 * entries -- keeps nouveau_mode_config_funcs, which has fb_create and
+-	 * nothing else.
+-	 *
+-	 * drm_drv_uses_atomic_modeset() then returns true purely on the feature
+-	 * flag (drm_drv.h:563), so the fbdev client takes the atomic path and
+-	 * drm_atomic_commit() calls a NULL ->atomic_commit. On a hybrid laptop,
+-	 * where the discrete GPU is a 3D controller with no display engine, that
+-	 * is an oops during probe before anything is mounted:
+-	 *
+-	 *     drm_atomic_commit+0xbe/0xe0
+-	 *     drm_client_modeset_commit_atomic+0x19b/0x230
+-	 *     drm_fbdev_client_hotplug+0x66/0xb0
+-	 *     nouveau_drm_probe+0x15d/0x170
+-	 *     RIP: 0010:0x0
+-	 *
+-	 * driver_features is a per-device MASK ANDed with the driver's
+-	 * (drm_drv.h:532), so clearing it here disables atomic for this card only
+-	 * and leaves a second, display-capable nouveau card untouched.
+-	 */
+-	if (!dev->mode_config.funcs->atomic_commit) {
+-		dev->driver_features &= ~DRIVER_ATOMIC;
+-		NV_INFO(drm, "no atomic_commit installed; DRIVER_ATOMIC cleared\n");
+-	}
+-
+ 	drm_mode_config_reset(dev);
+ 
+ 	if (dev->mode_config.num_crtc) {
+diff --git a/drivers/gpu/drm/nouveau/nouveau_drm.c b/drivers/gpu/drm/nouveau/nouveau_drm.c
+index f5dfe3e99442..311d6ddbe207 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_drm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_drm.c
+@@ -929,6 +929,51 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
+ 	 * Skipping it costs nothing real either way -- there is no console to lose
+ 	 * on a card with no CRTC.
+ 	 */
++	/* Drop DRIVER_ATOMIC on a card that installed no atomic_commit.
++	 *
++	 * nouveau.atomic=1 ORs the flag into the shared driver_pci struct above,
++	 * before any device exists, so it lands on every nouveau card in the
++	 * machine. Only nv04/nv50 display install atomic funcs; a card with no
++	 * display engine keeps nouveau_mode_config_funcs (nouveau_display.c:353),
++	 * which has .fb_create and nothing else. drm_drv_uses_atomic_modeset()
++	 * then returns true on the feature flag alone (drm_drv.h:563) and
++	 * drm_atomic_commit() calls straight through a NULL pointer.
++	 *
++	 * This has to live HERE rather than in nouveau_display_create(). That
++	 * function has three exits, and the one this hardware takes is a goto:
++	 *
++	 *     ret = nvif_disp_ctor(...);
++	 *     if (ret == -ENODEV) { ret = 0; drm->headless = true;
++	 *                           goto disp_create_err; }
++	 *
++	 * disp_create_err cleans up and returns 0 -- a SUCCESS return that jumps
++	 * over everything after it. A PCI class 030200 3D controller exposes no
++	 * *_DISP class, so nvif_sclass() gives -ENODEV and that is exactly the
++	 * path taken. A clear placed later in that function compiles in and is
++	 * never reached; confirmed by disassembling a build that still panicked.
++	 *
++	 * By this point every one of those exits has been taken.
++	 *
++	 * driver_features is a per-device mask ANDed with the driver's
++	 * (drm_drv.h:532), so this disables atomic for this card alone and leaves
++	 * a display-capable nouveau card -- where drm_hwcomposer genuinely needs
++	 * DRM_CLIENT_CAP_ATOMIC -- untouched.
++	 */
++	if (!drm->dev->mode_config.funcs ||
++	    !drm->dev->mode_config.funcs->atomic_commit) {
++		drm->dev->driver_features &= ~DRIVER_ATOMIC;
++		NV_INFO(drm, "no atomic_commit; DRIVER_ATOMIC cleared for this card\n");
++	}
++
++	/* Defence in depth, and not redundant with the clear above: that one also
++	 * closes the USERSPACE route, since drm_mode_atomic_ioctl()
++	 * (drm_atomic_uapi.c:1618) and DRM_CLIENT_CAP_ATOMIC (drm_ioctl.c:338)
++	 * gate on the feature flag alone -- and drm_hwcomposer opens every
++	 * /dev/dri/cardN and sets that cap, so leaving the flag set would trade a
++	 * probe-time oops for an ioctl-triggered one. This guard closes the
++	 * in-kernel route: an fbdev console needs a CRTC to scan out to, and a
++	 * card with none has nothing to set up.
++	 */
+ 	if (drm->dev->mode_config.num_crtc) {
+ 		drm_client_setup(drm->dev, format);
+ 	} else {
+-- 
+2.53.0
+
