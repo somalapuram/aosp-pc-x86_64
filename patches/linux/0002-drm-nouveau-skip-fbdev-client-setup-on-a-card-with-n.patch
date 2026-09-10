@@ -1,0 +1,104 @@
+From 8a1d4772ad541bbba8adbdf11843828361f9330e Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 13:25:38 +0530
+Subject: [PATCH 2/2] drm/nouveau: skip fbdev client setup on a card with no
+ CRTCs
+
+Second, independent guard for the same oops. Clearing DRIVER_ATOMIC in
+nouveau_display_create() should be sufficient on its own, and the disassembly
+agrees on the mechanism -- drm_atomic_commit+0xbe is the return address of
+
+    mov 0x2f8(%r14),%rax     ; dev->mode_config.funcs
+    mov 0x20(%rax),%r11      ; ->atomic_commit
+    call *%r11
+
+so ->atomic_commit really is NULL, which only happens when no display was
+created and nouveau_mode_config_funcs (.fb_create and nothing else) is still
+installed. That is exactly the case the first guard tests for. The panic
+nevertheless reproduced, so this does not depend on any capability bit being
+right: an fbdev console needs a CRTC to scan out to, a card with none has
+nothing to set up, and drm_client_setup() is simply not called for it.
+
+Costs nothing real -- there is no console to lose on a card with no CRTC, and
+earlier boots of the affected laptop already said as much:
+
+    nouveau ...: [drm] No compatible format found
+    nouveau ...: [drm] Cannot find any crtc or sizes
+
+Both guards now log when they fire, so the next boot says which path was taken
+instead of leaving it to be inferred:
+
+    nouveau ...: no atomic_commit installed; DRIVER_ATOMIC cleared
+    nouveau ...: no CRTCs; skipping fbdev client setup
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GyZRNL2xBh9BWrNiQX2Hsh
+---
+ drivers/gpu/drm/nouveau/nouveau_display.c |  4 ++-
+ drivers/gpu/drm/nouveau/nouveau_drm.c     | 34 ++++++++++++++++++++++-
+ 2 files changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_display.c b/drivers/gpu/drm/nouveau/nouveau_display.c
+index 22fcf3a373b3..4f881ece88e5 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_display.c
++++ b/drivers/gpu/drm/nouveau/nouveau_display.c
+@@ -735,8 +735,10 @@ nouveau_display_create(struct drm_device *dev)
+ 	 * (drm_drv.h:532), so clearing it here disables atomic for this card only
+ 	 * and leaves a second, display-capable nouveau card untouched.
+ 	 */
+-	if (!dev->mode_config.funcs->atomic_commit)
++	if (!dev->mode_config.funcs->atomic_commit) {
+ 		dev->driver_features &= ~DRIVER_ATOMIC;
++		NV_INFO(drm, "no atomic_commit installed; DRIVER_ATOMIC cleared\n");
++	}
+ 
+ 	drm_mode_config_reset(dev);
+ 
+diff --git a/drivers/gpu/drm/nouveau/nouveau_drm.c b/drivers/gpu/drm/nouveau/nouveau_drm.c
+index e16f59b00f6f..f5dfe3e99442 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_drm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_drm.c
+@@ -901,7 +901,39 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
+ 	else
+ 		format = NULL;
+ 
+-	drm_client_setup(drm->dev, format);
++	/* An fbdev console needs somewhere to scan out. A card with no CRTCs has
++	 * nowhere, and setting the client up anyway is what oopses this driver on
++	 * a hybrid laptop: the discrete GPU there is a 3D controller with no
++	 * display outputs, and earlier boots said so plainly --
++	 *
++	 *     nouveau ...: [drm] No compatible format found
++	 *     nouveau ...: [drm] Cannot find any crtc or sizes
++	 *
++	 * With nouveau.atomic=1 that same path stops being merely useless and
++	 * becomes fatal, because drm_client_modeset_commit() then takes the atomic
++	 * branch into drm_atomic_commit(), whose last act is an indirect call
++	 * through dev->mode_config.funcs->atomic_commit. On a card that never
++	 * created a display that pointer is NULL -- nouveau_mode_config_funcs
++	 * (nouveau_display.c:353) defines .fb_create and nothing else -- so the
++	 * kernel jumps to 0 during probe, before anything is mounted:
++	 *
++	 *     drm_atomic_commit+0xbe/0xe0        <- return addr of "call *%r11"
++	 *     drm_client_modeset_commit_atomic+0x19b/0x230
++	 *     drm_fbdev_client_hotplug+0x66/0xb0
++	 *     nouveau_drm_probe+0x15d/0x170
++	 *     RIP: 0010:0x0
++	 *
++	 * nouveau_display_create() already clears DRIVER_ATOMIC for such a device,
++	 * which should be enough on its own; this is the second, independent guard,
++	 * and the one that does not depend on any capability bit being right.
++	 * Skipping it costs nothing real either way -- there is no console to lose
++	 * on a card with no CRTC.
++	 */
++	if (drm->dev->mode_config.num_crtc) {
++		drm_client_setup(drm->dev, format);
++	} else {
++		NV_INFO(drm, "no CRTCs; skipping fbdev client setup\n");
++	}
+ 
+ 	quirk_broken_nv_runpm(pdev);
+ 	return 0;
+-- 
+2.53.0
+

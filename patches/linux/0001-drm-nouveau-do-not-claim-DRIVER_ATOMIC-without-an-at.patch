@@ -1,7 +1,7 @@
 From 05749a111ae04684d5b1e10658f37f5d5dc640bf Mon Sep 17 00:00:00 2001
 From: Somalapuram Amaranath <somalapuram@gmail.com>
 Date: Thu, 10 Sep 2026 13:07:46 +0530
-Subject: [PATCH] drm/nouveau: do not claim DRIVER_ATOMIC without an
+Subject: [PATCH 1/2] drm/nouveau: do not claim DRIVER_ATOMIC without an
  atomic_commit
 
 nouveau.atomic=1 sets DRIVER_ATOMIC on the shared driver struct before any
