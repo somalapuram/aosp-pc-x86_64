@@ -1,0 +1,67 @@
+From c6dd45d978fd2b60a604a0ffbfab8cc94cc2849f Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 11:29:46 +0530
+Subject: [PATCH] egl/android: never hold DRM master
+
+The swrast pass opens the PRIMARY node, and opening one makes the opener DRM
+master whenever the device has no master yet (drm_master_open()). EGL is
+initialised inside SurfaceFlinger and inside every app process, so one of them
+wins that race against the compositor, which then cannot get it:
+
+    drmhwc: DRM/KMS master access required
+    drmhwc: No pipelines available. Creating null-display for headless mode
+
+-- a console and no GUI, caused by the one process that had no business being
+master. Observed as soon as kms_swrast started opening the primary node on an
+NVIDIA Ada: every EGLImage failure was gone and the display went headless
+instead.
+
+kms_swrast wants this fd only for dumb buffers, and
+DRM_IOCTL_MODE_CREATE_DUMB is declared with no flags at all (drm_ioctl.c:708),
+so it needs no master. Only the compositor should hold it.
+
+Dropping right after open is a no-op on render nodes and whenever we did not
+become master -- it just returns an error, which is why the result is ignored.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Ghm63XPLUfxBs2tU2pnkjX
+Change-Id: I02b2900b367d0f800f350b877d29b310f90be8ce
+---
+ src/egl/drivers/dri2/platform_android.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index 7d53be98a3a..aa69ff19b63 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -1143,6 +1143,27 @@ droid_open_device(_EGLDisplay *disp, bool swrast)
+          goto next;
+       }
+ 
++      /* Never hold DRM master.
++       *
++       * The swrast pass opens the PRIMARY node, and opening one makes the
++       * opener master whenever the device has no master yet
++       * (drm_master_open()). EGL is initialised inside SurfaceFlinger and
++       * inside every app, so one of them wins that race against the
++       * compositor, which then cannot get it:
++       *
++       *     drmhwc: DRM/KMS master access required
++       *     drmhwc: No pipelines available. Creating null-display for headless
++       *
++       * -- a console and no GUI, from the one process that had no business
++       * being master. kms_swrast wants this fd only for dumb buffers, which
++       * DRM_IOCTL_MODE_CREATE_DUMB serves with no flags at all and therefore
++       * no master requirement. Only the compositor should hold it.
++       *
++       * A no-op on render nodes and whenever we did not become master, which
++       * is why the result is ignored.
++       */
++      drmDropMaster(dri2_dpy->fd_render_gpu);
++
+       /* If a vendor is explicitly provided, we use only that.
+        * Otherwise we fall-back the first device that is supported.
+        */
+-- 
+2.53.0
+
