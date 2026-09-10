@@ -6,12 +6,24 @@
 # so no script of ours can set it directly, in any domain, at build time. But
 # init.pc_x86_64.rc is a VENDOR rc, and property sets in it run as vendor_init,
 # which is on that list. So the script reports what it found and init decides.
-# public, not internal: Mesa reads drm.gpu.vendor_name from inside
-# SurfaceFlinger, bootanim and every app, and vendor_internal_prop refuses all
-# of them --
-#     W libc: Access denied finding property "drm.gpu.vendor_name"
-# nine times in one boot, with the property correctly set and nobody able to
-# see it. A property whose whole purpose is to steer GL clients has to be
-# readable by GL clients. Writing stays restricted to vendor_init and
-# vendor_shell (below), which is where the value comes from.
+# vendor_public_prop declares the TYPE, it does not grant read.
+#
+# That distinction cost a boot. define_prop() (te_macros:922) only emits
+#     type $1, property_type, vendor_property_type, vendor_public_property_type;
+# where "public" means the type name is part of the policy API that vendor
+# policy may reference -- NOT that anyone may read the property. Switching from
+# vendor_internal_prop to vendor_public_prop therefore changed nothing at
+# runtime: 464 denials in one boot, with the values correctly set and invisible.
+#
+#     W libc: Access denied finding property "vendor.mesa.nouveau.use.zink"
+#
+# Reading is granted by get_prop() (te_macros:385) and nothing else. Mesa reads
+# these in-process, in SurfaceFlinger, bootanim and every app that touches GL,
+# so the read has to be granted to `domain` -- narrowing it to a list of GL
+# domains would just be a list of every domain that ever draws.
+#
+# These are two read-only selection hints (which GPU to render on, whether to
+# take the zink path). Writing stays restricted to vendor_init and vendor_shell
+# below, which is where the values come from.
 vendor_public_prop(vendor_pc_gpu_prop)
+get_prop(domain, vendor_pc_gpu_prop)
