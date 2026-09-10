@@ -257,7 +257,25 @@ PRODUCT_PACKAGES += \
 #
 # It also means adding a GPU family needs no change here: the kernel driver
 # binds, a DRM node appears, and hwcomposer finds it.
+# Force Mesa's legacy nouveau-GL path instead of zink.
+#
+# loader.c:164 sets prefer_zink for any NVIDIA chipset >= 0x160, which is every
+# NVIDIA part this project has touched (0x172, 0x177, 0x19x). This build has no
+# zink and no NVK, so pipe_zink_create_screen is a DRM_DRIVER_DESCRIPTOR_STUB:
+# it returns NULL and EGL falls back to kms_swrast SOFTWARE rendering, silently.
+# Nothing announces it -- `dumpsys SurfaceFlinger | grep GLES` is the only place
+# it shows.
+#
+# NOUVEAU_USE_ZINK reaches Android through os_get_android_option(), which
+# lowercases the name, maps _ to ., prefixes "mesa." and tries "debug.",
+# "vendor." and bare in that order (os_misc.c:180-193) -- hence this spelling.
+#
+# Honoured only below chipset 0x1a0: loader.c:167 sets require_zink for
+# Blackwell and later, where nouveau GL does not exist and this is ignored with
+# a warning. The proper fix for those is to build zink + NVK, both of which are
+# already in the tree (src/gallium/drivers/zink, src/nouveau/vulkan).
 PRODUCT_VENDOR_PROPERTIES += \
+    vendor.mesa.nouveau.use.zink=0 \
     ro.hardware.egl=mesa \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
     ro.hardware.vulkan=pastel \
