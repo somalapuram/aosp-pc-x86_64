@@ -356,7 +356,34 @@ if [[ -n "${DISK2:-}" ]]; then
               -device nvme,drive=disk1,serial=androidpc1)
     echo "second disk: $DISK2 ($(( $(stat -c %s "$DISK2") / 1024 / 1024 )) MiB) as nvme1n1" >&2
 fi
-if [[ "$GPU" == "plain" ]]; then
+if [[ "$GPU" == "simple" ]]; then
+    # The "KMS but no 3D" case -- a real configuration, not a curiosity.
+    # NVIDIA Ada is exactly this on bare metal: nouveau gives it modesetting, a
+    # copy engine and a display engine, and the kernel carries no .gr for AD10x,
+    # so Mesa has no hardware driver to load.
+    #
+    # -vga std presents a device no DRM driver in this kernel claims (BOCHS,
+    # CIRRUS, QXL and VMWGFX are all off in the fragment), so simpledrm takes the
+    # EFI framebuffer -- reproducing the whole shape of the bare-metal path: a
+    # KMS node with no 3D, gralloc on minigbm's DUMB backend (dumb_driver.c has
+    # simpledrm since patch 0004), and Mesa falling to kms_swrast.
+    #
+    # GPU=plain is NOT a substitute, which cost a test run to learn: virtio-vga
+    # still binds virtio_gpu, so gralloc takes its virgl backend -- logged as
+    # "backend 'virtgpu_virgl'" -- and allocates through virtio-gpu's own
+    # ioctls. Different buffers, different import path, exercises none of this.
+    #
+    # INCOMPLETE: this boots the disk and reaches GRUB, then stops at the menu
+    # rather than counting down, because -vga std changes which console GRUB
+    # drives and the headless serial path stops driving the countdown. Getting
+    # the rest of the way probably means a serial-only GRUB entry, or feeding
+    # the menu a keystroke over the monitor. Left here because the device setup
+    # is the correct shape and finishing it is worth more than rediscovering it.
+    case "$DISPLAY_MODE" in
+        none|auto) GFX=(-vga std -display none) ;;
+        *)         GFX=(-vga std -display "$DISPLAY_MODE") ;;
+    esac
+elif [[ "$GPU" == "plain" ]]; then
 case "$DISPLAY_MODE" in
         none|auto) GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display none) ;;
         *)         GFX=(-device virtio-vga,xres=$XRES,yres=$YRES -display "$DISPLAY_MODE") ;;
@@ -471,7 +498,7 @@ exec qemu-system-x86_64 \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,unit=1,file="$VARS" \
     -drive file="$DISK",format=raw,if=none,id=disk0 \
-    -device nvme,drive=disk0,serial=androidpc0 \
+    -device nvme,drive=disk0,serial=androidpc0,bootindex=0 \
     "${DISK2OPT[@]}" \
     "${GFX[@]}" \
     "${FS[@]}" \
