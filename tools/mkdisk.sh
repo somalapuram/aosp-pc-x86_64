@@ -265,23 +265,30 @@ fi
 
 
 info "building standalone GRUB EFI image"
-# The DEFAULT is entry 1, "verbose, on screen", not entry 0. On a machine that
-# has never booted this image the quiet entry is worse than useless: it prints
-# nothing to the screen AND it omits sysctl.kernel.dmesg_restrict=0, so
-# pc_kmsg_file.sh writes every section of its report except the kernel log --
+# The DEFAULT is entry 0, the quiet one.
+#
+# It was entry 1, "verbose, on screen", through bring-up. On a machine that had
+# never booted this image the quiet entry was worse than useless: it printed
+# nothing to the screen AND omitted sysctl.kernel.dmesg_restrict=0, so
+# pc_kmsg_file.sh wrote every section of its report except the kernel log --
 #
 #     === /dev/kmsg unreadable (dmesg_restrict, needs CAP_SYSLOG) ===
 #
-# -- and a whole boot cycle produces no evidence at all. That happened twice on
-# the AMD workstation. Set GRUB_DEFAULT=0 for the quiet entry once a machine is
-# known good. KERNEL_EXTRA_ARGS appends to every entry.
+# -- and a whole boot cycle produced no evidence at all. That happened twice on
+# the AMD workstation.
+#
+# It is no longer the right default. The machines boot, the log capture writes
+# reliably from post-fs-data, and loglevel=8 painted through fbcon is slow
+# enough to be a nuisance on every ordinary boot. The verbose entries are one
+# arrow-key away when something needs reading. Set GRUB_DEFAULT=1 to put the
+# visible entry back. KERNEL_EXTRA_ARGS appends to every entry.
 #
 # GRUB_TIMEOUT is 5 rather than 3 because the menu is not decoration: the
 # install entry is the last one, and three seconds is not enough time to read
 # the entries and arrow down to it before the default boots.
 cat > "$WORK/grub.cfg" <<EOF
 set timeout=${GRUB_TIMEOUT:-5}
-set default=${GRUB_DEFAULT:-1}
+set default=${GRUB_DEFAULT:-0}
 
 # The ESP carries a volume label so GRUB finds it regardless of disk ordering.
 search --no-floppy --label ANDROIDESP --set=root
