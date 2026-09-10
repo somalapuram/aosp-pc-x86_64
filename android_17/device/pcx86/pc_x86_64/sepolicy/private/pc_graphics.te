@@ -6,6 +6,33 @@
 allow { appdomain surfaceflinger bootanim system_server } gpu_device:dir r_dir_perms;
 allow { appdomain surfaceflinger bootanim system_server } graphics_device:chr_file getattr;
 
+# getattr is not enough any more: Mesa now OPENS the card node in-process.
+#
+# When no hardware driver matches, EGL retries against the PRIMARY node so it
+# can use kms_swrast -- software rasterisation into real dumb buffers on the
+# actual card, which is the only way a machine with KMS and no 3D engine gets a
+# picture. That open happens inside SurfaceFlinger, bootanim and each app, the
+# same way the gralloc mapper already does, and it was refused:
+#
+#     EGL-MAIN: failed to open /dev/dri/card0: Permission denied
+#     EGL-MAIN: droid_open_device() Failed to open DRM device /dev/dri/card0
+#     EGL-MAIN: Failed to open any DRM device
+#     EGL-MAIN: failed to get driver name for fd -1
+#
+# So EGL fell back to PURE swrast, which holds no DRM fd at all, and every
+# frame then died in "failed to create DRI image from FD" -- 1944 of them in one
+# boot -- because a driver with no device cannot import a gralloc dmabuf. The
+# Mesa-side fixes for that path were all in place and could not take effect:
+# with fd -1 there is no winsys, no winsys->get_fd, and so no dmabuf cap.
+#
+# appdomain cannot be named here: app.te:606 neverallows untrusted_app,
+# isolated_app and shell read/write on graphics_device, and appdomain includes
+# them. The privileged app domains are granted individually instead, exactly as
+# surfaceflinger.te does for sysfs_gpu.
+allow { surfaceflinger bootanim system_server } graphics_device:chr_file rw_file_perms;
+allow { priv_app platform_app system_app } graphics_device:chr_file rw_file_perms;
+allow { appdomain surfaceflinger bootanim system_server } graphics_device:dir search;
+
 # gralloc needs the CARD node, not just the render node, on any GPU whose
 # minigbm backend is the dumb-buffer one -- which is every driver without a
 # backend of its own, nouveau included.

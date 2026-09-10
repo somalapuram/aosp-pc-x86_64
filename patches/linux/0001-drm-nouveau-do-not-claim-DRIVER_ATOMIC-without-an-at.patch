@@ -1,0 +1,83 @@
+From 05749a111ae04684d5b1e10658f37f5d5dc640bf Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 13:07:46 +0530
+Subject: [PATCH] drm/nouveau: do not claim DRIVER_ATOMIC without an
+ atomic_commit
+
+nouveau.atomic=1 sets DRIVER_ATOMIC on the shared driver struct before any
+device exists (nouveau_drm.c:882), so it applies to every nouveau card in the
+machine. Only nv50+ display installs atomic mode_config funcs
+(dispnv50/disp.c:2847); a card with no outp_mask and no DCB entries never
+creates a display at all and keeps nouveau_mode_config_funcs, which carries
+.fb_create and nothing else -- ->atomic_commit is NULL.
+
+drm_drv_uses_atomic_modeset() returns true on the feature flag alone
+(drm_drv.h:563), so the fbdev client takes the atomic path and
+drm_atomic_commit() calls that NULL pointer. On a hybrid laptop, where the
+discrete GPU is a 3D controller with no display engine, it oopses during probe
+before anything is mounted:
+
+    drm_atomic_commit+0xbe/0xe0
+    drm_client_modeset_commit_atomic+0x19b/0x230
+    drm_client_modeset_commit+0x22/0x40
+    drm_fbdev_client_hotplug+0x66/0xb0
+    drm_client_register+0x6a/0xb0
+    drm_fbdev_client_setup+0xad/0x1b0
+    nouveau_drm_probe+0x15d/0x170
+    RIP: 0010:0x0
+
+driver_features is a per-device mask ANDed with the driver's (drm_drv.h:532)
+and starts as ~0u (drm_drv.c:726), so clearing it after display creation
+disables atomic for this card alone. A second nouveau card that did install an
+atomic_commit keeps it -- which matters, because on a desktop where nouveau
+drives the monitor drm_hwcomposer requires DRM_CLIENT_CAP_ATOMIC and cannot
+run without it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GyZRNL2xBh9BWrNiQX2Hsh
+---
+ drivers/gpu/drm/nouveau/nouveau_display.c | 28 +++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_display.c b/drivers/gpu/drm/nouveau/nouveau_display.c
+index d71dcfc6ee66..22fcf3a373b3 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_display.c
++++ b/drivers/gpu/drm/nouveau/nouveau_display.c
+@@ -710,6 +710,34 @@ nouveau_display_create(struct drm_device *dev)
+ 	if (ret)
+ 		goto disp_create_err;
+ 
++	/* Do not claim DRIVER_ATOMIC on a device that installed no atomic_commit.
++	 *
++	 * nouveau.atomic=1 sets DRIVER_ATOMIC on the shared driver struct before
++	 * any device exists (nouveau_drm.c), so it lands on every nouveau card in
++	 * the machine. Only nv50+ display installs atomic funcs (dispnv50/disp.c);
++	 * a card that reaches the else-branch above -- no outp_mask and no DCB
++	 * entries -- keeps nouveau_mode_config_funcs, which has fb_create and
++	 * nothing else.
++	 *
++	 * drm_drv_uses_atomic_modeset() then returns true purely on the feature
++	 * flag (drm_drv.h:563), so the fbdev client takes the atomic path and
++	 * drm_atomic_commit() calls a NULL ->atomic_commit. On a hybrid laptop,
++	 * where the discrete GPU is a 3D controller with no display engine, that
++	 * is an oops during probe before anything is mounted:
++	 *
++	 *     drm_atomic_commit+0xbe/0xe0
++	 *     drm_client_modeset_commit_atomic+0x19b/0x230
++	 *     drm_fbdev_client_hotplug+0x66/0xb0
++	 *     nouveau_drm_probe+0x15d/0x170
++	 *     RIP: 0010:0x0
++	 *
++	 * driver_features is a per-device MASK ANDed with the driver's
++	 * (drm_drv.h:532), so clearing it here disables atomic for this card only
++	 * and leaves a second, display-capable nouveau card untouched.
++	 */
++	if (!dev->mode_config.funcs->atomic_commit)
++		dev->driver_features &= ~DRIVER_ATOMIC;
++
+ 	drm_mode_config_reset(dev);
+ 
+ 	if (dev->mode_config.num_crtc) {
+-- 
+2.53.0
+
