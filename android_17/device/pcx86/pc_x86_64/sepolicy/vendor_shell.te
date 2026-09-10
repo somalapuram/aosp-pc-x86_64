@@ -54,3 +54,34 @@ allow vendor_shell audio_device:chr_file rw_file_perms;
 # camera_device is /dev/camera* and is a different type entirely.
 allow vendor_shell video_device:chr_file rw_file_perms;
 allow vendor_shell video_device:dir r_dir_perms;
+
+# pc_select_egl.sh decides which GPU drives the display and publishes it as
+# drm.gpu.vendor_name, which is what makes Mesa, gralloc and drm_hwcomposer
+# agree on one card. It derives that from the connectors:
+#
+#     for c in /sys/class/drm/card[0-9]; do
+#         for conn in "$c"-*; do
+#             [ "$(cat "$conn/status")" = "connected" ] && drv=...card/device/driver
+#
+# and every one of those reads was refused, so the property was never set at all
+# and the "fix" that depends on it could not work:
+#
+#     avc: denied { read }   comm="pc_select_egl.s" name="drm" dev="sysfs"
+#          scontext=u:r:vendor_shell:s0 tcontext=u:object_r:sysfs_gpu:s0 tclass=dir
+#     avc: denied { search } ... same
+#
+# shell, surfaceflinger, bootanim, system_server and the app domains were all
+# granted sysfs_gpu already (shell.te, surfaceflinger.te); vendor_shell -- the
+# domain the script actually runs in -- was the one that was missed. Read-only:
+# it only ever looks.
+# sysfs_gpu covers /sys/class/drm itself; sysfs_pci covers whatever the
+# card*/ symlinks point AT, because genfscon takes literal path prefixes with no
+# wildcards, so every GPU's own PCI node would otherwise need a per-machine line
+# -- exactly the hard-coding this script exists to avoid. Granting the broad
+# read instead keeps it correct on any board: an RTX 3070 Ti behind 00:01.1, an
+# Ada behind the same, an Intel iGPU at 00:02.0, an AMD iGPU behind 00:08.1.
+# Read-only, and shell already carries the identical pair (shell.te:20-21).
+allow vendor_shell sysfs_gpu:dir r_dir_perms;
+allow vendor_shell sysfs_gpu:file r_file_perms;
+allow vendor_shell sysfs_pci:dir r_dir_perms;
+allow vendor_shell sysfs_pci:file r_file_perms;

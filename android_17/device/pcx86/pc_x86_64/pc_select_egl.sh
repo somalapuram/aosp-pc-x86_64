@@ -132,20 +132,58 @@ fi
 #
 # Derived at runtime from the connectors, so it needs no per-board knowledge:
 # whichever card has something plugged into it wins, on any machine.
+# Two rules, in order, and no board knowledge in either:
+#
+#   1. A card only counts if something is actually plugged into it. A GPU with
+#      no connected connector cannot be the display, whatever else it is.
+#   2. Among the cards that DO drive a display, prefer the discrete one. On a
+#      dual-GPU desktop the monitor may be in either socket, and the discrete
+#      card is the faster of the two.
+#
+# Rule 1 is what keeps this honest on a hybrid laptop. There the NVIDIA part is
+# a 3D controller with no connectors at all -- "Cannot find any crtc or sizes"
+# -- and the panel is wired to the iGPU, so no amount of preference can make it
+# the display. Rendering on it and scanning out on the iGPU is PRIME render
+# offload, which is a different feature and is not wired up here.
+best_card= best_drv= best_rank=0
 for c in /sys/class/drm/card[0-9]; do
     [ -e "$c" ] || continue
+
+    connected=0
     for conn in "$c"-*; do
         [ -e "$conn/status" ] || continue
         if [ "$(cat "$conn/status" 2>/dev/null)" = "connected" ]; then
-            drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
-            if [ -n "$drv" ] && [ "$drv" != "driver" ]; then
-                setprop drm.gpu.vendor_name "$drv"
-                log -t "$TAG" "display is on $(basename "$c") ($drv) -> drm.gpu.vendor_name=$drv"
-            fi
-            break 2
+            connected=1
+            break
         fi
     done
+    [ "$connected" = 1 ] || continue
+
+    drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
+    [ -n "$drv" ] && [ "$drv" != "driver" ] || continue
+
+    # boot_vga is the firmware's own answer to "which one is the built-in
+    # display adapter", so a card WITHOUT it is the add-in card. That is the
+    # generic discrete test -- no vendor list, no PCI ids.
+    if [ "$(cat "$c/device/boot_vga" 2>/dev/null)" = "1" ]; then
+        rank=1          # integrated / boot VGA
+    else
+        rank=2          # discrete
+    fi
+
+    if [ "$rank" -gt "$best_rank" ]; then
+        best_rank=$rank
+        best_card=$c
+        best_drv=$drv
+    fi
 done
+
+if [ -n "$best_drv" ]; then
+    setprop drm.gpu.vendor_name "$best_drv"
+    log -t "$TAG" "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated)) -> drm.gpu.vendor_name=$best_drv"
+else
+    log -t "$TAG" "no card has a connected connector; leaving drm.gpu.vendor_name unset"
+fi
 
 setprop vendor.pc.gpu "$egl"
 
