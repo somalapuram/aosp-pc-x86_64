@@ -1,0 +1,87 @@
+From 00d696d1f3ab449c4c829524f73fa99167e22aa0 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 11:54:31 +0530
+Subject: [PATCH] softpipe: advertise dmabuf import when the winsys has a DRM
+ fd
+
+dri2_from_dma_bufs() refuses at its first line -- "if (!screen->dmabuf_import)
+return NULL" (dri2.c:1422) -- and screen->dmabuf_import comes from
+pscreen->caps.dmabuf (dri_screen.c:656-658), which softpipe never set. llvmpipe
+does, under exactly the condition used here (lp_screen.c:199-201).
+
+Everything under that gate already worked: softpipe_resource_from_handle()
+forwards to winsys->displaytarget_from_handle() (sp_texture.c:238), and the
+kms-dri winsys accepts WINSYS_HANDLE_TYPE_FD (kms_dri_sw_winsys.c:473). Only
+the capability bit was missing, so the frontend declined on softpipe's behalf
+before any of it ran.
+
+It matters on Android, where every buffer the compositor hands EGL arrives from
+gralloc as a dmabuf fd: a software driver that cannot import one has no way to
+draw a frame. On an NVIDIA Ada -- nouveau offers modesetting but no 3D engine
+there, so software is the only option -- this was
+
+    EGL-MAIN: failed to create DRI image from FD
+
+once per frame, forever, with no crash and no picture.
+
+Gated on winsys->get_fd so it stays false for the pure sw winsys, which has no
+device to import against.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QMjAYPTKQPcrZXNmNkDFpE
+Change-Id: I9c8daa4244b67b77e18fe819c845c1083e527f5b
+---
+ src/gallium/drivers/softpipe/sp_screen.c | 30 ++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/src/gallium/drivers/softpipe/sp_screen.c b/src/gallium/drivers/softpipe/sp_screen.c
+index 93023415333..569dfa26e8c 100644
+--- a/src/gallium/drivers/softpipe/sp_screen.c
++++ b/src/gallium/drivers/softpipe/sp_screen.c
+@@ -40,6 +40,10 @@
+ #include "draw/draw_context.h"
+ 
+ #include "frontend/sw_winsys.h"
++
++#ifdef HAVE_LIBDRM
++#include <xf86drm.h>   /* DRM_PRIME_CAP_IMPORT / _EXPORT */
++#endif
+ #include "tgsi/tgsi_exec.h"
+ 
+ #include "sp_texture.h"
+@@ -250,6 +254,32 @@ softpipe_init_screen_caps(struct softpipe_screen *sp_screen)
+ 
+    u_init_pipe_screen_caps(&sp_screen->base, 0);
+ 
++#ifdef HAVE_LIBDRM
++   /* Advertise dmabuf import when the winsys has a real DRM fd, exactly as
++    * llvmpipe does (lp_screen.c:199-201).
++    *
++    * Without this, dri2_from_dma_bufs() refuses at its first line --
++    * "if (!screen->dmabuf_import) return NULL" (dri2.c:1422) -- and never
++    * reaches the import that would have worked. Everything underneath is
++    * already in place: softpipe_resource_from_handle() forwards to
++    * winsys->displaytarget_from_handle() (sp_texture.c:238), and the kms-dri
++    * winsys accepts WINSYS_HANDLE_TYPE_FD (kms_dri_sw_winsys.c:473). Only the
++    * capability bit was missing, so the frontend declined on softpipe's behalf.
++    *
++    * It matters on Android: every buffer the compositor hands EGL comes from
++    * gralloc as a dmabuf fd, so a software driver that cannot import one has
++    * no way to draw a frame. On an NVIDIA Ada -- where nouveau offers
++    * modesetting but no 3D engine, making software the only option -- this was
++    * "failed to create DRI image from FD" once per frame, forever.
++    *
++    * Gated on get_fd so it stays false for the pure sw winsys, which has no
++    * device to import against.
++    */
++   struct sw_winsys *winsys = sp_screen->winsys;
++   if (winsys && winsys->get_fd)
++      caps->dmabuf = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
++#endif
++
+    caps->npot_textures = true;
+    caps->mixed_framebuffer_sizes = true;
+    caps->mixed_color_depth_bits = true;
+-- 
+2.53.0
+
