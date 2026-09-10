@@ -29,7 +29,17 @@ set_prop(vendor_shell, vendor_pc_gpu_prop)
 # appdomain. dmesg_restrict is set to 0 on the kernel command line, but
 # devkmsg_open calls security_syslog() regardless, so both are needed.
 allow vendor_shell kernel:system syslog_read;
-allow vendor_shell kmsg_device:chr_file r_file_perms;
+# Read AND write. pc_select_egl.sh runs from exec_start on early-init, before
+# logd exists, so /dev/kmsg is the only place its decision can survive -- logd
+# slurps the whole ring buffer when it starts, so the line still lands in
+# logcat's kernel buffer and therefore in bootlog.txt. With read-only access the
+# breadcrumb was silently dropped and the boot looked exactly like one where the
+# script had never run at all:
+#     avc: denied { write } comm="pc_select_egl.s" name="kmsg"
+#          scontext=u:r:vendor_shell:s0 tcontext=u:object_r:kmsg_device:s0
+# Only untrusted and priv apps are neverallow'd this (app_neverallows.te:26,
+# priv_app_all.te:235); vendor_shell is neither.
+allow vendor_shell kmsg_device:chr_file rw_file_perms;
 allow vendor_shell pc_debug_data_file:dir rw_dir_perms;
 allow vendor_shell pc_debug_data_file:file create_file_perms;
 

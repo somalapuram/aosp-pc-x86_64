@@ -79,4 +79,8 @@ gpu_state() {
 
     gpu_state
     echo "=== END PC DEBUG DUMP ==="
+# If /dev/hvc1 is absent -- i.e. anywhere that is not QEMU -- redirecting to it
+# fails and takes the whole pipeline with it, losing the /data copy too. Fall
+# back to /dev/null so the file is written regardless.
+[ -w "$OUT" ] || OUT=/dev/null
 } 2>&1 | tee "$FILE" > "$OUT"

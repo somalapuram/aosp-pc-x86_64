@@ -1,0 +1,130 @@
+From 5c8d660c068678467aac9f6db3216b67d94bc7e3 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Thu, 10 Sep 2026 09:58:19 +0530
+Subject: [PATCH] egl/android: use kms_swrast on any KMS device, not just
+ vgem/virtio_gpu
+
+droid_load_driver() accepted kms_swrast only for vgem and virtio_gpu and sent
+everything else to `goto error`, on the assumption that software rendering only
+happens under virtualisation. It also happens whenever a card has KMS but no 3D
+engine Mesa can drive.
+
+NVIDIA Ada is exactly that today: nouveau gives it modesetting, a copy engine
+and a display engine, and the kernel has no .gr for AD10x at all
+(nvkm/engine/device/base.c), so nvc0 cannot create a screen no matter what Mesa
+was built with. dri2_initialize_android() then fell through to PURE swrast,
+which sets fd_render_gpu = -1 and holds no DRM device -- and without one it
+cannot import a gralloc buffer:
+
+    skia: ** ERROR ** Could not create EGL image, err = (0x3000)
+    SurfaceFlinger: Failed to create a valid texture. [384,384] format:1
+    libc: Fatal signal 6 (SIGABRT) in tid (RenderEngine)
+
+SurfaceFlinger aborts rather than render slowly, so "slow desktop" became "no
+desktop".
+
+kms_swrast is the same rasteriser with a real DRM fd: it draws into dumb buffers
+on the actual card, so gralloc's buffers import normally. Two changes:
+
+  - stop refusing it by driver name. This branch is only reached on the software
+    pass, after the hardware driver has already been tried and failed, and
+    kms_swrast needs nothing from the kernel beyond dumb-buffer support, which
+    any KMS driver has by definition. Nothing is given up by widening it.
+
+  - actually take that pass. Hardware is attempted with swrast=false against the
+    RENDER node; when it fails and software was not explicitly requested, retry
+    with swrast=true, which opens the PRIMARY node -- what kms_swrast needs. It
+    is a real second attempt, not a repeat of the first.
+
+Vendor-neutral: any GPU with modesetting and no Mesa 3D driver gets a working
+desktop instead of a crash loop.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FNpawq2UvU33UqR73jmUjq
+Change-Id: I0689b9436dce0e9cc3d7791dd9df36613e76d9f3
+---
+ src/egl/drivers/dri2/platform_android.c | 54 ++++++++++++++++++-------
+ 1 file changed, 39 insertions(+), 15 deletions(-)
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index 7db9f6bccb6..7d53be98a3a 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -1027,28 +1027,40 @@ droid_load_driver(_EGLDisplay *disp, bool swrast)
+       return false;
+ 
+    if (swrast && !disp->Options.Zink) {
+-      /* Use kms swrast only with vgem / virtio_gpu.
+-       * virtio-gpu fallbacks to software rendering when 3D features
+-       * are unavailable since 6c5ab.
++      /* kms_swrast on ANY device that got this far, not just vgem/virtio_gpu.
++       *
++       * This is the software path, and the only thing that distinguishes it
++       * from pure swrast is that it keeps a real DRM fd -- it rasterises into
++       * dumb buffers on the actual card. That is what lets gralloc's buffers be
++       * imported as EGLImages. Pure swrast has fd_render_gpu = -1 and cannot
++       * import anything, so on Android it ends at
++       *
++       *     skia: ** ERROR ** Could not create EGL image
++       *     SurfaceFlinger: Failed to create a valid texture
++       *
++       * and SurfaceFlinger aborts rather than render slowly.
++       *
++       * The old restriction assumed software rendering only ever happens under
++       * virtualisation. It also happens whenever a card has KMS but no 3D
++       * engine Mesa can drive -- NVIDIA Ada is exactly that today: nouveau
++       * gives it modesetting and a copy engine, and the kernel has no .gr for
++       * AD10x at all (nvkm/engine/device/base.c), so nvc0 cannot create a
++       * screen no matter what Mesa was built with. Refusing kms_swrast there
++       * turns "slow desktop" into "no desktop".
++       *
++       * Nothing is given up by widening it: this branch is only reached on the
++       * software pass, after the hardware driver has already been tried and
++       * failed, and kms_swrast needs no more from the kernel than dumb-buffer
++       * support -- which any KMS driver has by definition.
+        */
+-      if (strcmp(dri2_dpy->driver_name, "vgem") == 0 ||
+-          strcmp(dri2_dpy->driver_name, "virtio_gpu") == 0) {
+-         free(dri2_dpy->driver_name);
+-         dri2_dpy->driver_name = strdup("kms_swrast");
+-      } else {
+-         goto error;
+-      }
++      free(dri2_dpy->driver_name);
++      dri2_dpy->driver_name = strdup("kms_swrast");
+    }
+ 
+    dri2_dpy->loader_extensions = droid_image_loader_extensions;
+    dri2_detect_swrast_kopper(disp);
+ 
+    return true;
+-
+-error:
+-   free(dri2_dpy->driver_name);
+-   dri2_dpy->driver_name = NULL;
+-   return false;
+ }
+ 
+ static void
+@@ -1189,6 +1201,18 @@ dri2_initialize_android(_EGLDisplay *disp)
+    if (!force_pure_swrast)
+       device_opened = droid_open_device(disp, disp->Options.ForceSoftware);
+ 
++   /* Hardware failed, and software was not what was asked for. Try the KMS
++    * software path before giving up on a DRM fd entirely.
++    *
++    * droid_open_device(swrast=true) opens the PRIMARY node rather than the
++    * render node, which is what kms_swrast needs, so this is a real second
++    * attempt and not a repeat of the first. Without it a card whose kernel
++    * driver does modesetting but offers no 3D engine falls straight to pure
++    * swrast, loses its DRM fd, and cannot import a single gralloc buffer.
++    */
++   if (!device_opened && !disp->Options.ForceSoftware && !force_pure_swrast)
++      device_opened = droid_open_device(disp, true);
++
+    if ((!device_opened && disp->Options.ForceSoftware) ||
+        force_pure_swrast) {
+       dri2_dpy->driver_name = strdup("swrast");
+-- 
+2.53.0
+
