@@ -317,7 +317,6 @@ PRODUCT_PACKAGES += \
 # defaulting to pastel, so only the NVIDIA GRUB entry gets NVK.
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
-    ro.vendor.hwc.drm.present_fence_not_reliable=true \
     debug.hwui.renderer=skiagl
 
 # No lock screen. This is a bring-up device that usually has nobody sitting at
