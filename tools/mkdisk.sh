@@ -293,6 +293,24 @@ set default=${GRUB_DEFAULT:-0}
 # The ESP carries a volume label so GRUB finds it regardless of disk ordering.
 search --no-floppy --label ANDROIDESP --set=root
 
+# loglevel=1 on every entry that paints the screen.
+#
+# The kernel keeps writing to tty0 after SurfaceFlinger owns the display, and
+# each message repaints part of the framebuffer underneath the compositor. With
+# NVIDIA render offload running -- nouveau rendering, i915 scanning out -- that
+# showed as constant flicker across the whole desktop, not just a scrolling
+# corner. loglevel=7/8 with ignore_loglevel made it continuous.
+#
+# Nothing is lost by this: pc_kmsg_vendor.sh streams /dev/kmsg to
+# /data/vendor/pc/kmsg.txt from post-fs-data regardless of console level, so a
+# failed boot still leaves the full kernel log on disk. loglevel only decides
+# what gets PAINTED.
+#
+# The one exception is the NVIDIA display-debug entry, which stays at
+# loglevel=8 ignore_loglevel because its entire purpose is to be photographed
+# off a screen that is about to die -- quietening it would make it a duplicate
+# of the entry above it.
+#
 # Default entry keeps the kernel console quiet.
 #
 # ttyS0 is an emulated 16550: every byte is a port write and therefore a VM
@@ -355,7 +373,7 @@ menuentry "Android pc_x86_64" {
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
+           console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
@@ -401,7 +419,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
            sysctl.kernel.dmesg_restrict=0 \\
-           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange \\
            ${NOUVEAU_ARG} \\
@@ -490,7 +508,7 @@ menuentry "Android pc_x86_64 (NVIDIA render offload)" {
            androidboot.selinux=permissive \\
            androidboot.pc_render_gpu=offload \\
            sysctl.kernel.dmesg_restrict=0 \\
-           loglevel=7 printk.devkmsg=on \\
+           loglevel=1 printk.devkmsg=on \\
            androidboot.verifiedbootstate=orange \\
            ${NOUVEAU_ARG} \\
            earlycon=efifb keep_bootcon \\
@@ -504,7 +522,7 @@ menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
            sysctl.kernel.dmesg_restrict=0 \\
-           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange \\
            nouveau.modeset=0 \\
@@ -521,7 +539,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            sysctl.kernel.dmesg_restrict=0 \\
            ${NOUVEAU_ARG} \\
            console=ttyS0,115200 \\
-           loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
            androidboot.verifiedbootstate=orange ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
