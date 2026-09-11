@@ -863,22 +863,60 @@ CONFIG_AMD_PMC=y
 # pinctrl driver that resource cannot be resolved, so i2c_hid_acpi never probes,
 # no i2c client device is created, and no HID device appears. The touchpad is
 # not "unsupported" -- it is never enumerated, which looks identical.
+# The AMD host I2C bus and its GPIO interrupt controller.
+#
+# These are needed for MORE than the touchpad, which is why they are back after
+# being reverted once. On this laptop the HDA codec reports
+#     snd_hda_codec_alc269 hdaudioC1D0: speaker_outs=0  hp_outs=1
+# i.e. the ALC245 drives a headphone pin and NO speakers -- the speakers hang
+# off Cirrus CS35L41 amplifiers, and those amps are I2C devices. No host I2C
+# bus means no amps, no speaker pins, and silence from the internal speakers no
+# matter what firmware ships. The touchpad (I2C-HID, ACPI GpioInt through
+# pinctrl-amd) has the same dependency.
+#
+# They are compiled in, but the DEFAULT GRUB entry blacklists their initcalls,
+# so the default boot behaves exactly like the kernel known to boot this
+# machine. The "AMD I2C/GPIO enabled" entry runs them. That makes this a reboot
+# to test rather than a rebuild, and a bad outcome costs a menu selection
+# instead of an unbootable disk -- see tools/mkdisk.sh.
+#
+# I2C_DESIGNWARE_AMDPSP and I2C_PIIX4 stay OFF: both talk to firmware-owned
+# hardware (the PSP mailbox and the EC's SMBus) and neither is needed for an
+# I2C-HID touchpad or a CS35L41 amp.
+#
+# Adding these (with I2C_DESIGNWARE_AMDPSP and I2C_PIIX4, already removed above)
+# was the only kernel change between a build that booted the AMD laptop and one
+# that does not. The reported symptom -- kernel messages print, then stop -- fits
+# PINCTRL_AMD in particular: it registers GPIO interrupts after the console is
+# up, and a stuck GPIO IRQ wedges the machine at exactly that point.
+#
+# Unproven. No log was ever captured, because the boot never reaches Android and
+# nothing else on this machine persists a kernel log. Rather than keep spending
+# a boot cycle per guess, the config goes back to the state that is KNOWN to
+# boot this laptop, and the touchpad is given up until there is evidence.
+#
 CONFIG_PINCTRL_AMD=y
-
-# The other AMD I2C controller. Some Ryzen laptops put the touchpad behind MP2
-# rather than the designware block, and which one a board uses is not knowable
-# from here.
 CONFIG_I2C_AMD_MP2=y
 CONFIG_I2C_DESIGNWARE_PCI=y
 
-# AMD PSP arbitration for an I2C bus shared with firmware; without it the shared
-# bus can wedge on some Ryzen platforms.
-CONFIG_I2C_DESIGNWARE_AMDPSP=y
-
-# AMD/ATI SMBus. Also load-bearing for CONFIG_RMI4_SMB enabled above: RMI4 over
-# SMBus is how many Synaptics touchpads attach, and it needs an SMBus host
-# controller to attach TO.
-CONFIG_I2C_PIIX4=y
+# I2C_DESIGNWARE_AMDPSP and I2C_PIIX4 were here and are deliberately NOT set.
+#
+# Adding these five symbols was the ONLY kernel change between a build that
+# booted this AMD laptop and one that hangs with a black screen straight after
+# the GRUB menu. These two are the ones to suspect first: AMDPSP arbitrates a
+# shared I2C bus through the PSP mailbox, and PIIX4 binds the AMD SMBus that the
+# EC also lives on -- both touch firmware-owned hardware at probe time, and
+# neither is needed for an I2C-HID touchpad, which rides the designware
+# controller that was already =y.
+#
+# PINCTRL_AMD, I2C_AMD_MP2 and I2C_DESIGNWARE_PCI are kept because the touchpad
+# genuinely needs the first and the other two are plain PCI drivers. If the
+# machine still hangs, the "no AMD I2C/GPIO" GRUB entry blacklists all three
+# initcalls at runtime, so the next bisection step costs a reboot rather than a
+# rebuild -- see tools/mkdisk.sh.
+#
+# Note this also leaves CONFIG_RMI4_SMB above without an SMBus controller to
+# attach to. RMI4 over I2C and the HID paths are unaffected.
 
 # ------------------------------------------------- storage / SD / USB-C ----
 # The whole MMC subsystem was off, so SD card readers did not exist. (No SDIO

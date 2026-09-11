@@ -83,5 +83,18 @@
 # (system/core/init/devices.cpp), so the rule does not have to name the
 # PCI/DRM path the way the SELinux genfscon does. That also makes it immune to
 # the connector renaming that the genfscon entry is exposed to.
-/sys/class/backlight/intel_backlight    brightness      0660   system   graphics
-/sys/class/backlight/intel_backlight    bl_power        0660   system   graphics
+# ...and the rule has to be a WILDCARD, because the node is named after the
+# driver, not after "the panel". i915 calls it intel_backlight; amdgpu calls it
+# amdgpu_bl0; nouveau nv_backlight; the ACPI fallback acpi_video0. Naming only
+# the Intel one meant an AMD laptop's file stayed 0644 root:root and every
+# write failed exactly as the note above describes -- 378 EACCES in one boot,
+# with the brightness slider moving and the panel not:
+#     drmhwc: Failed to set brightness to 36277 at
+#             /sys/class/backlight/amdgpu_bl0/brightness (13)
+# and NO avc denial anywhere, which is the tell that it is DAC and not SELinux.
+#
+# ueventd matches a trailing '*' as a prefix (Permissions::Match in
+# system/core/init/devices.cpp compares with strncmp up to the '*'), so one
+# line covers every vendor's node and any future one.
+/sys/class/backlight/*                  brightness      0660   system   graphics
+/sys/class/backlight/*                  bl_power        0660   system   graphics

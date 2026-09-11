@@ -413,6 +413,21 @@ search --no-floppy --label ANDROIDESP --set=root
 # in the ring buffer via dmesg. Logcat comes over virtio-console regardless,
 # which is cheap. Use the verbose entry (GRUB_DEFAULT=1) when debugging early
 # boot, accepting that it distorts timing.
+# DO NOT put earlycon=efifb on this entry, however tempting it is when a boot
+# looks dead.
+#
+# earlycon=efifb writes each printk straight into the EFI framebuffer and
+# scrolls it by moving the whole buffer through uncached MMIO. This file already
+# notes ~35 ms a line on a 1920x1200 panel. On a 2560x1600 one that is 16 MB per
+# scroll and it measures at roughly TWO SECONDS PER LINE -- a few hundred early
+# messages is ten minutes of a machine that looks hung and is only painting.
+# That cost a round trip: a boot was reported as "not booting" when it was
+# almost certainly still going.
+#
+# androidboot.pc_logs=1 is the cheap way to get the same information: the kernel
+# ring buffer is dumped to /data/local/tmp/kmsg.txt once Android is up, with no
+# console painting at all. Keep this entry quiet and read the disk.
+#
 # video= pins the QEMU display mode, and without it the guest sits at 640x480.
 #
 # virtio-gpu is told a preferred resolution by -device virtio-vga-gl,xres=,yres=
@@ -443,6 +458,10 @@ menuentry "Android pc_x86_64" {
            androidboot.selinux=enforcing \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           printk.devkmsg=on \\
+           androidboot.pc_logs=1 \\
+           initcall_blacklist=amd_gpio_driver_init,amd_mp2_pci_driver_init,dw_i2c_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
@@ -579,6 +598,74 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
 # PERMISSIVE and on-screen because this is a bring-up entry: if it fails, the
 # reason needs to be readable off the panel, and a policy denial must not be
 # what stops it before Mesa has even been asked the question.
+# A bootable fallback for the AMD I2C/GPIO drivers, so bisecting them costs a
+# reboot instead of a rebuild.
+#
+# PINCTRL_AMD, I2C_AMD_MP2 and I2C_DESIGNWARE_PCI were added to make an AMD
+# laptop touchpad enumerate (its interrupt is an ACPI GpioInt through the AMD
+# GPIO controller, so without pinctrl-amd i2c_hid_acpi never probes). Adding
+# them was also the only kernel change between a build that booted that laptop
+# and one that hung with a black screen right after the GRUB menu.
+#
+# initcall_blacklist works on BUILT-IN drivers, which modprobe.blacklist cannot
+# touch -- everything in this image is =y, there is no /lib/modules and no
+# modprobe. The three names are the initcall symbols verified with nm(1) against
+# the built vmlinux, not guessed:
+#     amd_gpio_driver_init       pinctrl-amd
+#     amd_mp2_pci_driver_init    i2c-amd-mp2-pci
+#     dw_i2c_driver_init         i2c-designware-platform
+# A name that does not exist is silently ignored, which is exactly how a
+# blacklist entry can look like it worked and do nothing -- hence nm.
+#
+# This entry also turns logging on, because the default entry does NOT set
+# androidboot.pc_logs=1 and therefore writes no logs at all even on a healthy
+# boot. That cost one diagnostic cycle: an empty /data/local/tmp was read as
+# "died before Android started" when it only meant "logging was never enabled".
+# Boot with the firmware initramfs LEFT OUT entirely.
+#
+# This is the one test that separates "the kernel hangs on a driver" from "the
+# boot never gets that far", and it costs a menu selection rather than a build.
+# gpufw.img is 326 MiB and GRUB has to allocate and load all of it before the
+# kernel runs; if the machine dies with NO console output at all -- not even
+# earlycon=efifb, which prints long before any of the I2C or GPIO drivers probe
+# -- then whatever is wrong happens before driver init, and the firmware archive
+# is the largest thing in that path.
+#
+# The cost of choosing this entry is real but bounded: without /lib/firmware,
+# amdgpu gets no Phoenix microcode and will likely fall back to a bare
+# framebuffer or fail to bind, and WiFi will not come up. That is fine for a
+# diagnostic -- the question is only whether it REACHES userspace.
+menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           loglevel=7 printk.devkmsg=on \\
+           androidboot.logcat_serial=1 \\
+           androidboot.pc_logs=1 \\
+           androidboot.verifiedbootstate=orange \\
+           nouveau.modeset=0 \\
+           earlycon=efifb keep_bootcon \\
+           console=tty0 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img
+}
+
+menuentry "Android pc_x86_64 (AMD I2C/GPIO ENABLED -- touchpad + speakers)" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           printk.devkmsg=on \\
+           androidboot.pc_logs=1 \\
+           androidboot.verifiedbootstate=orange \\
+           ${NOUVEAU_ARG} \\
+           console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+}
+
 menuentry "Android pc_x86_64 (NVIDIA render offload)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
