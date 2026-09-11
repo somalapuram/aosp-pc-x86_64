@@ -32,21 +32,34 @@
 
 log() { echo "pc-gpu-pm: $*" > /dev/kmsg 2>/dev/null; }
 
+# Only ever act on a machine that genuinely has more than one GPU. On a
+# single-GPU box there is nothing to power down and everything to lose.
+gpus=0
+for c in /sys/class/drm/card[0-9]; do
+    [ -e "$c" ] && ls "$c/device/drm/" 2>/dev/null | grep -q '^renderD' && gpus=$((gpus + 1))
+done
+if [ "$gpus" -lt 2 ]; then
+    log "only $gpus GPU(s); nothing to do"
+    exit 0
+fi
+
 for c in /sys/class/drm/card[0-9]; do
     [ -e "$c" ] || continue
 
     ls "$c/device/drm/" 2>/dev/null | grep -q '^renderD' || continue
     [ "$(cat "$c/device/boot_vga" 2>/dev/null)" = "1" ] && continue
 
-    drives_display=0
+    # A muxless discrete GPU has NO connectors at all. The earlier test was
+    # "no connector reads connected", which is not the same thing and is
+    # dangerous: a connector reporting "unknown" -- common on DP and on some
+    # HDMI links -- would make this suspend the GPU that is DRIVING THE SCREEN.
+    # Counting connectors is the property that actually identifies a muxless
+    # dGPU, and it cannot misfire on a single-GPU machine.
+    connectors=0
     for conn in "$c"-*; do
-        [ -e "$conn/status" ] || continue
-        if [ "$(cat "$conn/status" 2>/dev/null)" = "connected" ]; then
-            drives_display=1
-            break
-        fi
+        [ -e "$conn/status" ] && connectors=$((connectors + 1))
     done
-    [ "$drives_display" = 0 ] || continue
+    [ "$connectors" = 0 ] || continue
 
     ctl="$c/device/power/control"
     [ -w "$ctl" ] || { log "$(basename "$c"): $ctl not writable"; continue; }

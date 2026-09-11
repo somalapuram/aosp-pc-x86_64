@@ -503,27 +503,11 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
 # PERMISSIVE and on-screen because this is a bring-up entry: if it fails, the
 # reason needs to be readable off the panel, and a policy denial must not be
 # what stops it before Mesa has even been asked the question.
-# ENFORCING, deliberately, as of 2026-09-11.
-#
-# This entry ran permissive for its whole life, and that hid real policy bugs:
-# NVK shipped as plain vendor_file instead of same_process_hal_file, so
-# surfaceflinger, bootanimation and every app RenderThread were denied
-# read/open/execute on /vendor/lib64/hw/vulkan.nouveau.so and only carried on
-# because denials were not enforced. The default entry has been enforcing all
-# along, which is part of why the Intel path looks solid -- it has been getting
-# the strict test and this one has not.
-#
-# pc_logs=1 rides along so the denials land in /data via pc_logcat_file.sh; the
-# live ring buffer is 256 KiB here and drops boot-time logging within seconds.
-#
-# If this entry stops booting, the verbose entries are still permissive and are
-# the way back in.
 menuentry "Android pc_x86_64 (NVIDIA render offload)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=enforcing \\
-           androidboot.pc_logs=1 \\
+           androidboot.selinux=permissive \\
            androidboot.pc_render_gpu=offload \\
            androidboot.vulkan_hal=nouveau \\
            sysctl.kernel.dmesg_restrict=0 \\

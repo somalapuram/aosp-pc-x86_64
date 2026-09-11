@@ -309,40 +309,6 @@ fi
 
 setprop vendor.pc.gpu "$egl"
 
-# Present-fence reliability, decided from the hardware rather than pinned.
-#
-# ro.vendor.hwc.drm.present_fence_not_reliable=true was a BUILD property, set
-# unconditionally because virtio-gpu needs it (without it drm_hwcomposer returns
-# BAD_DISPLAY from present and system_server's display thread aborts). Its own
-# comment in device.mk said "Re-evaluate when running on real hardware." This is
-# that re-evaluation.
-#
-# On metal it is actively harmful. drm_hwcomposer turns it into
-# Capability::PRESENT_FENCE_IS_NOT_RELIABLE, SurfaceFlinger then clears
-# Feature::kPresentFences, and SF can no longer measure when a frame actually
-# reached the screen. Confirmed on the HP laptop:
-#
-#     dumpsys SurfaceFlinger -> Scheduler / Features / PresentFences=false
-#
-# with the visible result that every frame is booked as missed -- SuperTuxKart
-# reported missedFrames == totalFrames (312 of 312) while averaging 21.3 ms
-# against a 33 ms deadline, which cannot be true. Every performance number taken
-# on this port was computed under that.
-#
-# i915, amdgpu and nouveau all produce real OUT_FENCE_PTR fences, so only the
-# virtio case needs the workaround. The detection above is already exact: a
-# device appears under /sys/bus/virtio/drivers/virtio_gpu/ only when that driver
-# has claimed it. QEMU boots the same GRUB entries as bare metal, so this cannot
-# be a kernel command line flag -- it has to be decided at runtime, here.
-#
-# This runs at early-init, long before the composer HAL starts, so the property
-# is in place before anything reads it.
-if [ "$why" = "virtio_gpu" ]; then
-    setprop ro.vendor.hwc.drm.present_fence_not_reliable true
-else
-    setprop ro.vendor.hwc.drm.present_fence_not_reliable false
-fi
-say "present_fence_not_reliable=$(getprop ro.vendor.hwc.drm.present_fence_not_reliable)"
 
 say "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
 
