@@ -33,8 +33,18 @@ allow vold sysfs_pci:dir r_dir_perms;
 # Granting the fallback type is the only fix that does not need a new line per
 # board. Read-only, and it is the same grant surfaceflinger, bootanim and
 # system_server already have above.
-allow gpu_sphal_domain sysfs_pci:file r_file_perms;
-allow gpu_sphal_domain sysfs_pci:dir r_dir_perms;
+#
+# Isolated app types have to be carved out. gpu_sphal_domain is an ATTRIBUTE and
+# it includes isolated_compute_app, which AOSP's sepolicy_test refuses to see
+# granted sysfs:
+#     Found prohibited permission granted for isolated like types. Please
+#     replace your allow statements that involve "-isolated_app" with
+#     "-isolated_app_all".
+#     allow isolated_compute_app sysfs_pci:file map ...
+# That is a build failure, not a runtime denial, and the message names the fix.
+# Isolated processes have no business reading GPU topology anyway.
+allow { gpu_sphal_domain -isolated_app_all } sysfs_pci:file r_file_perms;
+allow { gpu_sphal_domain -isolated_app_all } sysfs_pci:dir r_dir_perms;
 
 # Apps too. minigbm's mapper is a same-process HAL, so every app process runs
 # the same libdrm probe that SurfaceFlinger does -- 4346 denials from priv_app
