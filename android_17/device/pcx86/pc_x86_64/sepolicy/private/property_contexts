@@ -13,3 +13,26 @@
 # pc_select_egl.sh derives the value from whichever card has a connected
 # connector, so this is a runtime fact rather than board configuration.
 drm.gpu.vendor_name    u:object_r:vendor_pc_gpu_prop:s0 exact string
+
+# The same, for the GPU that owns the DISPLAY rather than the one apps render
+# on. Under PRIME offload those differ, and drm.gpu.vendor_name names the
+# offload card -- which, being a single global property, dragged SurfaceFlinger
+# onto the discrete GPU along with the apps and cost most of the frame rate
+# (500 fish in a window: 17 fps compositing on the dGPU, 56 on the display GPU,
+# with SurfaceFlinger client-compositing every frame in both cases).
+#
+# surfaceflinger.rc sets MESA_DRM_ROLE=display, and platform_android.c reads
+# this property instead when it sees that.
+#
+# Deliberately the SAME label as drm.gpu.vendor_name: vendor_pc_gpu_prop
+# already carries set_prop(vendor_shell) -- the domain pc_select_egl.sh runs in
+# -- and get_prop(domain, ...) in property.te, so this needs no new rule to
+# work, and it cannot drift out of sync with the property it shadows.
+#
+# Declaring it is not optional. An undeclared property takes the default label,
+# which vendor_shell may not set, so under enforcing the setprop would be
+# refused, the property would never appear, and Mesa's fallback would quietly
+# put the compositor back on the offload GPU -- the slow path, with nothing
+# failing and nothing to see. Every GRUB entry currently boots permissive,
+# which is exactly why that would have gone unnoticed.
+drm.gpu.display_vendor_name    u:object_r:vendor_pc_gpu_prop:s0 exact string

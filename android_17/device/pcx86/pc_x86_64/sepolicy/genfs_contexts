@@ -99,11 +99,17 @@ genfscon sysfs /devices/pci0000:00/0000:00:02.0 u:object_r:sysfs_gpu:s0
 # bridge at 00:08.1, so it fell through to the broad /devices/pci0000:00
 # sysfs_pci rule instead.
 #
-# That is not currently fatal -- surfaceflinger, bootanim, system_server and the
-# app domains are all granted r_file_perms on sysfs_pci too (surfaceflinger.te),
-# and this device boots permissive besides -- but sysfs_gpu is what the GPU node
-# is supposed to carry, and relying on the fallback is how a label bug hides
-# until enforcing is turned on.
+# Both halves of the old note here were wrong, so: the app domains were NOT
+# granted sysfs_pci -- gpu_sphal_domain got sysfs_gpu only, which is precisely
+# the label an unknown board does not get -- and this device does NOT boot
+# permissive by default. mkdisk.sh:291 is `set default=${GRUB_DEFAULT:-0}` and
+# entry 0 carries androidboot.selinux=enforcing; the permissive entries are the
+# other seven. So on any machine that is not one of the two spelled out here,
+# the default boot denied every GL app its own GPU's sysfs.
+#
+# surfaceflinger.te now grants gpu_sphal_domain the sysfs_pci fallback, which is
+# the only fix that does not need a new literal line per board. These two lines
+# stay because sysfs_gpu is still the correct label where we can apply it.
 genfscon sysfs /devices/pci0000:00/0000:00:08.1/0000:17:00.0 u:object_r:sysfs_gpu:s0
 
 # ...and the path libdrm reaches it through. Labelling the GPU alone was not

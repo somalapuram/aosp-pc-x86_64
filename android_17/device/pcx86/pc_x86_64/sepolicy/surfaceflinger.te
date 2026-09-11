@@ -13,6 +13,29 @@ allow system_server sysfs_pci:dir r_dir_perms;
 allow vold sysfs_pci:file rw_file_perms;
 allow vold sysfs_pci:dir r_dir_perms;
 
+# GPU clients need the same fallback, on any machine that is not one of the two
+# whose GPU BDF is spelled out in genfs_contexts.
+#
+# AOSP grants gpu_sphal_domain sysfs_gpu, and genfs_contexts labels the GPU
+# sysfs_gpu -- but genfscon takes LITERAL path prefixes with no wildcards, so
+# only the Intel laptop's 0000:00:02.0 and the workstation's
+# 0000:00:08.1/0000:17:00.0 actually carry that label. Every other machine's GPU
+# falls through to the broad /devices/pci0000:00 rule and is sysfs_pci, which
+# gpu_sphal_domain is not granted anywhere -- so on an unknown board every app
+# doing GL is denied reading its own GPU's sysfs.
+#
+# That is not theoretical any more: the DEFAULT GRUB entry boots
+# androidboot.selinux=enforcing (mkdisk.sh:291 sets default=0, and entry 0 at
+# :369-377 is the enforcing one). A genfs_contexts comment nearby claims "this
+# device boots permissive besides"; that is true of every entry EXCEPT the one
+# almost everybody will use.
+#
+# Granting the fallback type is the only fix that does not need a new line per
+# board. Read-only, and it is the same grant surfaceflinger, bootanim and
+# system_server already have above.
+allow gpu_sphal_domain sysfs_pci:file r_file_perms;
+allow gpu_sphal_domain sysfs_pci:dir r_dir_perms;
+
 # Apps too. minigbm's mapper is a same-process HAL, so every app process runs
 # the same libdrm probe that SurfaceFlinger does -- 4346 denials from priv_app
 # alone in one boot. This is why the subtree got its own type: coredomain.te

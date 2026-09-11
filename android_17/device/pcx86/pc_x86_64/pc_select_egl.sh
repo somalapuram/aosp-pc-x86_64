@@ -169,7 +169,7 @@ fi
 # -- and the panel is wired to the iGPU, so no amount of preference can make it
 # the display. Rendering on it and scanning out on the iGPU is PRIME render
 # offload, which is what the render-GPU block below does when it is asked to.
-best_card= best_drv= best_rank=0
+best_card= best_drv=
 for c in /sys/class/drm/card[0-9]; do
     [ -e "$c" ] || continue
 
@@ -186,24 +186,37 @@ for c in /sys/class/drm/card[0-9]; do
     drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
     [ -n "$drv" ] && [ "$drv" != "driver" ] || continue
 
-    # boot_vga is the firmware's own answer to "which one is the built-in
-    # display adapter", so a card WITHOUT it is the add-in card. That is the
-    # generic discrete test -- no vendor list, no PCI ids.
-    if [ "$(cat "$c/device/boot_vga" 2>/dev/null)" = "1" ]; then
-        rank=1          # integrated / boot VGA
-    else
-        rank=2          # discrete
-    fi
-
-    if [ "$rank" -gt "$best_rank" ]; then
-        best_rank=$rank
+    # FIRST connected card wins -- lowest card index -- because that is exactly
+    # the rule minigbm uses, and the two MUST agree.
+    #
+    # minigbm allocates the scanout buffers:
+    #     cros_gralloc_driver.cc:241-248
+    #     for (i = min_card_node; i < max_card_node; i++)
+    #             init_try_node(i, card_nodes_fmt, /*require_display=*/true)
+    # i.e. the lowest card node that has a CONNECTED connector. If this script
+    # names a different card as "the display", gralloc allocates on one GPU
+    # while Mesa renders on another -- the cross-GPU split that is a black
+    # screen with a perfect screencap, already paid for once on the workstation.
+    #
+    # The previous rule here ranked boot_vga=0 ABOVE boot_vga=1, to "prefer the
+    # discrete card on a dual-GPU desktop". On a desktop that is harmless
+    # because only one card has a monitor. On a LAPTOP it inverts the moment you
+    # dock it: the panel (iGPU) and an external monitor on the dGPU are both
+    # connected, both pass the test above, and rank 2 beat rank 1 -- so this
+    # script picked the dGPU while minigbm kept picking the iGPU. Docking the
+    # machine was enough to split them.
+    #
+    # Preference between two cards that can BOTH scan out is not this script's
+    # to make; agreeing with the allocator is. Rule 2 is therefore gone, and
+    # with it the only per-machine judgement call in the loop.
+    if [ -z "$best_card" ]; then
         best_card=$c
         best_drv=$drv
     fi
 done
 
 if [ -n "$best_drv" ]; then
-    say "display is on $(basename "$best_card") ($best_drv, $([ "$best_rank" = 2 ] && echo discrete || echo integrated))"
+    say "display is on $(basename "$best_card") ($best_drv, boot_vga=$(cat "$best_card/device/boot_vga" 2>/dev/null || echo ?))"
 else
     say "no card has a connected connector"
 fi
