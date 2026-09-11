@@ -186,10 +186,27 @@ on boot
 # The main thread was never deadlocked there -- its stack showed ordinary
 # ULocale/Configuration/Resources work. virtio-console carries the same data
 # over a virtqueue at negligible cost, so this can stay on by default.
-service logcat-serial /system/bin/sh -c "exec /system/bin/logcat -b all -v threadtime > /dev/hvc1"
+# [ -c /dev/hvc1 ] guards the redirect, and it is not cosmetic.
+#
+# /dev/hvc1 exists only under QEMU. On bare metal the shell's "> /dev/hvc1"
+# CREATES A REGULAR FILE in /dev, which is tmpfs -- so logcat streams the whole
+# log into RAM, unbounded, where nothing will ever read it. Measured on the HP
+# laptop five minutes after boot:
+#
+#     -rw------- 1 root root 6052406 /dev/hvc1     (note "-", not "c")
+#
+# growing continuously. That is the same ~109 lines/s cost that made
+# pc_logcat_file.sh the largest source of jank on this port, except paid into
+# RAM instead of disk and with no diagnostic value whatsoever.
+#
+# oneshot so the immediate exit on hardware is not restarted in a loop. Under
+# QEMU /dev/hvc1 is a real character device, the guard passes, and this behaves
+# exactly as before.
+service logcat-serial /system/bin/sh -c "[ -c /dev/hvc1 ] || exit 0; exec /system/bin/logcat -b all -v threadtime > /dev/hvc1"
     class core
     user root
     group root system log readproc
+    oneshot
     seclabel u:r:shell:s0
 
 on early-boot
