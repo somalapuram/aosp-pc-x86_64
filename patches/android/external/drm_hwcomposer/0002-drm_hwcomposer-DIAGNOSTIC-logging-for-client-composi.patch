@@ -1,0 +1,143 @@
+From aeaa5af4381023ee4cb3bb28a076bb0d36b9aed8 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 10:06:25 +0530
+Subject: [PATCH] drm_hwcomposer: DIAGNOSTIC logging for client composition and
+ modifiers
+
+Temporary instrumentation for the pc_x86_64 port. Two questions the device
+currently answers with silence:
+
+  1. Every layer reports CLIENT and nothing says which of the four conditions
+     in IsClientLayer() is responsible.
+  2. Enabling tiled allocation produced a garbled panel while screencap stayed
+     perfect, and no modifier value is ever logged.
+
+Three probes, each self-throttling so none can flood at frame rate:
+
+  CLIENT-REASON     GenericCompositionPlanner::IsClientLayer, once per distinct
+                    cause (atomic bitmask), naming sf_type / no_fb / ctm_by_gpu
+                    / forced_scaling, plus a one-shot line if any layer IS
+                    device-capable.
+  TEST-COMMIT-FAIL  DrmAtomicStateManager, test-only path. This was ALOGV, i.e.
+                    compiled out of a release build, so a failing plane test
+                    left no trace whatsoever.
+  FB-IMPORT         DrmFbImporter, once per distinct format/modifier pair. This
+                    is the only place bo->modifiers[0] decides between
+                    drmModeAddFB2() and drmModeAddFB2WithModifiers().
+
+Revert once the cause is understood.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GbE6Dti9ffdUvhbzRyp3g4
+Change-Id: I0001b809fc165ec1a614077d27c273d4ecde374e
+---
+ compositor/GenericCompositionPlanner.cpp | 34 +++++++++++++++++++++---
+ drm/DrmAtomicStateManager.cpp            |  4 ++-
+ drm/DrmFbImporter.cpp                    | 20 ++++++++++++++
+ 3 files changed, 53 insertions(+), 5 deletions(-)
+
+diff --git a/compositor/GenericCompositionPlanner.cpp b/compositor/GenericCompositionPlanner.cpp
+index 32c7e22..40a89f9 100644
+--- a/compositor/GenericCompositionPlanner.cpp
++++ b/compositor/GenericCompositionPlanner.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "GenericCompositionPlanner.h"
+ 
++#include <atomic>
+ #include <tuple>
+ #include <vector>
+ 
+@@ -146,10 +147,35 @@ std::tuple<size_t, size_t> GenericCompositionPlanner::GetClientLayers(
+ 
+ bool GenericCompositionPlanner::IsClientLayer(const ICompositorDisplay* display,
+                                               const HwcLayer* layer) {
+-  return !HardwareSupportsLayerType(layer->GetSfType()) ||
+-         !layer->IsLayerUsableAsDevice() || display->CtmByGpu() ||
+-         (layer->GetLayerData().pi.RequireScalingOrPhasing() &&
+-          display->ForcedScalingWithGpu());
++  const bool bad_type = !HardwareSupportsLayerType(layer->GetSfType());
++  const bool no_fb = !layer->IsLayerUsableAsDevice();
++  const bool ctm_gpu = display->CtmByGpu();
++  const bool scaling = layer->GetLayerData().pi.RequireScalingOrPhasing() &&
++                       display->ForcedScalingWithGpu();
++
++  /* DIAGNOSTIC (pc_x86_64): every layer on this port reports CLIENT and the
++   * reason is not visible anywhere. Log each distinct cause ONCE per process so
++   * this cannot flood at frame rate. Remove once the cause is understood. */
++  static std::atomic<unsigned> logged{0};
++  const unsigned bit = (bad_type ? 1U : 0U) | (no_fb ? 2U : 0U) |
++                       (ctm_gpu ? 4U : 0U) | (scaling ? 8U : 0U);
++  if (bit != 0) {
++    const unsigned seen = logged.fetch_or(bit);
++    if ((bit & ~seen) != 0) {
++      ALOGE("CLIENT-REASON: sf_type_unsupported=%d(type=%d) no_fb=%d "
++            "ctm_by_gpu=%d forced_scaling=%d",
++            static_cast<int>(bad_type), static_cast<int>(layer->GetSfType()),
++            static_cast<int>(no_fb), static_cast<int>(ctm_gpu),
++            static_cast<int>(scaling));
++    }
++  } else {
++    static std::atomic<bool> said{false};
++    if (!said.exchange(true)) {
++      ALOGE("CLIENT-REASON: at least one layer IS device-capable");
++    }
++  }
++
++  return bad_type || no_fb || ctm_gpu || scaling;
+ }
+ 
+ bool GenericCompositionPlanner::HardwareSupportsLayerType(
+diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
+index a462f97..0f66a4d 100644
+--- a/drm/DrmAtomicStateManager.cpp
++++ b/drm/DrmAtomicStateManager.cpp
+@@ -139,7 +139,9 @@ std::optional<AtomicCommitResult> DrmAtomicStateManager::CommitFrame(
+                                    atomic_request->property_set.get(),
+                                    flags | DRM_MODE_ATOMIC_TEST_ONLY, drm);
+ 
+-    ALOGV_IF(err != 0, "Test-only seamless=%d ret=%d errno=%d strerror=%s\n",
++    /* DIAGNOSTIC (pc_x86_64): was ALOGV, i.e. compiled out of a release
++     * build, so a failing plane test left no trace at all. */
++    ALOGE_IF(err != 0, "TEST-COMMIT-FAIL seamless=%d ret=%d errno=%d strerror=%s\n",
+              args.seamless, err, errno,
+              strerror_r(errno, err_buf, error_buf_max_size));
+     return err == 0 ? std::make_optional<AtomicCommitResult>() : std::nullopt;
+diff --git a/drm/DrmFbImporter.cpp b/drm/DrmFbImporter.cpp
+index d8f5e1b..26fc382 100644
+--- a/drm/DrmFbImporter.cpp
++++ b/drm/DrmFbImporter.cpp
+@@ -26,6 +26,9 @@
+ #include <xf86drmMode.h>
+ 
+ #include <cinttypes>
++#include <mutex>
++#include <set>
++#include <utility>
+ #include <system_error>
+ 
+ #include "bufferinfo/BufferInfo.h"
+@@ -65,6 +68,23 @@ auto DrmFbIdHandle::CreateInstance(BufferInfo *bo, GemHandle first_gem_handle,
+   auto has_modifiers = bo->modifiers[0] != DRM_FORMAT_MOD_NONE &&
+                        bo->modifiers[0] != DRM_FORMAT_MOD_INVALID;
+ 
++  /* DIAGNOSTIC (pc_x86_64): this is the only place the buffer's modifier
++   * decides between drmModeAddFB2() and drmModeAddFB2WithModifiers(). Enabling
++   * tiled allocation produced a garbled panel while screencap stayed perfect,
++   * and nothing logged why. Print each distinct format/modifier pair once. */
++  {
++    static std::mutex seen_lock;
++    static std::set<std::pair<uint32_t, uint64_t>> seen;
++    const std::lock_guard<std::mutex> lock(seen_lock);
++    if (seen.size() < 32 &&
++        seen.emplace(bo->format, bo->modifiers[0]).second) {
++      ALOGE("FB-IMPORT: format=0x%08x modifier=0x%" PRIx64
++            " has_modifiers=%d pitch=%d w=%d h=%d",
++            bo->format, bo->modifiers[0], static_cast<int>(has_modifiers),
++            bo->pitches[0], bo->width, bo->height);
++    }
++  }
++
+   if (!drm.HasAddFb2ModifiersSupport() && has_modifiers) {
+     ALOGE("No ADDFB2 with modifier support. Can't import modifier %" PRIu64,
+           bo->modifiers[0]);
