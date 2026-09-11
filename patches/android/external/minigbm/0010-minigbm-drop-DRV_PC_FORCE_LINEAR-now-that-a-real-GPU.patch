@@ -1,0 +1,71 @@
+From 6d68212be1b5238a09e6a2284b116d1b26675801 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 08:51:41 +0530
+Subject: [PATCH] minigbm: drop DRV_PC_FORCE_LINEAR now that a real GPU renders
+
+Patch 0001 added the linear-only pc platform because SwiftShader rendered
+on the CPU and i915_bo_map() only takes the mmap path when
+tiling == I915_TILING_NONE, so a tiled buffer could not be locked at all.
+Its own comment set the condition for removing it: once Mesa is shipping
+and the GPU does the rendering. That is now true on iris, radeonsi and
+zink-on-NVK.
+
+Keeping it cost real performance. It pinned modifier.order to
+{ DRM_FORMAT_MOD_LINEAR } and made i915_add_combinations() return before
+any X-tiled or Y/4-tiled combination was registered, so every buffer was
+untiled including SurfaceFlinger's client target. Under PRIME offload the
+dGPU then renders untiled and the iGPU scans out untiled every frame.
+Measured with it on, SuperTuxKart on zink/NVK: 321 frames in 30.7s
+(10.4 fps), 592 missed, 27.5 ms average frame duration.
+
+Safe by construction: the combinations below the old early-return add
+tiled variants only for usages carrying neither an SW_ nor a LINEAR flag,
+so anything needing CPU access keeps a linear combination.
+
+Change-Id: I4d7353769e16e5129037a035839fa7c04e22727f
+---
+ Android.bp | 29 ++++++++++++++++++++++++-----
+ 1 file changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 1929cff..fcc2fdb 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -75,13 +75,32 @@ intel_cflags = [
+     "-DDRV_I915",
+     "-DDRV_XE",
+ ]
+-// Bare-metal x86_64 PC. Intel backends plus a linear-only allocation policy,
+-// because this configuration renders with SwiftShader on the CPU and tiled
+-// buffers cannot be CPU-mapped. Drop DRV_PC_FORCE_LINEAR once Mesa (iris/anv)
+-// is shipping and the GPU does the rendering.
++// Bare-metal x86_64 PC. Intel backends.
++//
++// DRV_PC_FORCE_LINEAR is GONE, on the condition its own comment set: it existed
++// because SwiftShader rendered on the CPU and i915_bo_map() only takes the mmap
++// path when tiling == I915_TILING_NONE, so a tiled buffer could not be locked at
++// all. Mesa now drives the GPU on all three vendors -- iris, radeonsi and zink
++// on NVK -- so nothing renders on the CPU any more.
++//
++// Keeping it was costing real performance. It pinned modifier.order to
++// { DRM_FORMAT_MOD_LINEAR } and made i915_add_combinations() return before any
++// X-tiled or Y/4-tiled combination was registered, so EVERY buffer was untiled,
++// including SurfaceFlinger's client target. Under PRIME render offload that
++// means the dGPU renders untiled and the iGPU scans out untiled every frame.
++// Measured with it on: SuperTuxKart at 10.4 fps (321 frames in 30.7s, 592
++// missed, 27.5 ms/frame) with 100% client composition.
++//
++// Dropping it is safe by construction rather than by hope: the combinations
++// below the old early-return add tiled variants only for usages that carry
++// NEITHER an SW_ nor a LINEAR flag (see render_not_linear / unset_flags(...,
++// linear_mask) in i915.c), so anything that still needs CPU access keeps a
++// linear combination. The risk that remains is the cross-device one -- NVK and
++// i915 must agree on a modifier for a PRIME-shared buffer. If they cannot, the
++// symptom is corruption or a failed import, not a slow path, and this flag is
++// the single thing to put back.
+ pc_cflags = intel_cflags + [
+     "-DHAS_DMABUF_SYSTEM_HEAP",
+-    "-DDRV_PC_FORCE_LINEAR",
+ ]
+ 
+ meson_cflags = ["-DDRV_MESON"]

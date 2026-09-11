@@ -1,0 +1,59 @@
+From 97365835fbeb1f4519d518d0b37c2dd4dc796e6f Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 08:51:30 +0530
+Subject: [PATCH 5/5] nouveau: do not run the debug pushbuf dump on the error
+ path
+
+pushbuf_dump() is a debug dump, and the identical call ten lines above it
+is guarded by dbg_on(0). On the error path it was called unconditionally.
+
+That is fatal rather than noisy. Once the kernel kills a channel -- GSP
+raises an RC event and nouveau_gem.c then returns -ENODEV for every later
+pushbuf -- this path runs on EVERY frame, and the dump walks
+bo->map + kpsh->offset out to + kpsh->length for each queued push. On a
+rejected krec that is not a mapping it may read, so it SIGSEGVs inside
+the error handler.
+
+Measured on an Ampere laptop under PRIME offload: com.android.systemui
+died 74 times in one boot, every tombstone pc pushbuf_dump+470,
+SEGV_MAPERR reading 0x772800000000, one every ~850ms. Each death blanked
+the screen while SystemUI restarted, which presented as constant flicker.
+
+Guarding it turns a killed channel back into a logged error.
+
+Change-Id: Iafa4584a5e5f6ca2f289f9459ea0fbd13c455762
+---
+ src/gallium/winsys/nouveau/drm/nouveau.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+index 0903f7b5f79..e832ed58102 100644
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -1194,7 +1194,25 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
+ 
+       if (ret) {
+          err("kernel rejected pushbuf: %s\n", strerror(-ret));
+-         pushbuf_dump(dev, krec, krec_id++, channel);
++         /* pushbuf_dump() is a DEBUG dump, and on this error path it was being
++          * called unconditionally -- unlike the identical call above, which is
++          * guarded by dbg_on(0). That is fatal rather than merely noisy: once
++          * the kernel kills a channel (GSP raises an RC event, and
++          * nouveau_gem.c:776 then returns -ENODEV for every later pushbuf),
++          * this path runs on EVERY frame, and the dump walks
++          * "bo->map + kpsh->offset" for each queued push and reads to
++          * "+ kpsh->length". With a rejected krec those are not a mapping it
++          * may read, so it SIGSEGVs inside the error handler.
++          *
++          * Measured on the HP laptop (Ampere/NV177 under PRIME offload):
++          * com.android.systemui died 74 times in one boot, every tombstone
++          * pc pushbuf_dump+470, SEGV_MAPERR reading 0x772800000000, and each
++          * death blanked the screen while SystemUI restarted. That crash loop
++          * WAS the flicker. Guarding it turns a killed channel back into what
++          * it should be: a logged error.
++          */
++         if (dbg_on(0))
++            pushbuf_dump(dev, krec, krec_id++, channel);
+          break;
+       }
+ 
