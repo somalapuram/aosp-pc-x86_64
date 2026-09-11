@@ -198,6 +198,7 @@ PRODUCT_PACKAGES += \
     libGLESv1_CM_angle \
     libGLESv2_angle \
     vulkan.pastel \
+    vulkan.nouveau \
 
 # present_fence_not_reliable is required on virtio-gpu. Without it
 # drm_hwcomposer returns BAD_DISPLAY from present and SurfaceFlinger fails
@@ -275,41 +276,48 @@ PRODUCT_PACKAGES += \
 # a warning. The proper fix for those is to build zink + NVK, both of which are
 # already in the tree (src/gallium/drivers/zink, src/nouveau/vulkan).
 #
-# use_overlay_planes=0 is for the constant black-frame flicker on the HP laptop
-# (whole screen blanks and returns, repeatedly, starting only when the UI comes
-# up). Both surviving explanations for it run through multi-plane commits:
+# ro.vendor.hwc.use_overlay_planes=0 was here for a black-frame-flicker theory
+# that the log then refuted outright. Measured on the HP laptop, over a boot
+# that flickered throughout:
 #
-#   - drm_hwcomposer answers a FAILED atomic commit by committing an EMPTY plan
-#     (DrmAtomicStateManager.cpp:88-97 CleanFailedCommit). That disables every
-#     plane while the CRTC stays ACTIVE, so a failed commit is not a dropped
-#     frame -- it is one solid BLACK frame on a lit panel. Fewer planes in the
-#     commit is fewer ways for the kernel to reject it.
-#   - minigbm is built -DDRV_PC_FORCE_LINEAR (external/minigbm/Android.bp:82-85)
-#     so every scanout buffer is LINEAR. N simultaneous linear streams on one
-#     Intel pipe is what drains the display FIFO, and an underrun paints the
-#     rest of that frame black (i915/display/intel_fifo_underrun.c:479-492).
+#     Failed to commit pset / Composite failed  ->    0
+#     CPU pipe FIFO underrun                    ->    0
+#     nouveau errored - disabling channel       ->  152
 #
-# At 0, GetUsablePlanes() returns the primary plane only
-# (DrmDisplayPipeline.cpp:150) and everything else is GPU-composited. It costs
-# some power and performance, and it is the conservative setting on every GPU,
-# so it is safe in one image that also boots AMD, Intel-only and virtio.
+# Absent, not rare -- the atomic-commit path was clean the whole time. The real
+# cause was a SIGSEGV in Mesa's pushbuf error handler taking SystemUI down 74
+# times a boot. With its rationale gone the property is removed: it costs power
+# and performance, and it pushes composition onto a GPU that is faulting.
 #
-# NOT YET DONE, and the better fix for the second cause: drop
-# DRV_PC_FORCE_LINEAR. Its stated reason -- SwiftShader having to CPU-map every
-# buffer -- died when a real GPU started rendering. It needs checking that
-# nouveau can write an X-tiled i915 buffer across PRIME before it moves.
+# present_fence_not_reliable stays. It does not cause flicker; it hides dropped
+# frames from SurfaceFlinger, and removing it regresses QEMU/virtio to the
+# BAD_DISPLAY boot crash documented above.
+# vendor.mesa.nouveau.use.zink is NO LONGER FORCED to 0, and ro.hardware.vulkan
+# is no longer a build property. Both changes exist for the same reason.
 #
-# present_fence_not_reliable is left ON deliberately. It does not cause the
-# flicker; it hides it, by making SurfaceFlinger drop Feature::kPresentFences
-# so dropped frames get no jank accounting. Removing it is a diagnostic
-# improvement, not a cure, and it would regress QEMU/virtio to the BAD_DISPLAY
-# boot crash documented above -- which this single image still has to survive.
+# loader.c:152-166 sets prefer_zink for any nouveau chipset >= 0x160 -- "Enable
+# Zink by default on Turing and later GPUs". The HP laptop's GA107 reports
+# 0x177, so pinning use.zink=0 ran Ampere on nouveau GL, the driver Mesa itself
+# steers away from on that generation. Measured result: GSP raises type:69
+# engine exceptions under ordinary HWUI drawing, the channel is killed, and once
+# enough have died eglCreateContext returns EGL_BAD_ALLOC and apps stop
+# launching. Leaving the property unset lets Mesa pick zink on Turing+ and keep
+# nouveau GL on older cards, which is what upstream intends.
+#
+# zink needs a Vulkan driver, so NVK ships as vulkan.nouveau (see Android.bp).
+# It must NOT load on Intel or AMD -- it would open, enumerate no devices, and
+# the loader would never fall through to SwiftShader -- and driver.cpp:140-143
+# picks the HAL purely by name from ro.hardware.vulkan. That has to vary per
+# machine in a single image, and domain.te:851 is a NEVERALLOW:
+#
+#     neverallow { domain -init -vendor_init } exported_default_prop:property_service set;
+#
+# so pc_select_egl.sh (vendor_shell) can never set it, whatever policy we write.
+# init.pc_x86_64.rc sets it at early-init from the kernel command line instead,
+# defaulting to pastel, so only the NVIDIA GRUB entry gets NVK.
 PRODUCT_VENDOR_PROPERTIES += \
-    vendor.mesa.nouveau.use.zink=0 \
     ro.hardware.egl=mesa \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
-    ro.vendor.hwc.use_overlay_planes=0 \
-    ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 
 # No lock screen. This is a bring-up device that usually has nobody sitting at

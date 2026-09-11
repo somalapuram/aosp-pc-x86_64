@@ -56,6 +56,28 @@ service pc-select-egl /vendor/bin/pc_select_egl.sh
 on early-init
     exec_start pc-select-egl
 
+    # Vulkan HAL, per GPU, in one image.
+    #
+    # driver.cpp:140-143 dlopens vulkan.${ro.hardware.vulkan}.so and then
+    # vulkan.${ro.board.platform}.so -- the HAL is chosen purely by NAME, so
+    # this property has to differ between an NVIDIA machine and every other one.
+    # NVK (vulkan.nouveau) must not load on Intel or AMD: it would open, find no
+    # nouveau device, and the loader would never fall through to SwiftShader.
+    #
+    # It cannot be done from pc_select_egl.sh, which is where every other GPU
+    # decision in this port is made. ro.hardware.vulkan is exported_default_prop
+    # and domain.te:851 is a neverallow:
+    #     neverallow { domain -init -vendor_init } exported_default_prop:property_service set;
+    # so vendor_shell can never set it and no local policy can grant it. Only
+    # init and vendor_init may, which means the value has to be something init
+    # already knows -- hence the kernel command line.
+    #
+    # androidboot.vulkan_hal=nouveau is on the NVIDIA render-offload GRUB entry
+    # only (tools/mkdisk.sh); everything else falls back to pastel, which is the
+    # SwiftShader HAL these machines have always used. ${x:-default} expansion is
+    # supported by init (system/core/init/util.cpp:286).
+    setprop ro.hardware.vulkan ${ro.boot.vulkan_hal:-pastel}
+
 # Turn pc_select_egl.sh's finding into ro.hardware.egl.
 #
 # Costs exactly one SurfaceFlinger abort per boot, and that is unavoidable with

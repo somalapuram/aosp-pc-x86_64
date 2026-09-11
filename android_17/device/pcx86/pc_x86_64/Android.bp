@@ -73,6 +73,33 @@ cc_prebuilt_library_shared {
     },
 }
 
+// NVK -- Mesa's Vulkan driver for NVIDIA -- installed as an Android Vulkan HAL.
+//
+// zink is a GL-on-Vulkan gallium driver, and on nouveau it is not a curiosity:
+// loader.c:152-166 sets prefer_zink for any chipset >= 0x160 ("Enable Zink by
+// default on Turing and later GPUs"). The GA107 in the HP laptop reports 0x177,
+// so nouveau GL is the path Mesa itself steers away from there -- and it faults
+// under ordinary drawing, taking SystemUI with it.
+//
+// Android's Vulkan loader ignores ICD json files. driver.cpp:140-143 dlopens
+// vulkan.${ro.hardware.vulkan}.so and then vulkan.${ro.board.platform}.so out
+// of lib*/hw, so the module has to be NAMED vulkan.nouveau for this to load at
+// all; relative_install_path puts it in hw/.
+//
+// It must not load on Intel or AMD: it would open fine, enumerate zero devices,
+// and the loader would never fall through to SwiftShader. ro.hardware.vulkan is
+// therefore set per-GPU at early-init -- see init.pc_x86_64.rc, which takes it
+// from the kernel command line and defaults to pastel.
+cc_prebuilt_library_shared {
+    name: "vulkan.nouveau",
+    defaults: ["mesa_prebuilt_defaults"],
+    relative_install_path: "hw",
+    arch: {
+        x86_64: { srcs: ["mesa/lib64/hw/vulkan.nouveau.so"] },
+        x86:    { srcs: ["mesa/lib/hw/vulkan.nouveau.so"] },
+    },
+}
+
 
 // wpa_supplicant's config template, installed to
 // /vendor/etc/wifi/wpa_supplicant.conf.

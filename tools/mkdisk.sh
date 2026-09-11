@@ -507,6 +507,7 @@ menuentry "Android pc_x86_64 (NVIDIA render offload)" {
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
            androidboot.pc_render_gpu=offload \\
+           androidboot.vulkan_hal=nouveau \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.verifiedbootstate=orange \\

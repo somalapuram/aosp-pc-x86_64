@@ -60,7 +60,45 @@ INSTALL="$X86_ROOT/android_17/device/pcx86/pc_x86_64/mesa"
 # 15 seconds. softpipe matches anything, needs no LLVM (llvmpipe would, and LLVM
 # is disabled for the target), and is slow -- but slow is a usable desktop and a
 # crash loop is not.
-DRIVERS="${DRIVERS:-iris,radeonsi,nouveau,virgl,softpipe}"
+DRIVERS="${DRIVERS:-iris,radeonsi,nouveau,virgl,softpipe,zink}"
+
+# zink + NVK is the SUPPORTED path for this port's NVIDIA GPU, not a nicety.
+# loader.c:152-166 sets prefer_zink for any nouveau chipset >= 0x160 -- "Enable
+# Zink by default on Turing and later GPUs" -- and the HP laptop's GA107 reports
+# 0x177. Forcing nouveau GL there with vendor.mesa.nouveau.use.zink=0 ran Ampere
+# on the GL driver upstream stopped defaulting to for that generation, and it
+# faults: GSP raises type:69 engine exceptions under ordinary HWUI drawing, the
+# channel is killed, and once enough have died eglCreateContext returns
+# EGL_BAD_ALLOC and apps stop launching entirely.
+#
+# Neither addition changes Intel or AMD. zink is only ever selected by
+# nouveau_zink_predicate() on a nouveau fd, and NVK only loads where the Vulkan
+# HAL is pointed at it -- see pc_select_egl.sh, which sets ro.hardware.vulkan
+# per-GPU so radeonsi and iris machines keep SwiftShader for Vulkan.
+VULKAN_DRIVERS="${VULKAN_DRIVERS:-nouveau}"
+
+# rustup installs the toolchain user-local and puts nothing on PATH.
+PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+
+# rust.bindgen() generates NVK's bindings to the kernel uAPI. AOSP ships one.
+BINDGEN="${BINDGEN:-$X86_ROOT/android_17/prebuilts/clang-tools/linux-x86/bin/bindgen}"
+[[ -x "$BINDGEN" ]] || BINDGEN=$(command -v bindgen || echo bindgen)
+
+# NVK's shader compiler (NAK) is written in Rust, so -Dvulkan-drivers=nouveau
+# makes meson.build:839 demand a 'rust' binary in the cross file and Mesa
+# requires >= 1.82. Without a Rust toolchain that is a CONFIGURE failure, and a
+# configure failure here does not just lose NVIDIA -- it loses the whole build,
+# so iris and radeonsi stop being rebuilt too and the image quietly keeps
+# shipping the previous driver. Degrade instead: drop zink and NVK, keep the
+# rest, and say so loudly. Set VULKAN_DRIVERS= explicitly to skip this entirely.
+if [[ -n "$VULKAN_DRIVERS" ]] && ! command -v rustc >/dev/null 2>&1; then
+    warn "no rustc: NVK needs Rust >= 1.82 (NAK is Rust). Dropping zink + NVK."
+    warn "  Intel (iris) and AMD (radeonsi) are unaffected and still build."
+    warn "  NVIDIA falls back to nouveau GL, which faults on Ampere -- see"
+    warn "  claude-context gotchas, 'zink is the supported path for >= 0x160'."
+    VULKAN_DRIVERS=
+    DRIVERS="${DRIVERS//,zink/}"
+fi
 ABIS="${ABIS:-x86_64 x86}"
 NDK_VERSION="${NDK_VERSION:-r27c}"
 JOBS="${JOBS:-$(nproc)}"
@@ -272,6 +310,13 @@ ar         = '$TOOLCHAIN/bin/llvm-ar'
 strip      = '$TOOLCHAIN/bin/llvm-strip'
 pkg-config = ['/usr/bin/pkg-config']
 llvm-config = 'false'
+# NVK's shader compiler (NAK) is Rust, so -Dvulkan-drivers=nouveau needs a rust
+# binary here or meson.build:839 fails configure outright. abi_triple() already
+# returns exactly the rustup target names (x86_64-linux-android /
+# i686-linux-android), so \$TRIPLE doubles as the Rust target. rustc does its own
+# linking, and the NDK clang is the only linker that knows Android's sysroot.
+rust       = ['rustc', '--target', '$TRIPLE', '-Clinker=$TOOLCHAIN/bin/$TRIPLE$API-clang']
+bindgen    = '$BINDGEN'
 
 [host_machine]
 system     = 'android'
@@ -281,6 +326,11 @@ endian     = 'little'
 
 [properties]
 needs_exe_wrapper = true
+# bindgen runs its OWN libclang, which does not inherit the NDK sysroot from the
+# 'c' entry above. Without this it parses the host's glibc headers and dies on
+#     /usr/include/stdio.h:28:10: fatal error: 'bits/libc-header-start.h' file not found
+# because --target=x86_64-linux-android and glibc's headers cannot agree.
+bindgen_clang_arguments = ['--target=$TRIPLE', '--sysroot=$TOOLCHAIN/sysroot']
 
 [built-in options]
 # Link the C++ runtime statically.
@@ -438,7 +488,7 @@ PC
     meson setup "$WORK/build-$ABI" "$MESA_SRC" --cross-file "$CROSS" \
         --prefix "$PFX" --libdir lib -Dbuildtype=release \
         -Dplatforms=android -Dandroid-stub=true \
-        -Dgallium-drivers="$DRIVERS" -Dvulkan-drivers= \
+        -Dgallium-drivers="$DRIVERS" -Dvulkan-drivers="$VULKAN_DRIVERS" \
         -Dllvm=disabled -Damd-use-llvm=false \
         -Degl=enabled -Dgles1=disabled -Dgles2=enabled \
         -Dgbm=enabled -Dglx=disabled -Dandroid-libbacktrace=disabled \
@@ -464,7 +514,26 @@ PC
     # libgallium_dri.so is a direct NEEDED of libEGL_mesa.so, not something
     # dlopened out of a dri/ directory, so it belongs on the plain library path.
     found=$(find "$WORK/build-$ABI" -path '*android_stub*' -prune -o -name libgallium_dri.so -print | head -1)
+    [[ -n "$found" ]] || die "[$ABI] built libgallium_dri.so not found"
     cp "$found" "$INSTALL/$LIBDIR/libgallium_dri.so"
+
+    # NVK, for zink. Android's Vulkan loader does not read ICD json files: it
+    # dlopens the HAL at <libdir>/hw/vulkan.<ro.hardware.vulkan>.so and calls
+    # hw_get_module on it, so Mesa's libvulkan_nouveau.so has to be installed
+    # under that name. ro.hardware.vulkan is chosen per-GPU at early-init by
+    # pc_select_egl.sh, so an Intel or AMD machine never loads this.
+    if [[ -n "$VULKAN_DRIVERS" ]]; then
+        for vk in $VULKAN_DRIVERS; do
+            found=$(find "$WORK/build-$ABI" -path '*android_stub*' -prune -o -name "libvulkan_$vk.so" -print | head -1)
+            if [[ -n "$found" ]]; then
+                mkdir -p "$INSTALL/$LIBDIR/hw"
+                cp "$found" "$INSTALL/$LIBDIR/hw/vulkan.$vk.so"
+                ok "[$ABI] vulkan: $LIBDIR/hw/vulkan.$vk.so"
+            else
+                warn "[$ABI] vulkan driver '$vk' requested but libvulkan_$vk.so was not built"
+            fi
+        done
+    fi
 
 }
 
