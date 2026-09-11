@@ -1,0 +1,104 @@
+From ed4cb5a06eb5bc314eeaf320b10cffd69fc47e80 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 14:03:32 +0530
+Subject: [PATCH] egl/android: let a process pick the display GPU instead of
+ the offload GPU
+
+droid_open_device() reads drm.gpu.vendor_name, a single global property, so on
+a PRIME render offload machine every EGL client lands on the offload GPU --
+SurfaceFlinger included. That is the inverse of offload on Linux, where the
+compositor stays on the GPU that owns the display and only the offloaded
+application uses the discrete card.
+
+It costs most of the frame rate. The compositor ends up reading and writing
+gralloc buffers that live in the display GPU's memory across PCIe, untiled,
+once per composited frame. Measured on a muxless laptop, WebGL Aquarium:
+
+    clientCompositionFrames == 0      5000 fish    60 fps
+    clientCompositionFrames == all     500 fish    17 fps
+
+MESA_DRM_ROLE=display makes this read drm.gpu.display_vendor_name instead, and
+falls back to drm.gpu.vendor_name when that is absent or empty -- so a tree
+that publishes only the one property behaves exactly as before. The fallback is
+not optional: this function does not try another device once a vendor is named,
+so an unset property would be an EGL init failure rather than a slow path.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I1ddbc473d46e64a3b8278eaf67793266e640cf07
+---
+ src/egl/drivers/dri2/platform_android.c | 50 ++++++++++++++++++++++++-
+ 1 file changed, 49 insertions(+), 1 deletion(-)
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index 7db9f6bccb6..a7e9da0fe6d 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -33,6 +33,8 @@
+ #include <fcntl.h>
+ #include <stdbool.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ #include <xf86drm.h>
+ #include <cutils/properties.h>
+ #include <drm-uapi/drm_fourcc.h>
+@@ -1111,8 +1113,54 @@ droid_open_device(_EGLDisplay *disp, bool swrast)
+    const unsigned node_type = swrast ? DRM_NODE_PRIMARY : DRM_NODE_RENDER;
+ #endif
+ 
+-   if (property_get("drm.gpu.vendor_name", vendor_buf, NULL) > 0)
++   /* Which GPU this process should render on.
++    *
++    * drm.gpu.vendor_name is a single global property, so on a PRIME render
++    * offload machine it sends EVERY EGL client to the offload GPU --
++    * SurfaceFlinger included. That is the inverse of how offload works on
++    * Linux, where the compositor stays on the GPU that owns the display and
++    * only the offloaded application uses the discrete card.
++    *
++    * It costs most of the frame rate. Measured on the muxless laptop (i915
++    * panel, nouveau offload), WebGL Aquarium, device-composited vs
++    * client-composited:
++    *
++    *     clientCompositionFrames == 0      5000 fish    60 fps
++    *     clientCompositionFrames == all     500 fish    17 fps
++    *
++    * Ten times the geometry, three and a half times the rate. The difference
++    * is not the application's rendering; it is SurfaceFlinger compositing on
++    * the offload GPU, reading and writing gralloc buffers that live in the
++    * display GPU's memory across PCIe, untiled.
++    *
++    * So let a process opt out of the offload and ask for the display GPU
++    * instead. MESA_DRM_ROLE=display selects drm.gpu.display_vendor_name,
++    * which pc_select_egl.sh publishes alongside the render one. An
++    * environment variable is the discriminator because init's setenv stores
++    * its value verbatim -- it performs no property expansion -- so the name
++    * itself cannot be plumbed through the service definition, only the
++    * choice of which property to read.
++    *
++    * Falls back to drm.gpu.vendor_name whenever the display property is
++    * absent or empty, so a tree without pc_select_egl.sh, or a boot where it
++    * found no connected connector, behaves exactly as before. Getting this
++    * wrong is a boot loop -- droid_open_device() does not try another device
++    * once a vendor is named -- so the fallback is not optional.
++    */
++   const char *role = getenv("MESA_DRM_ROLE");
++   const bool want_display = role && !strcmp(role, "display");
++
++   if (want_display &&
++       property_get("drm.gpu.display_vendor_name", vendor_buf, NULL) > 0 &&
++       vendor_buf[0])
+       vendor_name = vendor_buf;
++   else if (property_get("drm.gpu.vendor_name", vendor_buf, NULL) > 0 &&
++            vendor_buf[0])
++      vendor_name = vendor_buf;
++
++   _eglLog(_EGL_INFO, "%s() role=%s vendor=%s", __func__,
++           want_display ? "display" : "render",
++           vendor_name ? vendor_name : "(any)");
+ 
+    while (dev_list) {
+       if (!_eglDeviceSupports(dev_list, _EGL_DEVICE_DRM))
+-- 
+2.43.0
+

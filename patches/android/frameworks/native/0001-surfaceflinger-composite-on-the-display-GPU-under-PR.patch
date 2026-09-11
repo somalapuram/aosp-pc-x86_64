@@ -1,0 +1,51 @@
+From 92c80190e10c4ada0d530c850d185eb0090236f3 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 14:03:32 +0530
+Subject: [PATCH] surfaceflinger: composite on the display GPU under PRIME
+ offload
+
+Sets MESA_DRM_ROLE=display so Mesa selects drm.gpu.display_vendor_name rather
+than the global drm.gpu.vendor_name, which on an offload boot names the
+discrete card and drags the compositor onto it along with the apps.
+
+Measured on a muxless laptop (i915 panel, nouveau offload), WebGL Aquarium:
+5000 fish with no client composition is 60 fps; 500 fish with client
+composition on every frame is 17. The difference is the compositor crossing
+PCIe into untiled display-GPU memory, not the application's rendering.
+
+Inert without that property: Mesa falls back to the existing one.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I90eb7d9b1a0610c28704b79863e47dd1002d67ca
+---
+ services/surfaceflinger/surfaceflinger.rc | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/services/surfaceflinger/surfaceflinger.rc b/services/surfaceflinger/surfaceflinger.rc
+index dfdd4aa38c..b34e3420ac 100644
+--- a/services/surfaceflinger/surfaceflinger.rc
++++ b/services/surfaceflinger/surfaceflinger.rc
+@@ -5,3 +5,19 @@ service surfaceflinger /system/bin/surfaceflinger
+     capabilities SYS_NICE
+     onrestart restart --only-if-running zygote
+     task_profiles HighPerformance
++    # Composite on the GPU that owns the display, not on a PRIME offload GPU.
++    #
++    # drm.gpu.vendor_name is global, so on an offload boot it sends every EGL
++    # client to the discrete card -- this one included. On Linux the compositor
++    # stays on the display GPU and only the offloaded app uses the dGPU; doing
++    # it the other way makes SurfaceFlinger read and write display-GPU gralloc
++    # buffers across PCIe, untiled, once per composited frame.
++    #
++    # Measured (muxless laptop, i915 panel + nouveau offload, WebGL Aquarium):
++    # 5000 fish with no client composition is 60 fps; 500 fish with client
++    # composition on every frame is 17.
++    #
++    # Mesa reads drm.gpu.display_vendor_name when this is set, and falls back
++    # to drm.gpu.vendor_name when that property is absent -- so this line is
++    # inert on a single-GPU machine and on any tree without pc_select_egl.sh.
++    setenv MESA_DRM_ROLE display
+-- 
+2.43.0
+
