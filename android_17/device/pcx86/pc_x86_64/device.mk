@@ -917,9 +917,21 @@ PRODUCT_PACKAGES += \
 #          scontext=u:r:vendor_init:s0 tcontext=u:object_r:default_prop:s0
 # which is harmless while permissive and silently drops the setting under
 # enforcing, leaving no adb at all.
+# Port 33445, fixed, not 5555 and not a random one.
+#
+# Android's Wireless Debugging picks a FRESH RANDOM PORT every boot -- 40685,
+# 33975, 46829 were three consecutive ones on the same laptop -- which means the
+# connect string has to be re-read off the device's screen every time. That is
+# fine for a phone you are holding and useless for a machine being brought up
+# headless across the room.
+#
+# service.adb.tcp.port is a separate mechanism from Wireless Debugging: adbd
+# binds it directly, so `adb connect <ip>:33445` works from the moment adbd
+# starts and keeps working across reboots. persist.* makes it survive a wipe of
+# the non-persistent property store.
 PRODUCT_SYSTEM_PROPERTIES += \
-    service.adb.tcp.port=5555 \
-    persist.adb.tcp.port=5555
+    service.adb.tcp.port=33445 \
+    persist.adb.tcp.port=33445
 
 # Serial console is the primary debugging tool during bring-up.
 #
