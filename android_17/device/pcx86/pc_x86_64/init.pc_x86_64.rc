@@ -315,6 +315,20 @@ service pc-screencap /system_ext/bin/pc_screencap.sh
 # bound, whether firmware loaded, what connectors and modes exist).
 # The kernel log, captured from vendor_shell. shell cannot do this:
 #     neverallow appdomain kernel:system { syslog_read ... };
+# Let an unused discrete GPU idle. Android has no udev equivalent of the rule a
+# desktop distro uses to set power/control=auto on Optimus-style dGPUs, so the
+# card sits in D0 for the whole boot even when nothing renders on it. Runs at
+# 'on boot' rather than early-init because the drivers have to have bound and
+# the connectors have to have been probed before the discrete card can be told
+# apart from the one driving the panel.
+service pc-gpu-pm /vendor/bin/pc_gpu_pm.sh
+    class core
+    user root
+    group root system
+    oneshot
+    disabled
+    seclabel u:r:vendor_shell:s0
+
 service pc-kmsg-vendor /vendor/bin/pc_kmsg_vendor.sh
     class core
     user root
@@ -356,6 +370,7 @@ on boot
 
 on property:vendor.pc.boot=1
     class_start hal
+    start pc-gpu-pm
     start pc-debug-dump
     start pc-stay-awake
     start pc-screencap

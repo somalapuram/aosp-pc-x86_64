@@ -74,6 +74,7 @@
 # "starting service 'init_dev_config'" and a breadcrumb property the script
 # sets comes back empty after a full boot.
 /vendor/bin/pc_select_egl\.sh                u:object_r:vendor_shell_exec:s0
+/vendor/bin/pc_gpu_pm\.sh                   u:object_r:vendor_shell_exec:s0
 
 # init.rc's init_dev_config service is 'service init_dev_config
 # ${ro.vendor.init_dev_config.path}' -- with the property unset init cannot

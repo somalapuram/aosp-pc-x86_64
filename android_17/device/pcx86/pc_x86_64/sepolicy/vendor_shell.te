@@ -95,3 +95,11 @@ allow vendor_shell sysfs_gpu:dir r_dir_perms;
 allow vendor_shell sysfs_gpu:file r_file_perms;
 allow vendor_shell sysfs_pci:dir r_dir_perms;
 allow vendor_shell sysfs_pci:file r_file_perms;
+
+# pc_gpu_pm.sh writes "auto" to the discrete GPU's power/control, which lives
+# under /sys/devices/pci0000:00/... and is therefore sysfs_pci (genfs_contexts).
+# Read was already granted above for the card enumeration; this adds the single
+# write. Without it the script logs "not writable" and the dGPU stays in D0:
+#     avc: denied { write } comm="pc_gpu_pm.sh" name="control" dev="sysfs"
+#          scontext=u:r:vendor_shell:s0 tcontext=u:object_r:sysfs_pci:s0
+allow vendor_shell sysfs_pci:file w_file_perms;
