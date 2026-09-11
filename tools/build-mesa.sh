@@ -122,8 +122,84 @@ if [[ ! -x "$CLC_PFX/bin/mesa_clc" || ! -x "$CLC_PFX/bin/vtn_bindgen2" ]]; then
 "host LLVM missing, needed to build mesa_clc.
   sudo apt install llvm-21-dev clang-21 libclang-21-dev \\
                    libclc-21-dev libllvmspirvlib-21-dev spirv-tools-dev cmake"
+    # libclc, SPIRV-Tools and friends live in the rootless ~/.local/aosp-deps
+    # prefix, which the HOST pkg-config knows nothing about. The cross builds
+    # below pass their own pkg-config path; this native one runs against the
+    # system default and dies at configure:
+    #
+    #     ERROR: Dependency "libclc" not found (tried pkg-config and cmake)
+    #
+    # Worth knowing how that failed: the whole mesa build exits 1 having printed
+    # nothing beyond this line, and a following `./build.sh android` then
+    # succeeds against the PREVIOUS libgallium_dri.so -- so the image builds
+    # cleanly and silently ships an unchanged driver. Check the mesa exit code,
+    # not just the AOSP one.
+    # BOTH directories. The prefix is split the Debian multiarch way, and the
+    # two dependencies live one in each:
+    #     usr/lib/pkgconfig/                 libclc.pc, SPIRV-Tools.pc
+    #     usr/lib/x86_64-linux-gnu/pkgconfig/  LLVMSPIRVLib.pc
+    # Adding only the first gets past libclc and then dies on LLVMSPIRVLib, one
+    # dependency at a time. This is the third time this prefix's multiarch split
+    # has cost a build -- the kernel's OpenSSL headers were the same shape
+    # (usr/include vs usr/include/x86_64-linux-gnu). Add both, always.
+    D="$HOME/.local/aosp-deps/usr"
+    PKG_CONFIG_PATH="$D/lib/pkgconfig:$D/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+    # One compiler family for both languages, or meson mixes them.
+    #
+    # This host has gcc but no g++, so meson picks gcc for C and clang++ for
+    # C++. meson.build:606 then probes -mtls-dialect=gnu2 with the C compiler,
+    # gcc 13 accepts it, and the flag is applied to C++ too -- where clang 18
+    # does not support it and every .cpp fails:
+    #
+    #     c++: error: unsupported argument 'gnu2' to option '-mtls-dialect='
+    #
+    # Forcing both to clang makes the probe fail honestly, so the flag is never
+    # added. Installing g++ would work too; this needs no root.
+    CC=clang; CXX=clang++
+
+    # clang's own development headers, for src/compiler/clc/clc_helpers.cpp.
+    #
+    #     fatal error: 'clang/Config/config.h' file not found
+    #
+    # They live under the prefix's llvm-18 tree, which llvm-config does not put
+    # on the include path here. Nothing in meson adds it either, so it has to
+    # come in through CXXFLAGS. This is the last of four host-toolchain gaps
+    # between a clean checkout and a Mesa that actually rebuilds on this
+    # machine; the other three are pkg-config paths and the C/C++ compiler
+    # mismatch above.
+    for _llvm in "$D"/lib/llvm-*; do
+        [[ -d "$_llvm/include" ]] && CXXFLAGS="-I$_llvm/include ${CXXFLAGS:-}"
+    done
+
+    # ...and the libraries those headers belong to.
+    #
+    #     /usr/bin/ld: cannot find -lLLVMSPIRVLib
+    #
+    # pkg-config knowing about a .pc file is not the same as the linker knowing
+    # where the .so is: LLVMSPIRVLib.pc lives in lib/x86_64-linux-gnu/pkgconfig
+    # and reports a -L the system linker has no reason to search. -rpath as well
+    # as -L, because mesa_clc is then RUN during the cross build and would
+    # otherwise fail to start for the same reason it failed to link.
+    LDFLAGS="-L$D/lib -L$D/lib/x86_64-linux-gnu -Wl,-rpath,$D/lib -Wl,-rpath,$D/lib/x86_64-linux-gnu ${LDFLAGS:-}"
+    LD_LIBRARY_PATH="$D/lib:$D/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+    # Everything above is exported HERE and nowhere else.
+    #
+    # These are host-toolchain settings for a host build. Exporting them at
+    # script scope leaks them into the NDK cross builds further down, where they
+    # are actively wrong: LDFLAGS pointing at host x86_64 library directories
+    # made the cross link fail on a library it had always found before --
+    #
+    #     FAILED: src/amd/common/ac_ib_parser
+    #     ld.lld: error: unable to find library -lelf
+    #
+    # -- which looks like the cross build regressing and is nothing of the kind.
+    # The subshell is the fix: the native build gets them, nothing else does.
     info "building native mesa_clc + vtn_bindgen2 (host LLVM, one time)"
     rm -rf "$WORK/native-clc"
+    (
+    export PKG_CONFIG_PATH CC CXX CXXFLAGS LDFLAGS LD_LIBRARY_PATH
     # Everything a driver would need is switched off: this build exists only to
     # produce the two compilers, so it wants no GPU driver, no window system.
     meson setup "$WORK/native-clc" "$MESA_SRC" \
@@ -136,6 +212,7 @@ if [[ ! -x "$CLC_PFX/bin/mesa_clc" || ! -x "$CLC_PFX/bin/vtn_bindgen2" ]]; then
         >/dev/null
     ninja -C "$WORK/native-clc" -j"$JOBS"
     ninja -C "$WORK/native-clc" install >/dev/null
+    )
 fi
 [[ -x "$CLC_PFX/bin/mesa_clc" ]] || die "mesa_clc did not build"
 export PATH="$CLC_PFX/bin:$PATH"
