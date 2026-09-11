@@ -57,6 +57,17 @@
 # read it, and EGL then fails with "no suitable EGLConfig found, giving up".
 /vendor/lib(64)?/hw/vulkan\.pastel\.so       u:object_r:same_process_hal_file:s0
 
+# NVK, the same way. Loaded straight into surfaceflinger, bootanimation and
+# every app's RenderThread via the Vulkan loader, so plain vendor_file is not
+# enough. Missing this was invisible on the NVIDIA boot entry, which is
+# permissive -- it logged and carried on:
+#     avc: denied { read execute } comm="surfaceflinger" name="vulkan.nouveau.so"
+#          scontext=u:r:surfaceflinger:s0 tcontext=u:object_r:vendor_file:s0
+#          permissive=1
+# On an ENFORCING boot NVK would not load at all, zink would have no Vulkan
+# driver underneath it, and NVIDIA would silently fall back or fail.
+/vendor/lib(64)?/hw/vulkan\.nouveau\.so      u:object_r:same_process_hal_file:s0
+
 # virtio-console ports used during bring-up: kmsg on hvc0, logcat on hvc1, and
 # the screencap PNG on hvc2 (see init.pc_x86_64.rc and tools/run-qemu.sh).
 # Unlabeled they fall back to the generic 'device' type, which shell may not
