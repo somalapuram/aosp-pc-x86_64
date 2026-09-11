@@ -483,9 +483,15 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
 # pc_select_egl.sh reads before it publishes drm.gpu.vendor_name.
 #
 # Nothing in the image is per-board. The script discovers the offload GPU by the
-# only property that matters -- a card with a render node and no connected
-# connector -- so this entry does the right thing on any machine, and does
-# nothing at all on one with a single GPU.
+# only property that matters -- a card with a render node and NO CONNECTORS AT
+# ALL -- so this entry does the right thing on any machine, and does nothing at
+# all on one with a single GPU.
+#
+# "No connected connector" was the test until it blanked the AMD workstation:
+# there the iGPU has four outputs with nothing plugged into them, which made it
+# look like an offload card, so Android rendered on the iGPU and asked the 3070
+# Ti to scan out a foreign buffer. A muxless dGPU has no connectors to begin
+# with -- see pc_select_egl.sh for the post-mortem.
 #
 # Why this is a MENU ENTRY and not the default:
 #
@@ -512,6 +518,8 @@ menuentry "Android pc_x86_64 (NVIDIA render offload)" {
            androidboot.vulkan_hal=nouveau \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
+           androidboot.logcat_serial=1 \\
+           androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange \\
            ${NOUVEAU_ARG} \\
            earlycon=efifb keep_bootcon \\
