@@ -1,8 +1,8 @@
 From aeaa5af4381023ee4cb3bb28a076bb0d36b9aed8 Mon Sep 17 00:00:00 2001
 From: Somalapuram Amaranath <somalapuram@gmail.com>
 Date: Fri, 11 Sep 2026 10:06:25 +0530
-Subject: [PATCH] drm_hwcomposer: DIAGNOSTIC logging for client composition and
- modifiers
+Subject: [PATCH 3/3] drm_hwcomposer: DIAGNOSTIC logging for client composition
+ and modifiers
 
 Temporary instrumentation for the pc_x86_64 port. Two questions the device
 currently answers with silence:

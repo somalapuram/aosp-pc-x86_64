@@ -1,0 +1,39 @@
+From 19dea59ae4b0f425ee25581b4f04e7227a8bfdde Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 08:51:41 +0530
+Subject: [PATCH 2/3] drm_hwcomposer: fix inverted test in CleanFailedCommit
+
+CommitFrame() returns std::optional<AtomicCommitResult>, which is truthy
+on SUCCESS. Testing it directly logged 'Failed to clean-up active
+composition' on every frame where the clean-up WORKED, and logged nothing
+when it genuinely failed.
+
+That matters more than a stray log line: CleanFailedCommit() is the
+commit that DISABLES EVERY PLANE while the CRTC stays ACTIVE, i.e. one
+solid black frame on a lit panel, so this is the only record of how often
+the screen is being blacked out -- and it read backwards.
+
+Change-Id: I3ee1ddc2f0fa37a308b21dc27803ab5f096f2886
+---
+ drm/DrmAtomicStateManager.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
+index 99d646f..a462f97 100644
+--- a/drm/DrmAtomicStateManager.cpp
++++ b/drm/DrmAtomicStateManager.cpp
+@@ -90,7 +90,13 @@ void DrmAtomicStateManager::CleanFailedCommit() {
+   // signal the release fences from that composition to avoid hanging.
+   AtomicCommitArgs cl_args{};
+   cl_args.composition = std::make_shared<LayerToPlaneJoiningPlan>();
+-  if (CommitFrame(cl_args, /* test_only */ false)) {
++  // CommitFrame() returns std::optional<AtomicCommitResult>, which is TRUTHY
++  // ON SUCCESS and nullopt on failure. Testing it directly inverted this: the
++  // error was logged on every frame where the clean-up WORKED, and nothing was
++  // logged when it genuinely failed. That matters more here than it looks --
++  // this is the commit that blanks the panel, so this line is the only record
++  // of how often the screen is being blacked out, and it read backwards.
++  if (!CommitFrame(cl_args, /* test_only */ false)) {
+     ALOGE("Failed to clean-up active composition for pipeline %s",
+           pipe_->connector->Get()->GetName().c_str());
+   }
