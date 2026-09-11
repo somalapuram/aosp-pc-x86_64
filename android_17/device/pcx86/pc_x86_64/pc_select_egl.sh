@@ -320,6 +320,31 @@ if [ "$(getprop ro.boot.pc_render_gpu)" = "offload" ]; then
     done
 fi
 
+# Publish the display GPU separately from the render GPU.
+#
+# drm.gpu.vendor_name says where to RENDER. On an offload boot that is the
+# discrete card, and because the property is global it takes SurfaceFlinger
+# with it -- which is the inverse of PRIME offload on Linux, where the
+# compositor stays on the card that owns the display.
+#
+# It is expensive. Measured on this laptop, WebGL Aquarium:
+#
+#     SurfaceFlinger composites nothing    5000 fish    60 fps
+#     SurfaceFlinger composites each frame  500 fish    17 fps
+#
+# Ten times the geometry, three and a half times the rate: the cost is the
+# compositor reading and writing display-GPU gralloc buffers from across PCIe,
+# untiled, not the application's rendering.
+#
+# So name the display GPU too. Mesa reads this one instead when a process sets
+# MESA_DRM_ROLE=display, which surfaceflinger.rc does. Always published, even
+# when there is no offload, so the property never goes stale between boots of
+# different GRUB entries on shared userdata.
+if [ -n "$best_drv" ]; then
+    setprop drm.gpu.display_vendor_name "$best_drv"
+    say "display GPU -> drm.gpu.display_vendor_name=$best_drv"
+fi
+
 if [ -n "$offload_drv" ]; then
     setprop drm.gpu.vendor_name "$offload_drv"
     say "render offload: $(basename "$offload_card") ($offload_drv) renders, $(basename "${best_card:-none}") (${best_drv:-none}) scans out -> drm.gpu.vendor_name=$offload_drv"
