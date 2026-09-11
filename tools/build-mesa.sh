@@ -76,6 +76,33 @@ die()  { printf '%sfail%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 [[ "${1:-}" == "clean" ]] && { info "wiping build dirs"; rm -rf "$WORK"/build-* "$WORK"/drm-* "$WORK"/prefix-*; }
 
 # ------------------------------------------------------------- prereqs ----
+# meson and the llvm-config shim are installed into the ROOTLESS deps prefix
+# ($D below), not into /usr, and nothing else puts that on PATH. Without this
+# the check underneath dies with "meson missing" and then tells you to apt
+# install a meson that is already present -- and because ./build.sh mesa exits
+# non-zero having printed almost nothing else, a following ./build.sh android
+# SUCCEEDS against the previous libgallium_dri.so and silently ships an
+# unchanged Mesa. That cost a boot cycle on 2026-09-11: the driver's mtime
+# never moved off the earlier build and the flicker fix was not in the image.
+PATH="$HOME/.local/aosp-deps/usr/bin:$PATH"
+# Same story for python: the prefix is rootless, so `pip install --prefix` put
+# mako in its own dist-packages, which is on nobody's sys.path. Mesa generates
+# much of its source from mako templates in BOTH the host and the cross build,
+# so this is exported rather than scoped to one of them.
+export PYTHONPATH="$HOME/.local/aosp-deps/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+# And bison has its data path compiled in as /usr/share/bison, which does not
+# exist on a rootless install -- it fails as
+#     bison: /usr/share/bison/m4sugar/m4sugar.m4: cannot open
+# generating glcpp-parse.c, roughly 34 targets in. bison, flex, meson and
+# llvm-config all exist ONLY in this prefix (nothing is in /usr/bin), so the
+# prefix is not an override here, it is the only source.
+export BISON_PKGDATADIR="$HOME/.local/aosp-deps/usr/share/bison"
+# bison finds m4 through $M4, falling back to the absolute path it was
+# CONFIGURED with (/usr/bin/m4), not by searching PATH -- so putting the prefix
+# on PATH is not enough and it fails as "m4 subprocess failed: No such file or
+# directory". m4 is in the prefix like everything else.
+export M4="$HOME/.local/aosp-deps/usr/bin/m4"
+
 for t in meson ninja pkg-config; do
     command -v "$t" >/dev/null || die "$t missing.  sudo apt install meson ninja-build pkg-config"
 done
