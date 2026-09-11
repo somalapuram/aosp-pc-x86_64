@@ -22,4 +22,22 @@ OUT=/data/vendor/pc/kmsg.txt
 PREV=/data/vendor/pc/kmsg.prev.txt
 
 [ -f "$OUT" ] && mv -f "$OUT" "$PREV"
+# Continuous streaming is OFF unless androidboot.pc_logs=1 is on the kernel
+# command line. It is not free, and on this port it was the single largest
+# source of jank.
+#
+# Measured on the HP laptop booted from the T7, so /data lives on USB: this
+# service writes roughly 109 lines per SECOND to that external SSD. Same
+# scrolling-UI benchmark, with and without it:
+#
+#     capture running   213 frames, 145 MISSED, 26.9 ms/frame
+#     capture stopped   275 frames,   3 missed, 19.3 ms/frame
+#
+# A 98% drop in missed frames. The jank was the logging, not the GPU.
+#
+# pc-kmsg-file still runs unconditionally: it is oneshot, dumps the kernel ring
+# buffer once, and costs nothing, so a boot that never lights up the screen can
+# still be explained without setting any flag.
+[ "$(getprop ro.boot.pc_logs)" = "1" ] || exit 0
+
 exec cat /dev/kmsg >> "$OUT"

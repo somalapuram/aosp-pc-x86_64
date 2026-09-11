@@ -421,6 +421,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
+           androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange \\
            ${NOUVEAU_ARG} \\
            earlycon=efifb keep_bootcon \\
@@ -463,6 +464,7 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
            androidboot.selinux=permissive \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
+           androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange \\
            nouveau.modeset=1 nouveau.atomic=1 \\
            nouveau.debug=info,fb=debug,gsp=debug,disp=debug \\
@@ -525,6 +527,7 @@ menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
+           androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange \\
            nouveau.modeset=0 \\
            earlycon=efifb keep_bootcon \\
@@ -542,6 +545,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            console=ttyS0,115200 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
+           androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
