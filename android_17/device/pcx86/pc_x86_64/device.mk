@@ -274,10 +274,41 @@ PRODUCT_PACKAGES += \
 # Blackwell and later, where nouveau GL does not exist and this is ignored with
 # a warning. The proper fix for those is to build zink + NVK, both of which are
 # already in the tree (src/gallium/drivers/zink, src/nouveau/vulkan).
+#
+# use_overlay_planes=0 is for the constant black-frame flicker on the HP laptop
+# (whole screen blanks and returns, repeatedly, starting only when the UI comes
+# up). Both surviving explanations for it run through multi-plane commits:
+#
+#   - drm_hwcomposer answers a FAILED atomic commit by committing an EMPTY plan
+#     (DrmAtomicStateManager.cpp:88-97 CleanFailedCommit). That disables every
+#     plane while the CRTC stays ACTIVE, so a failed commit is not a dropped
+#     frame -- it is one solid BLACK frame on a lit panel. Fewer planes in the
+#     commit is fewer ways for the kernel to reject it.
+#   - minigbm is built -DDRV_PC_FORCE_LINEAR (external/minigbm/Android.bp:82-85)
+#     so every scanout buffer is LINEAR. N simultaneous linear streams on one
+#     Intel pipe is what drains the display FIFO, and an underrun paints the
+#     rest of that frame black (i915/display/intel_fifo_underrun.c:479-492).
+#
+# At 0, GetUsablePlanes() returns the primary plane only
+# (DrmDisplayPipeline.cpp:150) and everything else is GPU-composited. It costs
+# some power and performance, and it is the conservative setting on every GPU,
+# so it is safe in one image that also boots AMD, Intel-only and virtio.
+#
+# NOT YET DONE, and the better fix for the second cause: drop
+# DRV_PC_FORCE_LINEAR. Its stated reason -- SwiftShader having to CPU-map every
+# buffer -- died when a real GPU started rendering. It needs checking that
+# nouveau can write an X-tiled i915 buffer across PRIME before it moves.
+#
+# present_fence_not_reliable is left ON deliberately. It does not cause the
+# flicker; it hides it, by making SurfaceFlinger drop Feature::kPresentFences
+# so dropped frames get no jank accounting. Removing it is a diagnostic
+# improvement, not a cure, and it would regress QEMU/virtio to the BAD_DISPLAY
+# boot crash documented above -- which this single image still has to survive.
 PRODUCT_VENDOR_PROPERTIES += \
     vendor.mesa.nouveau.use.zink=0 \
     ro.hardware.egl=mesa \
     ro.vendor.hwc.drm.present_fence_not_reliable=true \
+    ro.vendor.hwc.use_overlay_planes=0 \
     ro.hardware.vulkan=pastel \
     debug.hwui.renderer=skiagl
 
