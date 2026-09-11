@@ -1,7 +1,7 @@
 From 9061e89aaf690a417a1e768241a5b3a8f46bbf30 Mon Sep 17 00:00:00 2001
 From: Somalapuram Amaranath <somalapuram@gmail.com>
 Date: Fri, 11 Sep 2026 12:01:01 +0530
-Subject: [PATCH] egl/android: PRIME staging -- render GPU-local and tiled,
+Subject: [PATCH 6/7] egl/android: PRIME staging -- render GPU-local and tiled,
  blit at swap
 
 Android is the only Mesa platform with no PRIME staging path, and the reason is

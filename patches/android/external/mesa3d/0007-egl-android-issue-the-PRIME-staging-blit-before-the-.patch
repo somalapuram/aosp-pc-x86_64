@@ -1,0 +1,105 @@
+From 8c6991ee4b3c2d821d2971ff4e472660c21dac61 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 12:12:07 +0530
+Subject: [PATCH 7/7] egl/android: issue the PRIME staging blit before the
+ fence is created
+
+The blit was placed after dri2_flush_drawable_for_swapbuffers_flags(), which is
+the call that produces dri2_surf->out_fence_fd. That fence is what
+droid_window_enqueue_buffer() hands to ANativeWindow_queueBuffer() as the
+signal telling the consumer when the buffer may be read, so a blit issued
+afterwards is not covered by it: the compositor was free to scan out a gralloc
+buffer the copy was still writing into.
+
+It showed exactly as that predicts -- a torn frame, one horizontal seam with a
+different frame above and below it, while the on-screen fps counter read
+normally.
+
+Moved ahead of the flush so the fence covers the copy. Order is now
+blit -> flush (fence) -> queueBuffer.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GbE6Dti9ffdUvhbzRyp3g4
+Change-Id: I8b5cca0b99dc309b5a3218d8b91522f55844fa56
+---
+ src/egl/drivers/dri2/platform_android.c | 60 +++++++++++++------------
+ 1 file changed, 32 insertions(+), 28 deletions(-)
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index ecef165171e..78d7ec9ef0a 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -721,6 +721,38 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
+    if (dri2_surf->back)
+       dri2_surf->back->age = 1;
+ 
++   /* PRIME staging: resolve the render-GPU-local target into the gralloc
++    * buffer. One full-surface blit per frame, which is the point -- it replaces
++    * every fragment write crossing PCIe into the other GPU's untiled memory
++    * with a single sequential copy.
++    *
++    * This MUST come before dri2_flush_drawable_for_swapbuffers_flags(), not
++    * after. That call is what produces dri2_surf->out_fence_fd, and that fence
++    * is handed to ANativeWindow_queueBuffer() as the signal telling the
++    * consumer when the buffer is safe to read. A blit issued afterwards is not
++    * covered by it, so the compositor is free to scan out a buffer the copy is
++    * still writing -- which showed up as a torn frame, a horizontal seam with
++    * two different frames above and below it.
++    */
++   if (dri2_surf->dri_image_back_render && dri2_surf->dri_image_back) {
++      _EGLContext *ctx = _eglGetCurrentContext();
++      struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
++
++      if (dri2_ctx) {
++         dri2_blit_image(dri2_ctx->dri_context, dri2_surf->dri_image_back,
++                         dri2_surf->dri_image_back_render, 0, 0,
++                         dri2_surf->base.Width, dri2_surf->base.Height, 0, 0,
++                         dri2_surf->base.Width, dri2_surf->base.Height, 0);
++      } else {
++         /* No current context means no way to issue the blit, and the gralloc
++          * buffer would go out stale. Loud: a silently wrong frame is worse
++          * than a slow one. */
++         _eglLog(_EGL_WARNING,
++                 "PRIME staging: no current context at swap; frame not "
++                 "resolved");
++      }
++   }
++
+    dri2_flush_drawable_for_swapbuffers_flags(disp, draw,
+                                              __DRI2_NOTHROTTLE_SWAPBUFFER);
+ 
+@@ -735,34 +767,6 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
+        * a callback to ANativeWindow_dequeueBuffer, in which case
+        * dri2_surf->buffer remains null.
+        */
+-      /* PRIME staging: resolve the render-GPU-local target into the gralloc
+-       * buffer. One full-surface blit per frame, which is the entire point --
+-       * it replaces every fragment write crossing PCIe into the other GPU's
+-       * untiled memory with a single sequential copy the driver can optimise.
+-       *
+-       * Must happen BEFORE droid_window_enqueue_buffer(), or the compositor is
+-       * handed a buffer the frame was never copied into.
+-       */
+-      if (dri2_surf->dri_image_back_render && dri2_surf->dri_image_back) {
+-         _EGLContext *ctx = _eglGetCurrentContext();
+-         struct dri2_egl_context *dri2_ctx = dri2_egl_context(ctx);
+-
+-         if (dri2_ctx) {
+-            dri2_blit_image(dri2_ctx->dri_context, dri2_surf->dri_image_back,
+-                            dri2_surf->dri_image_back_render, 0, 0,
+-                            dri2_surf->base.Width, dri2_surf->base.Height, 0, 0,
+-                            dri2_surf->base.Width, dri2_surf->base.Height, 0);
+-            dri_flush_drawable(dri2_surf->dri_drawable);
+-         } else {
+-            /* No current context means no way to issue the blit, and the
+-             * gralloc buffer would go out stale. Loud, because a silently
+-             * wrong frame is worse than a slow one. */
+-            _eglLog(_EGL_WARNING,
+-                    "PRIME staging: no current context at swap; frame not "
+-                    "resolved");
+-         }
+-      }
+-
+       if (dri2_surf->buffer)
+          droid_window_enqueue_buffer(disp, dri2_surf);
+ 
