@@ -171,6 +171,38 @@ GPU_FW_SRC="${GPU_FW_SRC:-/lib/firmware}"
 # printk to the EFI framebuffer at ~35 ms each. Unpacking 238 MB costs 0.2 s.
 GPU_FW_EXCLUDE="${GPU_FW_EXCLUDE:-nvidia/595.84}"
 
+# ------------------------------------------------ radio firmware ----
+# WiFi and Bluetooth firmware, by the same mechanism and for the same reason.
+#
+# The AMD workstation came up with no WiFi and no Bluetooth. Half of that was
+# the kernel (only CONFIG_IWLWIFI was built -- see config/pc_x86_64.fragment),
+# and the other half is here: a driver without its firmware is a driver that
+# probes and then fails, which looks identical to a missing driver.
+#
+# TWO ARMS, because linux-firmware is not consistently laid out and the GPU loop
+# above only knows about subdirectories:
+#
+#   HW_FW_DIRS   subdirectories, copied whole (may be nested, e.g. intel/iwlwifi)
+#   HW_FW_GLOBS  FLAT top-level files, which a subdir loop silently copies ZERO of
+#
+# That second arm is not a nicety. The 180 iwlwifi blobs (76 MB) do NOT live in
+# /lib/firmware/iwlwifi/ -- they sit flat at the top level as
+# iwlwifi-*.ucode.zst, so a vendor-directory loop would have bundled nothing at
+# all for the one WiFi driver this image already had.
+HW_FW_DIRS="${HW_FW_DIRS:-rtw88 rtw89 rtlwifi mediatek ath10k ath11k ath12k ath9k_htc brcm cypress qca rtl_bt ar3k rtl_nic intel/iwlwifi}"
+
+# regulatory.db is the cheapest entry here and the easiest to miss. The kernel
+# has CONFIG_CFG80211_REQUIRE_SIGNED_REGDB=y, and net/wireless/reg.c requests
+# "regulatory.db" + "regulatory.db.p7s"; without them cfg80211 falls back to the
+# built-in world domain, which makes most 5 GHz channels passive and 6 GHz
+# unavailable. The symptom is "wifi connects but is slow, and the 5 GHz SSID is
+# missing" -- which reads as a driver bug and is not one. 7.3 KB.
+#
+# intel/ibt-* is Intel Bluetooth. It is globbed rather than taking all of
+# intel/, because that directory is 57 MB of which 26 MB is camera (ipu, vsc),
+# audio (sof) and ISH firmware this image has no driver for.
+HW_FW_GLOBS="${HW_FW_GLOBS:-regulatory.db regulatory.db.p7s iwlwifi-*.ucode* iwlwifi-*.pnvm* intel/ibt-* htc_9271.fw* htc_7010.fw* ath3k-1.fw* carl9170-1.fw* ar5523.bin*}"
+
 # nouveau.modeset is now passed EXPLICITLY, and defaults to on.
 #
 # Leaving it out would already enable the driver -- nouveau_modeset defaults to
@@ -250,6 +282,38 @@ for vendor in $GPU_FW_VENDORS; do
     l=$(find "$dst" -type l | wc -l)
     FW_COUNT=$(( FW_COUNT + n + l ))
     ok "$vendor: $n files + $l links, $(du -sh --apparent-size "$dst" | cut -f1)"
+done
+
+# Radio firmware, both arms. Missing pieces are a warning, never fatal: a
+# machine with no Realtek card does not care that rtw89/ was absent from the
+# build host, and this must not stop an image being built.
+for d in $HW_FW_DIRS; do
+    src="$GPU_FW_SRC/$d"
+    if [[ ! -d "$src" ]]; then
+        warn "no firmware dir $d at $src -- that hardware will probe and fail"
+        continue
+    fi
+    mkdir -p "$FWROOT/lib/firmware/$(dirname "$d")"
+    cp -a "$src" "$FWROOT/lib/firmware/$(dirname "$d")/"
+    dst="$FWROOT/lib/firmware/$d"
+    n=$(find "$dst" -type f | wc -l); l=$(find "$dst" -type l | wc -l)
+    FW_COUNT=$(( FW_COUNT + n + l ))
+    ok "$d: $n files + $l links, $(du -sh --apparent-size "$dst" | cut -f1)"
+done
+
+for g in $HW_FW_GLOBS; do
+    # Count first: an unmatched glob stays literal, and cp would then fail.
+    # shellcheck disable=SC2086
+    matches=$(ls -d $GPU_FW_SRC/$g 2>/dev/null | wc -l)
+    if (( matches == 0 )); then
+        warn "no firmware matching $g -- that hardware will probe and fail"
+        continue
+    fi
+    mkdir -p "$FWROOT/lib/firmware/$(dirname "$g")"
+    # shellcheck disable=SC2086
+    cp -a $GPU_FW_SRC/$g "$FWROOT/lib/firmware/$(dirname "$g")/"
+    FW_COUNT=$(( FW_COUNT + matches ))
+    ok "$g: $matches files, $(du -shc --apparent-size $GPU_FW_SRC/$g 2>/dev/null | tail -1 | cut -f1)"
 done
 
 if (( FW_COUNT > 0 )); then
