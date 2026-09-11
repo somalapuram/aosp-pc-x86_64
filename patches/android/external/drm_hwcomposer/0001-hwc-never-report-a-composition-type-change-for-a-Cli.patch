@@ -1,0 +1,94 @@
+From 1437a1bee4390ae0963198323fbd02685e1af2f0 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Fri, 11 Sep 2026 17:38:08 +0530
+Subject: [PATCH] hwc: never report a composition type change for a Client
+ layer
+
+SurfaceFlinger rejects every transition out of Client. That is not a preference,
+it is the contract -- OutputLayer.cpp:1149-1152 in frameworks/native:
+
+    case Composition::INVALID:
+    case Composition::CLIENT:
+        result = false;
+
+so a composer may only ever DEMOTE (Device/SolidColor -> Client, or
+Cursor/Sideband -> Client|Device). Promotion is always invalid.
+
+GenericCompositionPlanner does not know that. It assigns planes from its own
+view of the scene and hands back kDevice/kCursor for layers SurfaceFlinger had
+already pinned to Client, and GetChangedCompositionTypes() reported them
+verbatim. Observed on an AMD Phoenix laptop, on exactly the layers that make up
+the desktop:
+
+    [Wallpaper BBQ wrapper]           Invalid ... Client (1) --> Device (2)
+    [VRI-...pclauncher.HomeActivity]  Invalid ... Client (1) --> Device (2)
+    [[BBQ] Sprite]                    Invalid ... Client (1) --> Cursor (4)
+
+SurfaceFlinger logs each one and refuses it, so the composer's plan and
+SurfaceFlinger's state disagree for that frame.
+
+Clamped here rather than in the planner: the planner's job is to find the best
+plan it can, and this is the one place that knows what SurfaceFlinger asked for.
+
+NOT claimed as a fix for the desktop flicker this was found while chasing. The
+rejections fire about once a minute, and the reported flicker follows mouse
+movement, so the rates do not match; SurfaceFlinger also rejects the change
+rather than acting on it. This is a protocol violation worth fixing on its own
+merits, and fixing it cleanly removes it as a candidate.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I90769bdd37fdb70ccd34614da0347088db87c66d
+---
+ hwc/HwcDisplay.cpp | 35 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/hwc/HwcDisplay.cpp b/hwc/HwcDisplay.cpp
+index 7f3b7ee..5be6e20 100644
+--- a/hwc/HwcDisplay.cpp
++++ b/hwc/HwcDisplay.cpp
+@@ -324,7 +324,40 @@ auto HwcDisplay::ValidateStagedComposition() -> std::vector<ChangedLayer> {
+     ALOGE_IF(it == validated_composition_->composition_types.end(),
+              "Backend did not composite layer %" PRId64 "", id);
+     if (it != validated_composition_->composition_types.end()) {
+-      layer.SetValidatedType(it->second);
++      auto type = it->second;
++
++      // A layer SurfaceFlinger pinned to Client can NEVER be changed, not even
++      // to Device or Cursor. This is not a preference, it is the contract:
++      // OutputLayer.cpp:1149-1152 in frameworks/native has
++      //     case Composition::CLIENT:
++      //         result = false;
++      // so every transition out of Client is rejected, and the composer is only
++      // ever allowed to DEMOTE (Device/SolidColor -> Client, or
++      // Cursor/Sideband -> Client|Device).
++      //
++      // The planner does not know that. GenericCompositionPlanner assigns
++      // planes from its own view of the scene, so on a display where the plan
++      // says a layer could go on hardware it hands back kDevice/kCursor even
++      // when SurfaceFlinger had already decided Client -- and this loop then
++      // reported it verbatim as a change. Observed on an AMD laptop, on exactly
++      // the layers that make up the desktop:
++      //
++      //   [Wallpaper BBQ wrapper]          Client (1) --> Device (2)
++      //   [VRI-...pclauncher.HomeActivity] Client (1) --> Device (2)
++      //   [[BBQ] Sprite]                   Client (1) --> Cursor (4)
++      //
++      // SurfaceFlinger logs each one and refuses it, so hwcomposer's plan and
++      // SurfaceFlinger's state disagree for that frame.
++      //
++      // Clamp here rather than in the planner: the planner's job is to find the
++      // best plan it can, and this is the one place that knows what
++      // SurfaceFlinger actually asked for.
++      if (layer.GetSfType() == CompositionType::kClient &&
++          type != CompositionType::kClient) {
++        type = CompositionType::kClient;
++      }
++
++      layer.SetValidatedType(type);
+     }
+     if (layer.IsTypeChanged()) {
+       changed_layers.emplace_back(id, layer.GetValidatedType());
+-- 
+2.43.0
+
