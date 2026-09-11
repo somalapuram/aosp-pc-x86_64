@@ -44,6 +44,20 @@ allow hal_graphics_composer_default sysfs:dir r_dir_perms;
 # the way, which is all it needs and no more.
 allow hal_graphics_composer_default sysfs_pci:dir search;
 
+# ...and READ/WRITE the backlight file itself when it lands on sysfs_pci, which
+# it does on every machine except the one whose path is spelled out in
+# genfs_contexts. genfscon takes literal prefixes with no wildcards, so only the
+# Intel laptop's
+#     .../0000:00:02.0/drm/card0/card0-eDP-1/intel_backlight
+# is labelled sysfs_leds. The AMD laptop's panel is
+#     .../0000:00:08.1/0000:c3:00.0/drm/card0/card0-eDP-1/amdgpu_bl0
+# which falls through to sysfs_pci, and 'search' alone got the composer to the
+# file and no further:
+#     E drmhwc: Failed to set brightness to 4589 at
+#              /sys/class/backlight/amdgpu_bl0/brightness (13)
+# 13 is EACCES. Brightness control simply did nothing, with the slider moving.
+allow hal_graphics_composer_default sysfs_pci:file rw_file_perms;
+
 # The backlight itself is read-write: brightness and bl_power are written to
 # set the level and to blank the panel, max_brightness and scale are read.
 allow hal_graphics_composer_default sysfs_leds:dir search;

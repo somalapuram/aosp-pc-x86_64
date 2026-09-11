@@ -189,7 +189,13 @@ GPU_FW_EXCLUDE="${GPU_FW_EXCLUDE:-nvidia/595.84}"
 # /lib/firmware/iwlwifi/ -- they sit flat at the top level as
 # iwlwifi-*.ucode.zst, so a vendor-directory loop would have bundled nothing at
 # all for the one WiFi driver this image already had.
-HW_FW_DIRS="${HW_FW_DIRS:-rtw88 rtw89 rtlwifi mediatek ath10k ath11k ath12k ath9k_htc brcm cypress qca rtl_bt ar3k rtl_nic intel/iwlwifi}"
+# cirrus/ is the speaker amplifier, not a radio. HP laptops drive their speakers
+# through Cirrus CS35L41 amps hanging off the HDA codec (an ALC245 on the AMD
+# machine), and CONFIG_SND_HDA_SCODEC_CS35L41{,_I2C,_SPI} are already =y -- only
+# the blobs were missing, so the amp fell back to a default profile and the
+# speakers stayed silent while AudioFlinger reported a perfectly healthy
+# AUDIO_DEVICE_OUT_SPEAKER. 2.5 MB.
+HW_FW_DIRS="${HW_FW_DIRS:-rtw88 rtw89 rtlwifi mediatek ath10k ath11k ath12k ath9k_htc brcm cypress qca rtl_bt ar3k rtl_nic intel/iwlwifi cirrus}"
 
 # regulatory.db is the cheapest entry here and the easiest to miss. The kernel
 # has CONFIG_CFG80211_REQUIRE_SIGNED_REGDB=y, and net/wireless/reg.c requests

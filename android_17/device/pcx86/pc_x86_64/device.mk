@@ -429,6 +429,39 @@ PRODUCT_PACKAGES += \
     linux_firmware_btusb-ibt_be200 \
     linux_firmware_btpci-ibt_be211
 
+# MediaTek and Realtek, because the Intel-only list above is why the AMD laptop
+# had no Bluetooth. Its radio is an MT7922 (mt7921e drives the WiFi half), and
+# btusb asked for a file nothing installed:
+#
+#     bluetooth hci0: Direct firmware load for
+#         mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin failed with error -2
+#     Bluetooth: hci0: Failed to set up firmware (-2)
+#
+# THE INITRD DOES NOT COVER THIS, and that is the part worth remembering. The
+# gpufw.img second initramfs unpacks at / and carries the whole mediatek/ tree
+# including this exact blob -- but that filesystem only exists during early
+# boot. This device boots system-as-root: / is an ext4 partition (it has a
+# lost+found), and after the switch there is no /lib at all:
+#
+#     $ ls /lib
+#     ls: /lib: No such file or directory
+#
+# So a driver that probes at boot gets its firmware from the initrd -- amdgpu
+# and mt7921e both do, which is why the GPU and WiFi work -- and anything that
+# asks LATER gets nothing. Bluetooth is enabled by the user after boot, so it
+# is always in the second category. /vendor/firmware is the path that survives,
+# and it is what ueventd searches.
+PRODUCT_PACKAGES += \
+    linux_firmware_mt7921 \
+    linux_firmware_mt7921-bt \
+    linux_firmware_mt7922 \
+    linux_firmware_mt7922-bt \
+    linux_firmware_mt7925 \
+    linux_firmware_mt7925-bt \
+    linux_firmware_rtw88-rtw8822c \
+    linux_firmware_btusb-r8822cu \
+    linux_firmware_btusb-rtl8761bu_config
+
 # --- WiFi firmware: Intel "ma" family --------------------------------------
 # The bring-up laptop's card is 8086:7e40, which iwlwifi claims through
 # iwl_ma_mac_cfg (pcie/drv.c) -- the "ma" family, Meteor Lake CNVi. AOSP's

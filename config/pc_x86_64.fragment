@@ -851,6 +851,35 @@ CONFIG_INTEL_VBTN=y
 # s2idle on Ryzen laptops.
 CONFIG_AMD_PMC=y
 
+# ------------------------------------------ AMD laptop touchpad / GPIO ----
+# The touchpad did not exist on the AMD laptop: /sys/bus/hid/devices held only
+# the USB mouse, and every /sys/bus/i2c/devices entry was an "AMDGPU DM aux hw
+# bus" -- i.e. display DDC channels, not a host controller with the touchpad on
+# it.
+#
+# I2C_DESIGNWARE_PLATFORM was already =y, so the controller driver was there.
+# The missing piece is PINCTRL_AMD: on an AMD laptop the I2C-HID touchpad's
+# INTERRUPT is an ACPI GpioInt routed through the AMD GPIO controller. With no
+# pinctrl driver that resource cannot be resolved, so i2c_hid_acpi never probes,
+# no i2c client device is created, and no HID device appears. The touchpad is
+# not "unsupported" -- it is never enumerated, which looks identical.
+CONFIG_PINCTRL_AMD=y
+
+# The other AMD I2C controller. Some Ryzen laptops put the touchpad behind MP2
+# rather than the designware block, and which one a board uses is not knowable
+# from here.
+CONFIG_I2C_AMD_MP2=y
+CONFIG_I2C_DESIGNWARE_PCI=y
+
+# AMD PSP arbitration for an I2C bus shared with firmware; without it the shared
+# bus can wedge on some Ryzen platforms.
+CONFIG_I2C_DESIGNWARE_AMDPSP=y
+
+# AMD/ATI SMBus. Also load-bearing for CONFIG_RMI4_SMB enabled above: RMI4 over
+# SMBus is how many Synaptics touchpads attach, and it needs an SMBus host
+# controller to attach TO.
+CONFIG_I2C_PIIX4=y
+
 # ------------------------------------------------- storage / SD / USB-C ----
 # The whole MMC subsystem was off, so SD card readers did not exist. (No SDIO
 # WiFi is enabled above, so turning MMC on adds card readers and nothing else.)
