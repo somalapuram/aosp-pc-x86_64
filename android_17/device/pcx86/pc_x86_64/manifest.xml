@@ -17,11 +17,11 @@
   always with an explicit <version>.
 
   Only HALs this device actually provides may be listed. Declaring one that is
-  absent is worse than omitting it -- the framework will call into it and fail.
+  absent is worse than omitting it — the framework will call into it and fail.
   See doc/07-hals.md.
 
   target-level is the Shipping FCM Version and is REQUIRED even when the
-  manifest declares no HALs. Without it checkvintf --check-compat fails with:
+  manifest declares no HALs. Without it checkvintf's compatibility check fails with:
       ERROR: Invalid argument: Device manifest does not specify Shipping FCM Version.
 
   202604 matches device/google/cuttlefish/shared/config/manifest.xml, the
