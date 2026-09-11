@@ -238,12 +238,16 @@ fi
 #
 # Discovery, generic and with no board knowledge, mirroring the rules above:
 #
-#   A card is an OFFLOAD candidate when it has a render node, drives no display,
-#   AND is not the boot VGA device -- it can render, it cannot scan out, and it
-#   is the add-in card. That is precisely what a muxless laptop's discrete GPU
-#   is. A card that drives a display is never a candidate, because then there is
-#   nothing to offload: it can render for itself, and rule 2 above already
-#   preferred the discrete one.
+#   A card is an OFFLOAD candidate when it has a render node, has NO CONNECTORS
+#   AT ALL, and is not the boot VGA device -- it can render, it physically
+#   cannot scan out, and it is the add-in card. That is precisely what a muxless
+#   laptop's discrete GPU is, and nothing else is.
+#
+#   "No connectors" is doing the real work; "drives no display" is not a
+#   substitute for it. An idle GPU with outputs nobody plugged into drives no
+#   display either, and treating that as an offload card is how the AMD
+#   workstation ended up rendering on its iGPU and scanning out on its 3070 Ti.
+#   See the loop below for the full post-mortem.
 #
 # The boot_vga test is not decoration, and leaving it out is wrong in a way that
 # is easy to miss. On a desktop with the monitor plugged into the DISCRETE card,
@@ -277,16 +281,35 @@ if [ "$(getprop ro.boot.pc_render_gpu)" = "offload" ]; then
         # Add-in card? The built-in one is never the offload target.
         [ "$(cat "$c/device/boot_vga" 2>/dev/null)" = "1" ] && continue
 
-        # Scans out? Any connected connector disqualifies it as an offload GPU.
-        drives_display=0
+        # Scans out? A muxless discrete GPU has NO CONNECTORS AT ALL -- it is a
+        # PCI class 030200 "3D controller", not a display adapter, and DRM gives
+        # it zero CRTCs ("Cannot find any crtc or sizes"). Counting connectors is
+        # the property that identifies it.
+        #
+        # The earlier test here was "no connector reads connected", which is a
+        # different and much weaker claim, and it is what blanked the AMD
+        # workstation. That machine is amdgpu (Raphael iGPU, 0000:17:00.0, four
+        # connectors, nothing plugged in) plus nouveau (GA104, boot VGA, the
+        # monitor). The iGPU passed every test -- render node, boot_vga=0 because
+        # the firmware picked the NVIDIA card, no connector "connected" -- so the
+        # offload target became the INTEGRATED GPU and the scanout card the
+        # discrete one, the exact inversion this block's boot_vga test was
+        # written to prevent. Result: drm.gpu.vendor_name=amdgpu, SurfaceFlinger
+        # rendering on the iGPU, nouveau asked to scan out a foreign buffer.
+        # screencap came back a perfect composited desktop and the monitor stayed
+        # black, because the readback never goes near scanout.
+        #
+        # boot_vga alone cannot catch that: it answers "which card did firmware
+        # post", and on a desktop with the monitor in the add-in card that is the
+        # add-in card. The connector count is not a preference, it is a physical
+        # fact about the silicon, and it cannot invert.
+        #
+        # pc_gpu_pm.sh was already hardened this same way, for the same reason.
+        connectors=0
         for conn in "$c"-*; do
-            [ -e "$conn/status" ] || continue
-            if [ "$(cat "$conn/status" 2>/dev/null)" = "connected" ]; then
-                drives_display=1
-                break
-            fi
+            [ -e "$conn/status" ] && connectors=$((connectors + 1))
         done
-        [ "$drives_display" = 0 ] || continue
+        [ "$connectors" = 0 ] || continue
 
         drv=$(basename "$(readlink -f "$c/device/driver" 2>/dev/null)" 2>/dev/null)
         [ -n "$drv" ] && [ "$drv" != "driver" ] || continue
