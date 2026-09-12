@@ -14,7 +14,7 @@
 #   ./build.sh image             assemble a bootable GPT disk image
 #   ./build.sh run               boot that image in QEMU/KVM as a generic PC
 #   ./build.sh test              boot it and report whether it came up cleanly
-#   ./build.sh usb [/dev/sdX]    write the image to a USB stick for real hardware
+#   ./build.sh usb [/dev/sdX]    write to a USB stick, keeping userdata (--wipe-data for a full write)
 #   ./build.sh logs [/dev/sdX]   pull kernel log + logcat back off that disk
 #   ./build.sh clean             remove build artefacts
 #
