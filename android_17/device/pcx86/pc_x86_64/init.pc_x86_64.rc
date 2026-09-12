@@ -104,6 +104,17 @@ on property:vendor.pc.gpu=mesa
 on property:vendor.pc.gpu=angle
     setprop ro.hardware.egl angle
 
+# present_fence_not_reliable, set from pc_select_egl.sh's detection instead of
+# unconditionally in build.prop. Required true on virtio-gpu (QEMU), where the
+# present fence signals early and drm_hwcomposer would otherwise return
+# BAD_DISPLAY and crash SurfaceFlinger; false on a real KMS driver, whose
+# present fence is accurate. Set here as vendor_init because it is a ro.* prop.
+on property:vendor.pc.hwc.pf_unreliable=1
+    setprop ro.vendor.hwc.drm.present_fence_not_reliable true
+
+on property:vendor.pc.hwc.pf_unreliable=0
+    setprop ro.vendor.hwc.drm.present_fence_not_reliable false
+
 on post-fs-data
     mkdir /data/vendor 0771 root root
     # Kernel-log capture destination. Not /data/local/tmp: that is

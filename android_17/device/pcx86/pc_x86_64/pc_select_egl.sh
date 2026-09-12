@@ -370,6 +370,26 @@ fi
 
 setprop vendor.pc.gpu "$egl"
 
+# Whether the DRM present fence can be trusted, published for init to turn into
+# ro.vendor.hwc.drm.present_fence_not_reliable (a ro.* prop this script cannot
+# set itself, same as ro.hardware.egl).
+#
+# virtio-gpu's present fence signals before the host has actually scanned out,
+# so drm_hwcomposer returns BAD_DISPLAY and SurfaceFlinger aborts every
+# transaction unless it is told the fence is unreliable -- that is why the
+# property existed, and it is required on QEMU.
+#
+# A real KMS driver (amdgpu, i915, nouveau, radeon) gives an accurate present
+# fence. Forcing "unreliable" there made SurfaceFlinger drop its present-fence
+# feedback on the two-layer transparent-launcher desktop, where it is the one
+# surface that blends two full-screen buffers per frame. So publish 1 only for
+# virtio and 0 for everything else, instead of the old unconditional build-time
+# true.
+case "$why" in
+    virtio_gpu) setprop vendor.pc.hwc.pf_unreliable 1 ;;
+    *)          setprop vendor.pc.hwc.pf_unreliable 0 ;;
+esac
+
 
 say "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
 

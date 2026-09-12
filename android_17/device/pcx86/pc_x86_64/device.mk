@@ -290,9 +290,12 @@ PRODUCT_PACKAGES += \
 # times a boot. With its rationale gone the property is removed: it costs power
 # and performance, and it pushes composition onto a GPU that is faulting.
 #
-# present_fence_not_reliable stays. It does not cause flicker; it hides dropped
-# frames from SurfaceFlinger, and removing it regresses QEMU/virtio to the
-# BAD_DISPLAY boot crash documented above.
+# present_fence_not_reliable is now set at boot by pc_select_egl.sh, true only
+# for virtio-gpu (which needs it -- see the BAD_DISPLAY note above) and false
+# for real KMS drivers, whose present fence is accurate. It was unconditionally
+# true here, which forced SurfaceFlinger to drop present-fence feedback on real
+# hardware; the two-layer transparent-launcher desktop is the surface that
+# exposed it. See init.pc_x86_64.rc.
 # vendor.mesa.nouveau.use.zink is NO LONGER FORCED to 0, and ro.hardware.vulkan
 # is no longer a build property. Both changes exist for the same reason.
 #
@@ -318,7 +321,6 @@ PRODUCT_PACKAGES += \
 # defaulting to pastel, so only the NVIDIA GRUB entry gets NVK.
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
-    ro.vendor.hwc.drm.present_fence_not_reliable=true \
     debug.hwui.renderer=skiagl
 
 # No lock screen. This is a bring-up device that usually has nobody sitting at
