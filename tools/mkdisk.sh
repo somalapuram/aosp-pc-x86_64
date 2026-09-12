@@ -502,12 +502,15 @@ search --no-floppy --label ANDROIDESP --set=root
 # permissive menu entry). Revert to enforcing once the flicker fix is baked in.
 # NEVER put a '#' comment inside the linux line itself: GRUB treats it as a
 # comment to end of line, which eats the trailing '\' and breaks the entry.
-# The default entry blacklists pinctrl-amd (amd_gpio) so it boots FAST and
-# flicker-free. Touchpad and the CS35L41 speaker amps need pinctrl-amd, but
-# enabling it makes the boot take minutes (the CS35L41 DSP firmware loads over
-# I2C at ~180s per amp), which is unacceptable as an everyday default. Touchpad
-# and sound are on the opt-in "ENABLE pinctrl-amd" entry until that load time is
-# fixed. Making the slow boot the default was a mistake that stranded a user.
+# The default entry now ENABLES pinctrl-amd (no amd_gpio blacklist), so a plain
+# boot brings up the touchpad and the CS35L41 speakers along with the flicker
+# fix. This is only sane because the CS35L41 firmware stall was root-caused and
+# fixed: it was request_firmware() waiting the full 60s fallback on each missing
+# spkid firmware variant, not slow I2C. With the kernel firmware timeout dropped
+# to 5s the two amps bind in ~35s total instead of ~6 minutes, so the boot is
+# fast. The earlier slow-default mistake stranded a user; that boot no longer
+# exists. A fast, no-touchpad/sound boot is still available on the verbose entry
+# (it keeps the amd_gpio blacklist).
 menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
@@ -518,7 +521,6 @@ menuentry "Android pc_x86_64" {
            sysctl.kernel.dmesg_restrict=0 \\
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
-           initcall_blacklist=amd_gpio_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
