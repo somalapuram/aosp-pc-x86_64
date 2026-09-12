@@ -319,6 +319,20 @@ PRODUCT_PACKAGES += \
 # so pc_select_egl.sh (vendor_shell) can never set it, whatever policy we write.
 # init.pc_x86_64.rc sets it at early-init from the kernel command line instead,
 # defaulting to pastel, so only the NVIDIA GRUB entry gets NVK.
+# Force the built-in panel desktop-first, so apps open in freeform windows
+# instead of fullscreen. A newer AOSP added DesktopDisplayModeController
+# (desktopmode/desktopfirst/), which -- when ENABLE_DISPLAY_WINDOWING_MODE_SWITCHING
+# is on -- overrides the display's windowing mode from DeviceStateManager
+# form-factor detection. A DIY PC has no foldable/laptop device states, so it is
+# judged touch-first and the controller stamps FULLSCREEN over the FREEFORM that
+# display_settings.xml sets, and every app opens fullscreen. This debug prop is
+# the controller's own escape hatch (DesktopDisplayModeController.kt:79):
+# canDesktopFirstModeBeEnabledOnDefaultDisplay() returns true unconditionally,
+# so the target stays desktop-first. Inert (and harmless) if the switching flag
+# is off, since the static FREEFORM already applies; wins if it is on.
+PRODUCT_VENDOR_PROPERTIES += \
+    persist.wm.debug.force_desktop_first_on_default_display_for_testing=true
+
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
     debug.hwui.renderer=skiagl \
