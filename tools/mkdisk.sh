@@ -485,7 +485,7 @@ menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=enforcing \\
+           androidboot.selinux=permissive  # TEMP: live flicker debug + adb screen capture \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
            sysctl.kernel.dmesg_restrict=0 \\
