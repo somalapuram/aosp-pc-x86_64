@@ -322,7 +322,9 @@ PRODUCT_PACKAGES += \
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
     debug.hwui.renderer=skiagl \
-    ro.vendor.hwc.use_cursor_plane=0
+    ro.vendor.hwc.use_cursor_plane=0 \
+    ro.surface_flinger.use_content_detection_for_refresh_rate=false \
+    ro.surface_flinger.set_idle_timer_ms=0
 
 # No lock screen. This is a bring-up device that usually has nobody sitting at
 # it, and the keyguard hides the launcher behind a swipe that a headless

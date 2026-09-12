@@ -56,4 +56,24 @@
          this, and a desktop with this much memory has no reason to keep the
          phone default. -->
     <integer name="config_cursorWindowSize">8192</integer>
+
+    <!-- Refresh-rate policy: sit at the panel's own top rate and never switch.
+         GENERIC, no hardcoded Hz.
+
+         On this AMD Phoenix laptop the 2560x1600 panel exposes its 120Hz and
+         60Hz modes in DIFFERENT mode groups (dumpsys SurfaceFlinger:
+         "primary (120 120)" is group 1/2, the 60Hz mode is group 3). A switch
+         between groups is a full modeset that blanks the panel for a frame, and
+         SurfaceFlinger's content-detection kept switching 120 to 60 for the
+         mostly-static desktop, which looked like the desktop icons vanishing
+         whenever the mouse moved and returning when it stopped.
+
+         config_defaultRefreshRate=0 with a high config_defaultPeakRefreshRate
+         means "default to the highest mode the panel actually has": 120 here,
+         60 on a 60Hz-only panel, 144 on a 144Hz one, so nothing is hardcoded.
+         Disabling content-detection switching (the sysprop in device.mk) then
+         keeps it there instead of dropping to a lower, different-group mode.
+         On a single-rate panel both are no-ops. -->
+    <integer name="config_defaultRefreshRate">0</integer>
+    <integer name="config_defaultPeakRefreshRate">240</integer>
 </resources>
