@@ -491,6 +491,7 @@ menuentry "Android pc_x86_64" {
            sysctl.kernel.dmesg_restrict=0 \\
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
+           initcall_blacklist=amd_gpio_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
@@ -680,7 +681,7 @@ menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
     initrd /ramdisk.img
 }
 
-menuentry "Android pc_x86_64 (SAFE: no pinctrl-amd, no touchpad/speakers)" {
+menuentry "Android pc_x86_64 (ENABLE pinctrl-amd: touchpad+speakers, MAY HANG)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
@@ -689,7 +690,6 @@ menuentry "Android pc_x86_64 (SAFE: no pinctrl-amd, no touchpad/speakers)" {
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
            androidboot.verifiedbootstate=orange \\
-           initcall_blacklist=amd_gpio_driver_init \\
            ${NOUVEAU_ARG} \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
