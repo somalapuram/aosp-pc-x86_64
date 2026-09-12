@@ -357,7 +357,13 @@ info "building standalone GRUB EFI image"
 # install entry is the last one, and three seconds is not enough time to read
 # the entries and arrow down to it before the default boots.
 cat > "$WORK/grub.cfg" <<EOF
-set timeout=${GRUB_TIMEOUT:-5}
+# 20 s, not 5. Five seconds auto-boots the default before anyone can read the
+# menu, let alone pick a diagnostic entry. That cost four boot cycles on the AMD
+# laptop: the "AMD I2C/GPIO ENABLED" entry -- the only way to get speakers or a
+# touchpad on that machine -- was never once selected, and every boot came back
+# on the default with the drivers still blacklisted, which read as "the fix did
+# not work" rather than "the entry was never chosen".
+set timeout=${GRUB_TIMEOUT:-20}
 set default=${GRUB_DEFAULT:-0}
 
 # The ESP carries a volume label so GRUB finds it regardless of disk ordering.
@@ -413,6 +419,30 @@ search --no-floppy --label ANDROIDESP --set=root
 # in the ring buffer via dmesg. Logcat comes over virtio-console regardless,
 # which is cheap. Use the verbose entry (GRUB_DEFAULT=1) when debugging early
 # boot, accepting that it distorts timing.
+# The blacklist here is ONE driver, not three, and that is a deliberate bisect
+# step rather than a leftover.
+#
+# Three AMD symbols (PINCTRL_AMD, I2C_AMD_MP2, I2C_DESIGNWARE_PCI) were the only
+# kernel change between a build that booted this laptop and one that did not, so
+# all three were blacklisted to get a bootable default back. But the machine
+# needs them: the CS35L41 speaker amps and the SYNA3115/ELAN2513 touchpad are
+# all I2C devices, and with the buses dead there is no sound and no touchpad.
+#
+# Blacklisting only amd_gpio_driver_init leaves the I2C controllers running and
+# disables just pinctrl-amd, which is the one with a known failure mode that
+# fits the symptom -- it registers GPIO interrupts after the console is up, and
+# a stuck GPIO IRQ wedges the machine at exactly that point.
+#
+# So this entry is now an experiment that runs itself:
+#   boots  -> the I2C drivers are innocent, pinctrl-amd is the culprit, and the
+#             speaker amps may bind (the touchpad still will not: its ACPI
+#             GpioInt needs pinctrl-amd)
+#   hangs  -> pinctrl-amd was not the only problem, and the I2C drivers are
+#             implicated too
+# Either way the answer arrives without anyone having to pick a menu entry --
+# four consecutive boots came back on the default with the full blacklist still
+# applied, because the diagnostic entry was never selected.
+#
 # DO NOT put earlycon=efifb on this entry, however tempting it is when a boot
 # looks dead.
 #
@@ -461,7 +491,7 @@ menuentry "Android pc_x86_64" {
            sysctl.kernel.dmesg_restrict=0 \\
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
-           initcall_blacklist=amd_gpio_driver_init,amd_mp2_pci_driver_init,dw_i2c_driver_init \\
+           initcall_blacklist=amd_gpio_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
