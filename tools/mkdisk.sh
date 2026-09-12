@@ -502,13 +502,12 @@ search --no-floppy --label ANDROIDESP --set=root
 # permissive menu entry). Revert to enforcing once the flicker fix is baked in.
 # NEVER put a '#' comment inside the linux line itself: GRUB treats it as a
 # comment to end of line, which eats the trailing '\' and breaks the entry.
-# The default entry now ENABLES pinctrl-amd (no amd_gpio blacklist): it is what
-# the touchpad (SYNA3115 I2C-HID) and the CS35L41 speaker amps need, and the
-# earlier "hang" was never a hang -- the CS35L41 DSP firmware just loads slowly
-# over I2C (~180s per amp), so the first boot is slow but reaches the desktop
-# with touchpad and speakers working. Fixing that load time is the next task;
-# the "SAFE: no pinctrl-amd" case is the verbose entry with the blacklist if a
-# fast boot without touchpad/sound is ever needed.
+# The default entry blacklists pinctrl-amd (amd_gpio) so it boots FAST and
+# flicker-free. Touchpad and the CS35L41 speaker amps need pinctrl-amd, but
+# enabling it makes the boot take minutes (the CS35L41 DSP firmware loads over
+# I2C at ~180s per amp), which is unacceptable as an everyday default. Touchpad
+# and sound are on the opt-in "ENABLE pinctrl-amd" entry until that load time is
+# fixed. Making the slow boot the default was a mistake that stranded a user.
 menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
@@ -519,42 +518,11 @@ menuentry "Android pc_x86_64" {
            sysctl.kernel.dmesg_restrict=0 \\
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
+           initcall_blacklist=amd_gpio_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
-# The same install, confirmed HERE instead of at a prompt.
-#
-# The interactive entry above asks the user to type ERASE on the machine's own
-# console. That assumes the kernel's VT layer delivers keystrokes to
-# /dev/console, and on this hardware it does not: the kernel has CONFIG_VT,
-# VT_CONSOLE, ATKBD, USB_HID and EVDEV all enabled, the prompt appears, and
-# nothing typed reaches the reader. Android drives input through evdev and
-# InputFlinger, not the VT, so a console prompt is not a reliable way to ask
-# this machine's owner a question.
-#
-# GRUB's own input demonstrably works -- selecting this entry at all requires
-# arrowing down to it and pressing enter -- so the confirmation is moved to
-# where the keyboard is known to function. androidboot.pc_install_confirm=ERASE
-# carries that answer to the installer, which then skips the prompt.
-#
-# This is a deliberate, clearly labelled, last-in-the-list choice, which is the
-# same standard the typed word was there to meet: nothing here can be reached by
-# accident, and the default entry is still a normal boot.
-menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
-    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
-           androidboot.hardware=pc_x86_64 \\
-           androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=permissive \\
-           initcall_blacklist=amd_gpio_driver_init \\
-           androidboot.pc_install=1 \\
-           androidboot.pc_install_confirm=ERASE \\
-           sysctl.kernel.dmesg_restrict=0 \\
-           video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
-    initrd /ramdisk.img${GPUFW_INITRD}
-}
 
 # The verbose entry stays PERMISSIVE on purpose. It is the escape hatch: if a
 # policy change makes the default entry unbootable, pick this one at the GRUB
@@ -781,7 +749,6 @@ menuentry "Android pc_x86_64 (ENABLE pinctrl-amd: touchpad+speakers, MAY HANG)" 
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
-}
 
 menuentry "Android pc_x86_64 (NVIDIA render offload)" {
     linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
@@ -898,6 +865,39 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            androidboot.selinux=permissive \\
            initcall_blacklist=amd_gpio_driver_init \\
            androidboot.pc_install=1 \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_ARG} \\
+           console=ttyS0,115200 console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
+# The same install, confirmed HERE instead of at a prompt.
+#
+# The interactive entry above asks the user to type ERASE on the machine's own
+# console. That assumes the kernel's VT layer delivers keystrokes to
+# /dev/console, and on this hardware it does not: the kernel has CONFIG_VT,
+# VT_CONSOLE, ATKBD, USB_HID and EVDEV all enabled, the prompt appears, and
+# nothing typed reaches the reader. Android drives input through evdev and
+# InputFlinger, not the VT, so a console prompt is not a reliable way to ask
+# this machine's owner a question.
+#
+# GRUB's own input demonstrably works -- selecting this entry at all requires
+# arrowing down to it and pressing enter -- so the confirmation is moved to
+# where the keyboard is known to function. androidboot.pc_install_confirm=ERASE
+# carries that answer to the installer, which then skips the prompt.
+#
+# This is a deliberate, clearly labelled, last-in-the-list choice, which is the
+# same standard the typed word was there to meet: nothing here can be reached by
+# accident, and the default entry is still a normal boot.
+menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
+           androidboot.pc_install=1 \\
+           androidboot.pc_install_confirm=ERASE \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
