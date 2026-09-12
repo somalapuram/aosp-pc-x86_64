@@ -1,0 +1,56 @@
+From 26217a628d7f81c3a49d92df159ede1248b414c8 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sat, 12 Sep 2026 19:09:26 +0530
+Subject: [PATCH] firmware_loader: default the fallback timeout to 5s, not 60s
+
+When request_firmware() fails the direct filesystem load it falls back to the
+userspace (ueventd) helper and waits fw_fallback_config.loading_timeout seconds.
+On this PC port that helper is ueventd serving /vendor/firmware, which answers
+in well under a second -- so the upstream 60s only ever hurts.
+
+The CS35L41 speaker-amp driver requests several firmware filename variants
+(spkid-specific, then generic). The spkid variants do not exist for this HP
+laptop, so each stalled the full 60s on the fallback: measured at ~180s per amp
+between "CS35L41 detected" (2.4s) and the firmware actually loading (185s),
+while the transfer itself takes under 1s. Two amps made that ~6 minutes, which
+read as a boot hang and forced pinctrl-amd (hence touchpad and speakers) off the
+default.
+
+At 5s the same misses cost ~15s per amp and nothing ueventd can actually serve
+is lost. Runtime-tunable via /sys/class/firmware/timeout.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+---
+ drivers/base/firmware_loader/fallback_table.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/base/firmware_loader/fallback_table.c b/drivers/base/firmware_loader/fallback_table.c
+index c8afc501a8a4..3785351b4128 100644
+--- a/drivers/base/firmware_loader/fallback_table.c
++++ b/drivers/base/firmware_loader/fallback_table.c
+@@ -19,7 +19,20 @@
+ 
+ struct firmware_fallback_config fw_fallback_config = {
+ 	.force_sysfs_fallback = IS_ENABLED(CONFIG_FW_LOADER_USER_HELPER_FALLBACK),
+-	.loading_timeout = 60,
++	/*
++	 * 5, not the upstream 60. When request_firmware() fails the direct
++	 * filesystem load it falls back to the userspace (ueventd) helper and
++	 * waits this many seconds for it. On this PC port that helper is ueventd
++	 * serving /vendor/firmware, which answers in well under a second once
++	 * /vendor is mounted -- so 60 only ever hurts. The CS35L41 speaker amp
++	 * driver requests several firmware filename variants (spkid-specific,
++	 * then generic); the SSID/spkid variants do not exist for this laptop,
++	 * so each one used to stall the full 60 s on the fallback -- ~180 s per
++	 * amp, ~6 minutes for the pair, which read as a boot hang. At 5 s the
++	 * same misses cost ~15 s per amp, and nothing that ueventd can actually
++	 * provide is lost. Settable at runtime via /sys/class/firmware/timeout.
++	 */
++	.loading_timeout = 5,
+ 	.old_timeout = 60,
+ };
+ EXPORT_SYMBOL_NS_GPL(fw_fallback_config, "FIRMWARE_LOADER_PRIVATE");
+-- 
+2.43.0
+
