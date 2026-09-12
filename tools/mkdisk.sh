@@ -795,6 +795,12 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
 # at the machine's own screen sees an ordinary boot while the installer blocks
 # forever on input that is never coming. This entry is interactive, on the
 # machine's own display, so tty0 goes last. Serial still gets the kernel log.
+# loglevel=7, NOT 1. pc_install.sh writes progress to /dev/kmsg at <3>
+# (KERN_ERR) precisely so it is visible, but printk only prints levels BELOW the
+# console loglevel -- at loglevel=1 nothing below level 1 shows, so every
+# installer line went into the ring buffer and the screen stayed blank while the
+# install ran. The script's own header assumes loglevel=4; give it 7 so both the
+# kmsg lines and any driver messages during the copy are on screen.
 menuentry "Install Android to internal disk (ERASES IT)" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
@@ -804,7 +810,7 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
+           console=ttyS0,115200 console=tty0 loglevel=7 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
@@ -836,7 +842,7 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
+           console=ttyS0,115200 console=tty0 loglevel=7 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
