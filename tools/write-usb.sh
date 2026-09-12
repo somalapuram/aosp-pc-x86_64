@@ -132,56 +132,74 @@ part_info() {
 # The layout mkdisk.sh produces, by partition number. Only 1-3 are rewritten.
 declare -a NAMES=("" esp system vendor metadata userdata)
 
-# Returns: "fresh" (no Android layout on the device), "match", or a reason.
+# check_layout sets VERDICT to "fresh" (no Android layout on the device),
+# "match", or a reason -- and, on "match", fills IS/ISZ/DS/DSZ (start and size in
+# sectors, image and device) for partitions 1-5. EVERYTHING that needs sgdisk or
+# sudo happens here, BEFORE the confirmation prompt. The write path below only
+# uses these arrays: a privileged call failing mid-write (an expired sudo
+# timestamp after a long dd, a mistyped password) can then never turn into a dd
+# at the wrong offset. The first version of this script re-read the device GPT
+# inside the write loop; a failed read there produced an empty start sector,
+# which bash arithmetic reads as 0, and the vendor image would have landed on
+# the protective MBR and primary GPT of the disk it promised to leave alone.
+declare -a IS ISZ IGUID DS DSZ DGUID
+VERDICT=""
 check_layout() {
-    local n names_seen=0
+    local n line names_seen=0
     for n in 1 2 3 4 5; do
-        if part_info "$TARGET" "$n" >/dev/null 2>&1; then
-            read -r _ _ _ dname <<<"$(part_info "$TARGET" "$n")"
+        if line=$(part_info "$TARGET" "$n"); then
+            read -r DS[$n] DSZ[$n] DGUID[$n] dname <<<"$line"
             [[ "$dname" == "${NAMES[$n]}" ]] && names_seen=$((names_seen + 1))
         fi
     done
-    (( names_seen == 0 )) && { echo fresh; return; }
-    (( names_seen == 5 )) || { echo "device has only $names_seen of the 5 Android partitions by name"; return; }
+    (( names_seen == 0 )) && { VERDICT=fresh; return 0; }
+    (( names_seen == 5 )) || { VERDICT="device has only $names_seen of the 5 Android partitions by name"; return 0; }
     for n in 1 2 3 4 5; do
-        read -r is isz iguid iname <<<"$(part_info "$IMG" "$n")" \
-            || { echo "cannot read partition $n of the image"; return; }
-        read -r ds dsz dguid dname <<<"$(part_info "$TARGET" "$n")"
+        line=$(part_info "$IMG" "$n") || { VERDICT="cannot read partition $n of the image"; return 0; }
+        read -r IS[$n] ISZ[$n] IGUID[$n] iname <<<"$line"
+        line=$(part_info "$TARGET" "$n") || { VERDICT="cannot read partition $n of $TARGET"; return 0; }
+        read -r DS[$n] DSZ[$n] DGUID[$n] dname <<<"$line"
         [[ "$iname" == "$dname" && "$iname" == "${NAMES[$n]}" ]] \
-            || { echo "partition $n is '$dname' on the device, '$iname' in the image"; return; }
-        if (( n <= 3 )) && (( dsz < isz )); then
-            echo "partition $n ($iname) is $((dsz / 2048)) MiB on the device, $((isz / 2048)) MiB in the image"; return
+            || { VERDICT="partition $n is '$dname' on the device, '$iname' in the image"; return 0; }
+        if (( n <= 3 )) && (( DSZ[n] < ISZ[n] )); then
+            VERDICT="partition $n ($iname) is $((DSZ[n] / 2048)) MiB on the device, $((ISZ[n] / 2048)) MiB in the image"; return 0
         fi
-        if (( n == 1 )) && [[ "$iguid" != "$dguid" ]]; then
-            echo "ESP GUID differs: device $dguid, image $iguid -- the new grub.cfg would name a partition this disk does not have"; return
+        if (( n == 1 )) && [[ "${IGUID[1]}" != "${DGUID[1]}" ]]; then
+            VERDICT="ESP GUID differs: device ${DGUID[1]}, image ${IGUID[1]} -- the new grub.cfg would name a partition this disk does not have"; return 0
         fi
     done
-    echo match
+    # Belt and braces: every number the write path will use must be a positive integer.
+    for n in 1 2 3; do
+        [[ "${IS[$n]}" =~ ^[0-9]+$ && "${ISZ[$n]}" =~ ^[1-9][0-9]*$ && "${DS[$n]}" =~ ^[1-9][0-9]*$ ]] \
+            || { VERDICT="internal: bad geometry for partition $n (image start '${IS[$n]}' size '${ISZ[$n]}', device start '${DS[$n]}')"; return 0; }
+    done
+    VERDICT=match
 }
 
 write_part_in_place() {
-    local n=$1 is isz _ ds
-    read -r is isz _ _ <<<"$(part_info "$IMG" "$n")"
-    read -r ds _ _ _ <<<"$(part_info "$TARGET" "$n")"
-    local bytes=$((isz * 512))
-    info "${NAMES[$n]}: $(numfmt --to=iec "$bytes") -> $TARGET partition $n (sector $ds)"
+    local n=$1
+    # Only the arrays check_layout filled and validated. No sgdisk, no re-read.
+    [[ "${IS[$n]}" =~ ^[0-9]+$ && "${ISZ[$n]}" =~ ^[1-9][0-9]*$ && "${DS[$n]}" =~ ^[1-9][0-9]*$ ]] \
+        || die "refusing to write partition $n: geometry not validated (start '${IS[$n]}' size '${ISZ[$n]}' device start '${DS[$n]}')"
+    local bytes=$((ISZ[n] * 512))
+    info "${NAMES[$n]}: $(numfmt --to=iec "$bytes") -> $TARGET partition $n (sector ${DS[$n]})"
     if (( DRY_RUN )); then
-        echo "  would: $DD if=$IMG of=$TARGET bs=4M skip=$((is * 512)) seek=$((ds * 512)) count=$bytes (bytes)"
+        echo "  would: $DD if=$IMG of=$TARGET bs=4M skip=$((IS[n] * 512)) seek=$((DS[n] * 512)) count=$bytes (bytes)"
         return
     fi
     $SUDO "$DD" if="$IMG" of="$TARGET" bs=4M \
         iflag=skip_bytes,count_bytes oflag=seek_bytes \
-        skip=$((is * 512)) seek=$((ds * 512)) count="$bytes" \
+        skip=$((IS[n] * 512)) seek=$((DS[n] * 512)) count="$bytes" \
         status=progress conv=fsync,notrunc
 }
 
 if [[ "$MODE" == keep ]]; then
     command -v sgdisk >/dev/null 2>&1 || die "sgdisk is required for a keep-data write (apt-get install gdisk), or pass --wipe-data"
-    verdict=$(check_layout)
-    case "$verdict" in
+    check_layout
+    case "$VERDICT" in
         match) ;;
         fresh) info "$TARGET has no Android layout -- nothing to keep, doing a full write"; MODE=wipe ;;
-        *)     die "cannot keep userdata on $TARGET: $verdict
+        *)     die "cannot keep userdata on $TARGET: $VERDICT
      Pass --wipe-data for a full write (everything on the device is replaced)." ;;
     esac
 fi
