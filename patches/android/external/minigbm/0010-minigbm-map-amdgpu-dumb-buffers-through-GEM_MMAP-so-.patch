@@ -1,0 +1,122 @@
+From f8a393063b5eea1fa88b92d0b0846268db9b2385 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sat, 12 Sep 2026 10:28:54 +0530
+Subject: [PATCH] minigbm: map amdgpu dumb buffers through GEM_MMAP, so render
+ nodes can map
+
+DRM_IOCTL_MODE_MAP_DUMB is registered with flags 0 in drm_ioctl.c: no
+DRM_RENDER_ALLOW, so a render node refuses it. Every process that only maps
+gralloc buffers holds a render node (patch 0008), because AOSP neverallows
+apps and shell the card node (private/app.te:606). On amdgpu -- which uses the
+dumb backend here -- those processes could not map at all:
+
+    mediaswcodec: [minigbm:drv_dumb_bo_map(509)]: DRM_IOCTL_MODE_MAP_DUMB failed
+    mediaswcodec: Mapping failed.
+
+That is the software H.264 encoder failing to read a frame, so screenrecord --
+and Android Studio's device mirror, which is screenrecord over adb -- encoded
+0 frames, and `adb shell screencap` returned its 66-byte error string. i915 and
+xe never hit this: their native backends map through their own ioctls.
+
+amdgpu has the equivalent. DRM_IOCTL_AMDGPU_GEM_MMAP is DRM_AUTH|DRM_RENDER_ALLOW
+(amdgpu_drv.c:3080) and a dumb bo is an ordinary amdgpu GEM object, so it works
+on a PRIME-imported handle over a render node. The amdgpu dumb backend now tries
+it first and falls back to MAP_DUMB if refused, which keeps the allocator and
+SurfaceFlinger on the card node doing exactly what they did before. No group or
+SELinux change, and nothing collides with the neverallow.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I6e826985148cd8dccd6f1e111a396da1bb3de910
+---
+ dumb_driver.c | 67 ++++++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 61 insertions(+), 6 deletions(-)
+
+diff --git a/dumb_driver.c b/dumb_driver.c
+index 56b9118..bed26ad 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -6,6 +6,8 @@
+ 
+ #include <errno.h>
+ #include <string.h>
++#include <sys/mman.h>
++#include <amdgpu_drm.h>
+ #include <xf86drm.h>
+ 
+ #include "drv_helpers.h"
+@@ -179,12 +181,65 @@ INIT_DUMB_DRIVER(komeda)
+ INIT_DUMB_DRIVER(marvell)
+ INIT_DUMB_DRIVER(meson)
+ INIT_DUMB_DRIVER(nouveau)
+-/* amdgpu. Named explicitly because backend_amdgpu is already taken by the
+- * tiling-aware DRI backend in amdgpu.c, which this tree cannot build: it
+- * dlopens radeonsi_dri.so and resolves __driDriverGetExtensions_radeonsi,
+- * and Mesa 26.1 exports no such symbol from libgallium_dri.so. Without an
+- * entry here "amdgpu" matches no backend at all and gralloc fails at init. */
+-INIT_DUMB_DRIVER_WITH_NAME(amdgpu_dumb, "amdgpu")
++/* amdgpu maps through its own GEM_MMAP ioctl, not MAP_DUMB.
++ *
++ * DRM_IOCTL_MODE_MAP_DUMB is registered with flags 0 in drm_ioctl.c: no
++ * DRM_RENDER_ALLOW, so it is refused on a render node. Every process that only
++ * MAPS gralloc buffers -- it never allocates, it imports over PRIME -- holds a
++ * render node (patch 0008), because AOSP neverallows apps and shell the card
++ * node (private/app.te:606). On amdgpu those processes therefore could not map
++ * at all:
++ *
++ *     mediaswcodec: [minigbm:drv_dumb_bo_map(509)]: DRM_IOCTL_MODE_MAP_DUMB failed
++ *     mediaswcodec: Mapping failed.
++ *
++ * which is the software H.264 encoder failing to read a frame, so screenrecord
++ * -- and Android Studio's device mirror, which is screenrecord over adb --
++ * encoded 0 frames; `adb shell screencap` failed the same way. i915 and xe never
++ * hit this because their native backends map through their own ioctls.
++ *
++ * amdgpu has the equivalent: DRM_IOCTL_AMDGPU_GEM_MMAP is DRM_AUTH|DRM_RENDER_ALLOW
++ * (amdgpu_drv.c) and a dumb bo is an ordinary amdgpu GEM object, so it works
++ * on a PRIME-imported handle over a render node. Try it first; if it is refused
++ * (an unauthenticated client on the card node, where DRM_AUTH can bite) fall
++ * back to MAP_DUMB, which is exactly what the allocator and SurfaceFlinger did
++ * before and still do there. */
++static void *amdgpu_dumb_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
++{
++	union drm_amdgpu_gem_mmap args;
++	size_t i;
++	int ret;
++
++	memset(&args, 0, sizeof(args));
++	args.in.handle = bo->handle.u32;
++	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_AMDGPU_GEM_MMAP, &args);
++	if (ret)
++		return drv_dumb_bo_map(bo, vma, map_flags);
++
++	for (i = 0; i < bo->meta.num_planes; i++)
++		vma->length += bo->meta.sizes[i];
++
++	return mmap(0, vma->length,
++		    (map_flags & BO_MAP_WRITE) ? (PROT_READ | PROT_WRITE) : PROT_READ,
++		    MAP_SHARED, bo->drv->fd, args.out.addr_ptr);
++}
++
++/* Named amdgpu_dumb because backend_amdgpu is already taken by the tiling-aware
++ * DRI backend in amdgpu.c, which this tree cannot build: it dlopens
++ * radeonsi_dri.so and resolves __driDriverGetExtensions_radeonsi, and Mesa 26.1
++ * exports no such symbol. The .name is what drv_backend_list matches on. */
++const struct backend backend_amdgpu_dumb = {
++	.name = "amdgpu",
++	.init = dumb_driver_init,
++	.bo_create = drv_dumb_bo_create,
++	.bo_create_with_modifiers = dumb_bo_create_with_modifiers,
++	.bo_destroy = drv_dumb_bo_destroy,
++	.bo_import = drv_prime_bo_import,
++	.bo_export = drv_prime_bo_export,
++	.bo_map = amdgpu_dumb_bo_map,
++	.bo_unmap = drv_bo_munmap,
++	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
++};
+ /* simpledrm owns the UEFI framebuffer until a real GPU driver binds, and on any
+  * machine where that never happens it is the ONLY card present. Without an entry
+  * here the allocator finds no backend, gralloc fails at init, and SurfaceFlinger
+-- 
+2.43.0
+
