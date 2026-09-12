@@ -390,6 +390,25 @@ case "$why" in
     *)          setprop vendor.pc.hwc.pf_unreliable 0 ;;
 esac
 
+# Overlay (multi-plane / MPO) composition: off on amdgpu, on everywhere else.
+# On the AMD Phoenix laptop the desktop icons flicker while the mouse moves.
+# Everything above the display engine is correct (SurfaceFlinger's composite is
+# right in every capture, the Android Studio mirror is clean), and the one
+# reproducible cure across the whole investigation is single-plane composition:
+# with drm_hwcomposer forced to put the whole frame on one GPU-composited plane
+# the flicker is gone, and it returns the moment hardware planes are re-enabled.
+# The DRM plane state confirms why -- during motion the composer oscillates
+# between one plane and three (launcher + wallpaper + cursor as separate overlay
+# pipes), i.e. amdgpu DCN Multi-Plane Overlay, whose plane-topology transitions
+# glitch scanout on this DCN. use_overlay_planes=0 stops drm_hwcomposer from
+# using overlay pipes, so it keeps the primary plane (the full composited frame)
+# and the hardware cursor and never enters MPO. i915 and nouveau keep overlay
+# planes: they do not have this fault and MPO is a power/perf win there.
+case "$(getprop drm.gpu.display_vendor_name)" in
+    amdgpu) setprop vendor.pc.hwc.overlay_planes 0 ;;
+    *)      setprop vendor.pc.hwc.overlay_planes 1 ;;
+esac
+
 
 say "gpu=$why -> vendor.pc.gpu=$(getprop vendor.pc.gpu)"
 
