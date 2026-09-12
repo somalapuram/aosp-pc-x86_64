@@ -502,6 +502,13 @@ search --no-floppy --label ANDROIDESP --set=root
 # permissive menu entry). Revert to enforcing once the flicker fix is baked in.
 # NEVER put a '#' comment inside the linux line itself: GRUB treats it as a
 # comment to end of line, which eats the trailing '\' and breaks the entry.
+# The default entry now ENABLES pinctrl-amd (no amd_gpio blacklist): it is what
+# the touchpad (SYNA3115 I2C-HID) and the CS35L41 speaker amps need, and the
+# earlier "hang" was never a hang -- the CS35L41 DSP firmware just loads slowly
+# over I2C (~180s per amp), so the first boot is slow but reaches the desktop
+# with touchpad and speakers working. Fixing that load time is the next task;
+# the "SAFE: no pinctrl-amd" case is the verbose entry with the blacklist if a
+# fast boot without touchpad/sound is ever needed.
 menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
@@ -512,7 +519,6 @@ menuentry "Android pc_x86_64" {
            sysctl.kernel.dmesg_restrict=0 \\
            printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
-           initcall_blacklist=amd_gpio_driver_init \\
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }

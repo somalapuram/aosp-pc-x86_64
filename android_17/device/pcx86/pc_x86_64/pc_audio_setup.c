@@ -151,7 +151,7 @@ static void dump_pcm_caps(unsigned int card) {
  * Run after the unmute below, or every device reads flat whether or not it has
  * a microphone on it.
  */
-static void probe_capture_ch(unsigned int card, unsigned int device, unsigned int channels) {
+__attribute__((unused)) static void probe_capture_ch(unsigned int card, unsigned int device, unsigned int channels) {
     struct pcm_config config;
     memset(&config, 0, sizeof(config));
     config.channels = channels;
@@ -214,175 +214,122 @@ static void probe_capture_ch(unsigned int card, unsigned int device, unsigned in
     printf("  => %s\n", loudest > 64 ? "SIGNAL" : "flat");
 }
 
-int main(int argc, char **argv) {
-    redirect_output("/data/vendor/pc/audio_mixer.txt");
-    unsigned int card = 0;
-    if (argc > 1) {
-        card = (unsigned int)atoi(argv[1]);
-    }
-
+/*
+ * Unmute the analog output path of one card: every "* Playback Switch" on,
+ * every "* Playback Volume" to max, "Auto-Mute Mode" off, and capture unmuted
+ * to max. Returns 1 if this card had a "Master Playback Switch" or "Speaker
+ * Playback Switch" -- i.e. it is the analog codec we care about, not an HDMI
+ * card. `verbose` dumps the full control list (only wanted once, on the first
+ * pass, so the log records the cold-boot mixer without 200 repeats).
+ */
+static int unmute_card(unsigned int card, int verbose) {
     struct mixer *mixer = mixer_open(card);
-    if (!mixer) {
-        printf("pc_audio_setup: cannot open mixer for card %u\n", card);
-        return 1;
-    }
-
-    printf("pc_audio_setup: PCM capabilities\n");
-    dump_pcm_caps(card);
-
+    if (!mixer)
+        return 0;
+    int is_analog = 0;
     unsigned int n = mixer_get_num_ctls(mixer);
-    printf("pc_audio_setup: card %u, %u controls\n", card, n);
-
+    if (verbose)
+        printf("pc_audio_setup: card %u, %u controls\n", card, n);
     for (unsigned int i = 0; i < n; i++) {
         struct mixer_ctl *ctl = mixer_get_ctl(mixer, i);
-        if (!ctl) continue;
-
+        if (!ctl)
+            continue;
         const char *name = mixer_ctl_get_name(ctl);
         const char *type = mixer_ctl_get_type_string(ctl);
         enum mixer_ctl_type t = mixer_ctl_get_type(ctl);
         unsigned int nv = mixer_ctl_get_num_values(ctl);
-        if (!name) continue;
-
-        /* Record the control and its current state before touching anything,
-         * so the log shows what the card looked like on a cold boot. */
-        printf("  [%u] %-40s %-8s values=%u", i, name, type ? type : "?", nv);
-        if (t == MIXER_CTL_TYPE_INT) {
-            printf(" range=%d..%d cur=", mixer_ctl_get_range_min(ctl),
-                   mixer_ctl_get_range_max(ctl));
-        } else {
-            printf(" cur=");
+        if (!name)
+            continue;
+        if (verbose) {
+            printf("  [%u] %-40s %-8s values=%u", i, name, type ? type : "?", nv);
+            if (t == MIXER_CTL_TYPE_INT)
+                printf(" range=%d..%d cur=", mixer_ctl_get_range_min(ctl),
+                       mixer_ctl_get_range_max(ctl));
+            else
+                printf(" cur=");
+            for (unsigned int v = 0; v < nv && v < 8; v++)
+                printf("%d ", mixer_ctl_get_value(ctl, v));
         }
-        for (unsigned int v = 0; v < nv && v < 8; v++) {
-            printf("%d ", mixer_ctl_get_value(ctl, v));
-        }
-
         const char *action = "";
-
         if (t == MIXER_CTL_TYPE_BOOL && ends_with(name, "Playback Switch")) {
             int failed = 0;
-            for (unsigned int v = 0; v < nv; v++) {
+            for (unsigned int v = 0; v < nv; v++)
                 if (mixer_ctl_set_value(ctl, v, 1) != 0) failed = 1;
-            }
             action = failed ? " -> UNMUTE FAILED" : " -> unmuted";
+            if (ends_with(name, "Master Playback Switch") ||
+                ends_with(name, "Speaker Playback Switch"))
+                is_analog = 1;
         } else if (t == MIXER_CTL_TYPE_INT && ends_with(name, "Playback Volume")) {
             int max = mixer_ctl_get_range_max(ctl);
             int failed = 0;
-            for (unsigned int v = 0; v < nv; v++) {
+            for (unsigned int v = 0; v < nv; v++)
                 if (mixer_ctl_set_value(ctl, v, max) != 0) failed = 1;
-            }
             action = failed ? " -> SET MAX FAILED" : " -> set to max";
         } else if (t == MIXER_CTL_TYPE_BOOL && ends_with(name, "Capture Switch")) {
-            /* Covers both paths without needing to know which one carries the
-             * microphone: "Capture Switch" is the codec's analog capture and
-             * "Dmic0 Capture Switch" the digital array. The probe below reports
-             * which of them actually has a signal. */
             int failed = 0;
-            for (unsigned int v = 0; v < nv; v++) {
+            for (unsigned int v = 0; v < nv; v++)
                 if (mixer_ctl_set_value(ctl, v, 1) != 0) failed = 1;
-            }
             action = failed ? " -> CAPTURE UNMUTE FAILED" : " -> capture unmuted";
         } else if (t == MIXER_CTL_TYPE_INT && ends_with(name, "Capture Volume")) {
-            /* Maximum, and the earlier caution about not doing that is
-             * withdrawn on the evidence. Three quarters of range plus one step
-             * of boost measured
-             *     capture probe 0:0 -> peak 706/32767  rms 64
-             * which is about -54 dBFS RMS. Speech recorded at a usable level
-             * sits nearer -20, so this was some 35 dB short: real audio, and
-             * inaudible on playback. There is no clipping risk to protect at
-             * that distance from full scale.
-             *
-             * The probe below reports the level this produces, so if it turns
-             * out hot the number to back off is measured rather than guessed. */
             int max = mixer_ctl_get_range_max(ctl);
             int failed = 0;
-            for (unsigned int v = 0; v < nv; v++) {
+            for (unsigned int v = 0; v < nv; v++)
                 if (mixer_ctl_set_value(ctl, v, max) != 0) failed = 1;
-            }
-            action = failed ? " -> CAPTURE GAIN FAILED" : " -> capture gain to max";
-        } else if (t == MIXER_CTL_TYPE_INT && strcmp(name, "Mic Boost Volume") == 0) {
-            /* Also maximum, for the same reason. The range is only 0..3 and on
-             * a Realtek codec each step is around 10 dB, so this is most of the
-             * gain that was missing. */
-            int max = mixer_ctl_get_range_max(ctl);
-            int failed = 0;
-            for (unsigned int v = 0; v < nv; v++) {
-                if (mixer_ctl_set_value(ctl, v, max) != 0) failed = 1;
-            }
-            action = failed ? " -> MIC BOOST FAILED" : " -> mic boost to max";
-        } else if (t == MIXER_CTL_TYPE_ENUM && strcmp(name, "Auto-Mute Mode") == 0) {
-            /* Enum 0 is "Disabled" on Realtek codecs. Left on, jack detection
-             * re-mutes the speaker the instant the switch above is set, which
-             * looks exactly like the unmute not having worked. */
-            action = (mixer_ctl_set_value(ctl, 0, 0) == 0) ? " -> auto-mute off"
-                                                           : " -> AUTO-MUTE OFF FAILED";
+            action = failed ? " -> CAPTURE MAX FAILED" : " -> capture set to max";
+        } else if (t == MIXER_CTL_TYPE_ENUM && ends_with(name, "Auto-Mute Mode")) {
+            /* With no jack plugged, Auto-Mute re-mutes the speaker the instant
+             * the switch above is set. Enum item 0 is "Disabled" on the Realtek
+             * codecs. */
+            if (mixer_ctl_set_value(ctl, 0, 0) == 0)
+                action = " -> auto-mute disabled";
         }
-
-        printf("%s\n", action);
+        if (verbose)
+            printf("%s\n", action);
     }
-
     mixer_close(mixer);
+    return is_analog;
+}
 
-    /* After the unmute, not before: a muted device reads flat whether or not a
-     * microphone is attached, which is the exact ambiguity this is here to
-     * remove. Both capture devices the card reported are probed. */
-    printf("pc_audio_setup: capture probe\n");
-    /* Several channel counts per device. The first pass probed 0:6 at stereo
-     * only, it refused the hw params, and that was read as "nothing there" --
-     * but a SOF DMIC array is commonly 4 channel and would refuse stereo
-     * exactly the same way. That was the probe's limitation being mistaken for
-     * a property of the hardware, so ask properly this time. */
-    static const unsigned int kChannelCounts[] = {2, 4, 1};
-    for (unsigned int dev = 0; dev < 8; dev++) {
-        if (dev != 0 && dev != 6) continue;
-        for (unsigned int i = 0; i < sizeof(kChannelCounts)/sizeof(kChannelCounts[0]); i++) {
-            probe_capture_ch(card, dev, kChannelCounts[i]);
+int main(void) {
+    redirect_output("/data/vendor/pc/audio_mixer.txt");
+
+    /* One card is not enough. The GPU's HDMI audio comes up as card 0 and the
+     * analog codec (Realtek ALC245 driving the CS35L41 speaker amps) as card 1,
+     * so unmuting only card 0 -- what this did before -- left the speakers muted
+     * with the log showing a clean "unmuted" for the wrong card.
+     *
+     * Worse, the CS35L41 amps load a DSP firmware over I2C that takes ~180s per
+     * amp, and the ALC245's speaker route settles only once that finishes. A
+     * single early pass is undone by the time the amps are up. So walk every
+     * card and re-apply, in passes, across a window long enough to cover the
+     * firmware load, stopping early once the analog codec has been seen and
+     * unmuted on a pass after it settled.
+     *
+     * This is a background oneshot (init does not wait for it), so the long
+     * window does not delay the desktop; the speakers simply come alive once
+     * the amps are ready. */
+    const unsigned int MAX_CARDS = 8;
+    const int PASSES = 20;          /* 20 * 15s = 300s, covers two ~180s amps */
+    int analog_unmuted_late = 0;
+    for (int pass = 0; pass < PASSES; pass++) {
+        int saw_analog = 0;
+        for (unsigned int c = 0; c < MAX_CARDS; c++)
+            if (unmute_card(c, pass == 0))
+                saw_analog = 1;
+        printf("pc_audio_setup: pass %d, analog codec %s\n",
+               pass, saw_analog ? "unmuted" : "not present yet");
+        /* Require the analog codec to still be present two passes running before
+         * declaring victory, so we do not stop in the gap between the ALC245
+         * appearing and the CS35L41 firmware finishing. */
+        if (saw_analog && pass >= 1) {
+            if (analog_unmuted_late++) break;
+        } else {
+            analog_unmuted_late = 0;
         }
+        if (pass == 0)
+            dump_pcm_caps(1);
+        sleep(15);
     }
-
-    /* A second pass, ninety seconds later.
-     *
-     * Everything measured at boot says the microphone works: both channels of
-     * 0:0 carry signal at roughly -40 dBFS with the mixer unmuted and at full
-     * gain. Everything measured in the recording says the encoder is fed
-     * silence: the AAC global_gain of every frame sits at 7 to 10, where
-     * ordinary speech is 110 upward, so the content is at the very bottom of
-     * the scale rather than merely quiet.
-     *
-     * Both cannot be true of the same signal, so the loss is between ALSA and
-     * the encoder. The mixer is not the culprit: the HAL never writes mic gain
-     * on this device -- no setHwGain or setMicGain appears in a whole boot --
-     * and setMicMute is only ever called with 0.
-     *
-     * What has not been measured is the ALSA level at the time a recording
-     * happens rather than at boot. This pass re-reads the capture controls and
-     * re-probes after a delay long enough to record something in between. If
-     * the level is still there, the loss is definitively above the HAL and
-     * nothing in the mixer will fix it. If it has collapsed, something changed
-     * the capture path after boot and the controls printed here will say what.
-     *
-     * The probe may find the device busy if a recording is in flight, which it
-     * reports rather than hides; that is itself informative.
-     *
-     * Diagnostic only. Delete this pass once the answer is known. */
-    sleep(90);
-    printf("pc_audio_setup: second pass at T+90s\n");
-    struct mixer *m2 = mixer_open(card);
-    if (m2) {
-        unsigned int n2 = mixer_get_num_ctls(m2);
-        for (unsigned int i = 0; i < n2; i++) {
-            struct mixer_ctl *c = mixer_get_ctl(m2, i);
-            if (!c) continue;
-            const char *nm = mixer_ctl_get_name(c);
-            if (!nm || !strstr(nm, "Capture")) continue;
-            printf("  [%u] %-40s cur=", i, nm);
-            unsigned int nv2 = mixer_ctl_get_num_values(c);
-            for (unsigned int v = 0; v < nv2 && v < 8; v++) printf("%d ", mixer_ctl_get_value(c, v));
-            printf("\n");
-        }
-        mixer_close(m2);
-    }
-    probe_capture_ch(card, 0, 2);
-
     printf("pc_audio_setup: done\n");
     return 0;
 }
