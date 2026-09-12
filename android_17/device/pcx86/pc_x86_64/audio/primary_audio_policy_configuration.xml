@@ -111,7 +111,22 @@
         </mixPort>
    </mixPorts>
    <devicePorts>
-        <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
+        <!-- address selects the ALSA card:device, same parse as the mic below
+             (StreamPrimary::getCardAndDeviceId rfind()s "CARD_" then sscanf()s
+             "CARD_%d_DEV_%d"; no match gives card 0 device 0). On the boot that
+             enables pinctrl-amd, the amdgpu HDMI audio enumerates as card 0 and
+             the Realtek ALC245 (which drives the CS35L41 speaker amps) as card
+             1, so the default card 0 sent every media stream to an HDMI port
+             with nothing attached and the speakers stayed silent while their
+             PCM never opened. Verified: tinyplay -D 1 -d 0 is audible.
+             CARD_1_DEV_0 points the primary output at the ALC245 analog PCM.
+             The profile is repeated here because Module::setAudioPortConfigImpl()
+             matches the requested config against the devicePort own profiles,
+             and an addressed port with none refuses the stream. -->
+        <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink"
+                    address="CARD_1_DEV_0">
+            <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                     samplingRates="48000" channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
         </devicePort>
 
         <!-- address is what selects the ALSA capture device.
