@@ -249,6 +249,21 @@ NOUVEAU_MODESET="${NOUVEAU_MODESET:-1}"
 NOUVEAU_ATOMIC="${NOUVEAU_ATOMIC:-1}"
 NOUVEAU_ARG="nouveau.modeset=${NOUVEAU_MODESET} nouveau.atomic=${NOUVEAU_ATOMIC}"
 
+# amdgpu.dcdebugmask=0x410 = DC_DISABLE_PSR (0x10) | DC_DISABLE_REPLAY (0x400),
+# amd_shared.h. Both are eDP panel power features that act only on a STATIC
+# screen and hand scanout back to the GPU when something moves -- the shape of
+# the AMD Phoenix laptop fault where the desktop icons vanish while the mouse
+# moves. Measurement put that fault below SurfaceFlinger: its composite is
+# correct in every capture taken during movement, and it still flickers with
+# every hardware plane disabled. The kernel log says PSR was never enabled on
+# that panel ("PSR support 0"); Panel Replay, which DCN 3.1.4 is the first
+# generation to default on, is the remaining candidate. UNCONFIRMED as the fix
+# when written. amdgpu-only: on Intel/NVIDIA the driver binds no device and the
+# parameter is inert, so one image still serves all three. Expanded on the
+# `root=/dev/ram0 rw` line that every entry shares; never write it, or any '#',
+# inside a linux line.
+AMDGPU_ARG="amdgpu.dcdebugmask=0x410"
+
 # Build the GPU firmware initramfs. See the NVIDIA GSP note above for why the
 # firmware is delivered this way rather than linked into the kernel.
 #
@@ -488,7 +503,7 @@ search --no-floppy --label ANDROIDESP --set=root
 # NEVER put a '#' comment inside the linux line itself: GRUB treats it as a
 # comment to end of line, which eats the trailing '\' and breaks the entry.
 menuentry "Android pc_x86_64" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -521,7 +536,7 @@ menuentry "Android pc_x86_64" {
 # same standard the typed word was there to meet: nothing here can be reached by
 # accident, and the default entry is still a normal boot.
 menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -572,7 +587,7 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
 # Append initcall_debug by hand when hunting a hang: the last line printed then
 # names the driver that never returned.
 menuentry "Android pc_x86_64 (verbose, on screen)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -617,7 +632,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
 # Photograph the last few lines. Expect it to be verbose and slow -- that is the
 # point; this entry exists to be read off a screen, not to be lived in.
 menuentry "Android pc_x86_64 (NVIDIA display debug)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -707,7 +722,7 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
 # framebuffer or fail to bind, and WiFi will not come up. That is fine for a
 # diagnostic -- the question is only whether it REACHES userspace.
 menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -724,7 +739,7 @@ menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
 }
 
 menuentry "Android pc_x86_64 (ENABLE pinctrl-amd: touchpad+speakers, MAY HANG)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -739,7 +754,7 @@ menuentry "Android pc_x86_64 (ENABLE pinctrl-amd: touchpad+speakers, MAY HANG)" 
 }
 
 menuentry "Android pc_x86_64 (NVIDIA render offload)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -758,7 +773,7 @@ menuentry "Android pc_x86_64 (NVIDIA render offload)" {
 }
 
 menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -775,7 +790,7 @@ menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
 }
 
 menuentry "Android pc_x86_64 (verbose, serial only)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
@@ -847,7 +862,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
 # install ran. The script's own header assumes loglevel=4; give it 7 so both the
 # kmsg lines and any driver messages during the copy are on screen.
 menuentry "Install Android to internal disk (ERASES IT)" {
-    linux  /bzImage root=/dev/ram0 rw \\
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
