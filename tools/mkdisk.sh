@@ -481,11 +481,17 @@ search --no-floppy --label ANDROIDESP --set=root
 # GUEST_MODE overrides it at image build time. 1600x900 is the default because
 # it fits inside a 1080p host with room for a titlebar, and at density 240 it is
 # 1066x600dp, so still a large-screen layout rather than a phone one.
+# TEMP: the default entry boots PERMISSIVE so the desktop flicker can be
+# isolated live over adb (service call SurfaceFlinger / debugfs are denied to
+# the shell under enforcing, and the laptop keyboard is too flaky to reach the
+# permissive menu entry). Revert to enforcing once the flicker fix is baked in.
+# NEVER put a '#' comment inside the linux line itself: GRUB treats it as a
+# comment to end of line, which eats the trailing '\' and breaks the entry.
 menuentry "Android pc_x86_64" {
     linux  /bzImage root=/dev/ram0 rw \\
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=permissive  # TEMP: live flicker debug + adb screen capture \\
+           androidboot.selinux=permissive \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
            ${NOUVEAU_ARG} \\
            sysctl.kernel.dmesg_restrict=0 \\
