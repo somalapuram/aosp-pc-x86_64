@@ -1,7 +1,7 @@
 From 836edec0f4e174c55a04c7234b259e850be9a31b Mon Sep 17 00:00:00 2001
 From: Somalapuram Amaranath <somalapuram@gmail.com>
 Date: Sat, 12 Sep 2026 06:07:36 +0530
-Subject: [PATCH 2/2] drm: do not allow a plain frame commit to modeset
+Subject: [PATCH 2/3] drm: do not allow a plain frame commit to modeset
 
 `flags = args.seamless ? 0 : DRM_MODE_ATOMIC_ALLOW_MODESET` was written for
 mode switches (fb39c8c, "prefer seamless configs, fallback to blocking"). It

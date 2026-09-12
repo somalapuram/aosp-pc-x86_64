@@ -321,7 +321,8 @@ PRODUCT_PACKAGES += \
 # defaulting to pastel, so only the NVIDIA GRUB entry gets NVK.
 PRODUCT_VENDOR_PROPERTIES += \
     ro.hardware.egl=mesa \
-    debug.hwui.renderer=skiagl
+    debug.hwui.renderer=skiagl \
+    ro.vendor.hwc.use_cursor_plane=0
 
 # No lock screen. This is a bring-up device that usually has nobody sitting at
 # it, and the keyguard hides the launcher behind a swipe that a headless

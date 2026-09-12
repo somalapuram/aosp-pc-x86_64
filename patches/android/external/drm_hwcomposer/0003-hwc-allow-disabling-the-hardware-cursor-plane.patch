@@ -1,0 +1,98 @@
+From 77dd8eab193da8acdc379d3d7badf7ba6a7c3cb6 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sat, 12 Sep 2026 07:24:17 +0530
+Subject: [PATCH 3/3] hwc: allow disabling the hardware cursor plane
+
+On the AMD Phoenix laptop the desktop icons went invisible for the whole
+duration of mouse movement and returned the instant the mouse stopped. The
+pointer is a hardware cursor (SurfaceFlinger reports composition=CURSOR and
+thousands of "Cursor plane frames"), and on amdgpu DCN driving that cursor
+plane every frame while the mouse moves blanks the primary plane's content
+until the pointer goes idle. The composition SurfaceFlinger reports stays
+correct throughout -- the launcher layer is present and client-composited in
+every sample -- so the loss is below SurfaceFlinger, in the cursor/primary
+plane interaction at scanout, which is why no software instrument saw it.
+
+GenericCompositionPlanner now skips the cursor plane when
+ro.vendor.hwc.use_cursor_plane=0 (default 1, unchanged behaviour otherwise),
+compositing the pointer into the client framebuffer instead. That costs a GPU
+recomposite per mouse move, which this GPU absorbs (it sustains 60fps on the
+two-layer desktop), and keeps the icons on screen.
+
+Honest status: strongest symptom match of the investigation -- it is exactly
+tied to cursor activity -- but unconfirmed until booted, like the earlier
+leads. Every screen-capture path on this device is broken and SELinux enforcing
+blocked the runtime SurfaceFlinger toggle, so it could not be tested short of a
+build.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I2a56d9d991e28694d10590f231e832ece25d02ac
+---
+ compositor/GenericCompositionPlanner.cpp | 14 +++++++++++++-
+ utils/properties.cpp                     |  4 ++++
+ utils/properties.h                       |  1 +
+ 3 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/compositor/GenericCompositionPlanner.cpp b/compositor/GenericCompositionPlanner.cpp
+index 32c7e22..5e17fb8 100644
+--- a/compositor/GenericCompositionPlanner.cpp
++++ b/compositor/GenericCompositionPlanner.cpp
+@@ -14,6 +14,7 @@
+  * limitations under the License.
+  */
+ 
++#include "utils/properties.h"
+ #include "GenericCompositionPlanner.h"
+ 
+ #include <tuple>
+@@ -58,7 +59,18 @@ auto GenericCompositionPlanner::ValidateDisplay(
+ 
+   bool use_cursor_plane = false;
+   const auto* cursor_layer = GetCursorLayer(layers);
+-  const auto cursor_plane = display->GetCursorPlane();
++  // Skip the hardware cursor plane entirely when disabled. On amdgpu DCN the
++  // pointer as a hardware cursor made the desktop icons vanish for the whole
++  // duration of mouse movement and return on stop: the cursor plane is driven
++  // every frame while the mouse moves (SurfaceFlinger reports thousands of
++  // "Cursor plane frames"), and on this hardware that starves/blanks the
++  // primary plane's content until the pointer goes idle. Compositing the
++  // pointer into the client framebuffer instead costs a GPU recomposite per
++  // move -- cheap here, the GPU sustains 60fps on the two-layer desktop -- and
++  // keeps the icons on screen. Default on; set ro.vendor.hwc.use_cursor_plane=0
++  // (pc_select_egl.sh does this for amdgpu) to force software cursor.
++  const auto cursor_plane =
++      Properties::UseCursorPlane() ? display->GetCursorPlane() : nullptr;
+   if (cursor_layer != nullptr && cursor_plane != nullptr &&
+       !IsClientLayer(display, cursor_layer) &&
+       cursor_plane->Get()->IsValidForLayer(&cursor_layer->GetLayerData())) {
+diff --git a/utils/properties.cpp b/utils/properties.cpp
+index f8063a9..843178a 100644
+--- a/utils/properties.cpp
++++ b/utils/properties.cpp
+@@ -120,6 +120,10 @@ auto Properties::UseOverlayPlanes() -> bool {
+   return (property_get_bool("ro.vendor.hwc.use_overlay_planes", 1) != 0);
+ }
+ 
++auto Properties::UseCursorPlane() -> bool {
++  return (property_get_bool("ro.vendor.hwc.use_cursor_plane", 1) != 0);
++}
++
+ auto Properties::ScaleWithGpu() -> bool {
+   return (property_get_bool("vendor.hwc.drm.scale_with_gpu", 0) != 0);
+ }
+diff --git a/utils/properties.h b/utils/properties.h
+index 1c9b182..f9aad00 100644
+--- a/utils/properties.h
++++ b/utils/properties.h
+@@ -31,6 +31,7 @@ class Properties {
+   static auto IsPresentFenceNotReliable() -> bool;
+   static auto InternalDisplayNames() -> std::string;
+   static auto UseOverlayPlanes() -> bool;
++  static auto UseCursorPlane() -> bool;
+   static auto ScaleWithGpu() -> bool;
+   static auto EnableVirtualDisplay() -> bool;
+   static auto GetCtmHandling() -> CtmHandling;
+-- 
+2.43.0
+
