@@ -1,0 +1,258 @@
+From a4166b212763e1a9a0533db452a5d0f9599d59e6 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sat, 12 Sep 2026 11:17:14 +0530
+Subject: [PATCH] minigbm: allocate amdgpu gralloc buffers in GTT through
+ GEM_CREATE
+
+A dumb buffer on amdgpu is created VRAM-first with CPU_ACCESS_REQUIRED
+(amdgpu_mode_dumb_create), and on Phoenix amdgpu_bo_get_preferred_domain leaves
+VRAM|GTT alone -- only Carrizo/Stoney get GTT first. So every gralloc buffer on
+the system landed in the APU's 512 MB VRAM carve-out and TTM evicted to GTT
+under pressure. Measured on the HP laptop with a bare desktop: 503 of 512 MB
+used; SystemUI requested 374 MB in VRAM and had 80 MB evicted while idle; the
+launcher's window buffers were out of VRAM entirely; a CPU read of one 16 MB
+frame through the BAR took 209 ms. Buffers migrating while SurfaceFlinger
+samples them every frame is the standing explanation for the desktop icons
+vanishing during mouse movement, and shrinking every buffer with
+`wm size 1920x1200` changed the symptom live.
+
+The amdgpu backend now allocates with DRM_IOCTL_AMDGPU_GEM_CREATE in the GTT
+domain. On an APU that is the same DRAM; this generation scans out from it
+directly (gpu_vm_support = sg_display != 0 && APU), and
+amdgpu_display_supported_domains permits GTT scanout when the BO carries
+CPU_GTT_USWC, which scanout-capable buffers keep. Buffers the CPU reads often
+and never scans out (readback, encoder input) are allocated cached: without
+USWC the PTEs are snooped, coherent on an APU, and a frame read becomes
+milliseconds instead of 209 ms.
+
+GEM_CREATE is DRM_AUTH|DRM_RENDER_ALLOW and the allocator on a card node is
+not authenticated (it drops master on purpose), so init opens the render node
+of the same device and moves drv->fd there: create, import, export, map and
+close all use the render node. If no render node can be opened, CREATE_DUMB on
+the card node is the fallback and nothing is worse than before. Layout rules
+mirror drv_dumb_bo_create_ex so strides and plane sizes are unchanged for
+consumers. Mapping stays on GEM_MMAP (previous patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I41f480b9aa0282f511d499aa4029242cf701b2f1
+---
+ dumb_driver.c | 173 +++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 142 insertions(+), 31 deletions(-)
+
+diff --git a/dumb_driver.c b/dumb_driver.c
+index bed26ad..55edfae 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -6,7 +6,9 @@
+ 
+ #include <errno.h>
+ #include <string.h>
++#include <fcntl.h>
+ #include <sys/mman.h>
++#include <unistd.h>
+ #include <amdgpu_drm.h>
+ #include <xf86drm.h>
+ 
+@@ -181,39 +183,147 @@ INIT_DUMB_DRIVER(komeda)
+ INIT_DUMB_DRIVER(marvell)
+ INIT_DUMB_DRIVER(meson)
+ INIT_DUMB_DRIVER(nouveau)
+-/* amdgpu maps through its own GEM_MMAP ioctl, not MAP_DUMB.
++/* amdgpu: allocate in system memory (GTT) through DRM_IOCTL_AMDGPU_GEM_CREATE,
++ * on a render node, and map through DRM_IOCTL_AMDGPU_GEM_MMAP.
+  *
+- * DRM_IOCTL_MODE_MAP_DUMB is registered with flags 0 in drm_ioctl.c: no
+- * DRM_RENDER_ALLOW, so it is refused on a render node. Every process that only
+- * MAPS gralloc buffers -- it never allocates, it imports over PRIME -- holds a
+- * render node (patch 0008), because AOSP neverallows apps and shell the card
+- * node (private/app.te:606). On amdgpu those processes therefore could not map
+- * at all:
++ * Why not CREATE_DUMB: a dumb buffer on amdgpu is created VRAM-first with
++ * CPU_ACCESS_REQUIRED (amdgpu_gem.c, amdgpu_mode_dumb_create), and on Phoenix
++ * amdgpu_bo_get_preferred_domain leaves VRAM|GTT alone (only Carrizo/Stoney get
++ * GTT first). Every gralloc buffer on the system therefore lands in the APU's
++ * VRAM carve-out -- 512 MB on the HP laptop -- and TTM evicts to GTT under
++ * pressure. Measured on that machine with a bare desktop: 503 of 512 MB used,
++ * SystemUI asked for 374 MB in VRAM and had 80 MB evicted while idle, the
++ * launcher's window buffers were out of VRAM entirely, and a CPU read of one
++ * 16 MB frame through the BAR took 209 ms. Buffers migrating while
++ * SurfaceFlinger samples them every frame is the standing explanation for the
++ * desktop icons vanishing while the mouse moves; shrinking every buffer with
++ * `wm size 1920x1200` changed the symptom live.
+  *
+- *     mediaswcodec: [minigbm:drv_dumb_bo_map(509)]: DRM_IOCTL_MODE_MAP_DUMB failed
+- *     mediaswcodec: Mapping failed.
++ * GTT is the right place for these on an APU: it is the same DRAM, this
++ * generation scans out from it directly (gpu_vm_support = sg_display != 0 &&
++ * APU, amdgpu_dm.c), and amdgpu_display_supported_domains allows GTT scanout
++ * as long as the BO carries CPU_GTT_USWC -- so scanout buffers keep that flag.
++ * Buffers the CPU reads often and never scans out (readback, encoder input)
++ * are allocated cached instead: without USWC the PTEs are snooped, which is
++ * coherent on an APU, and a cached read of a frame is milliseconds, not the
++ * 209 ms measured through the BAR.
+  *
+- * which is the software H.264 encoder failing to read a frame, so screenrecord
+- * -- and Android Studio's device mirror, which is screenrecord over adb --
+- * encoded 0 frames; `adb shell screencap` failed the same way. i915 and xe never
+- * hit this because their native backends map through their own ioctls.
+- *
+- * amdgpu has the equivalent: DRM_IOCTL_AMDGPU_GEM_MMAP is DRM_AUTH|DRM_RENDER_ALLOW
+- * (amdgpu_drv.c) and a dumb bo is an ordinary amdgpu GEM object, so it works
+- * on a PRIME-imported handle over a render node. Try it first; if it is refused
+- * (an unauthenticated client on the card node, where DRM_AUTH can bite) fall
+- * back to MAP_DUMB, which is exactly what the allocator and SurfaceFlinger did
+- * before and still do there. */
+-static void *amdgpu_dumb_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
++ * GEM_CREATE is DRM_AUTH|DRM_RENDER_ALLOW. On a card node only a master or a
++ * root process is authenticated (drm_file.c:149), and this allocator is
++ * neither (it drops master on purpose, cros_gralloc_driver.cc). So init opens
++ * the render node of the same device and moves drv->fd to it: create, import,
++ * export, map and close all go through the render node, which is also what
++ * every mapping-only process already holds. The card node stays open and
++ * unused. If no render node can be opened, CREATE_DUMB on the card node is the
++ * fallback and nothing is worse than before. */
++struct amdgpu_gtt_priv {
++	int card_fd; /* the node cros_gralloc opened; kept open, unused */
++};
++
++static int amdgpu_gtt_init(struct driver *drv)
++{
++	int ret = dumb_driver_init(drv);
++	if (ret)
++		return ret;
++
++	if (drmGetNodeTypeFromFd(drv->fd) == DRM_NODE_RENDER)
++		return 0;
++
++	drmDevicePtr dev = NULL;
++	if (drmGetDevice2(drv->fd, 0, &dev) != 0 || !dev)
++		return 0;
++	int rfd = -1;
++	if ((dev->available_nodes & (1 << DRM_NODE_RENDER)) && dev->nodes[DRM_NODE_RENDER])
++		rfd = open(dev->nodes[DRM_NODE_RENDER], O_RDWR | O_CLOEXEC);
++	drmFreeDevice(&dev);
++	if (rfd < 0) {
++		drv_loge("amdgpu: no render node for allocation, falling back to CREATE_DUMB on fd %d\n",
++			 drv->fd);
++		return 0;
++	}
++
++	struct amdgpu_gtt_priv *priv = calloc(1, sizeof(*priv));
++	if (!priv) {
++		close(rfd);
++		return -ENOMEM;
++	}
++	priv->card_fd = drv->fd;
++	drv->priv = priv;
++	drv->fd = rfd;
++	return 0;
++}
++
++static void amdgpu_gtt_close(struct driver *drv)
++{
++	free(drv->priv);
++	drv->priv = NULL;
++}
++
++static int amdgpu_gtt_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
++				uint64_t use_flags)
++{
++	/* Only allocate through GEM_CREATE on a render node; otherwise the dumb
++	 * path is the one that works on this fd. */
++	if (drmGetNodeTypeFromFd(bo->drv->fd) != DRM_NODE_RENDER)
++		return drv_dumb_bo_create(bo, width, height, format, use_flags);
++
++	/* Same layout rules as drv_dumb_bo_create_ex, so consumers see identical
++	 * strides and plane sizes to what the dumb backend produced. */
++	uint32_t aligned_width = width, aligned_height = height;
++	switch (format) {
++	case DRM_FORMAT_R16:
++		aligned_width = ALIGN(width, 16);
++		break;
++	case DRM_FORMAT_YVU420_ANDROID:
++		height = bo->meta.height;
++		aligned_width = ALIGN(width, 32);
++		aligned_height = 3 * DIV_ROUND_UP(height, 2);
++		break;
++	case DRM_FORMAT_YVU420:
++	case DRM_FORMAT_NV12:
++	case DRM_FORMAT_NV21:
++	case DRM_FORMAT_P010:
++		aligned_height = 3 * DIV_ROUND_UP(height, 2);
++		break;
++	default:
++		break;
++	}
++	aligned_width = ALIGN(aligned_width, MESA_LLVMPIPE_TILE_SIZE);
++	aligned_height = ALIGN(aligned_height, MESA_LLVMPIPE_TILE_SIZE);
++
++	uint32_t stride = drv_stride_from_format(format, aligned_width, 0);
++	drv_bo_from_format(bo, stride, 1, height, format);
++	uint64_t size = (uint64_t)stride * aligned_height;
++	if (size < bo->meta.total_size)
++		size = bo->meta.total_size;
++	size = ALIGN(size, 4096);
++
++	const bool cpu_reads = (use_flags & BO_USE_SW_READ_OFTEN) && !(use_flags & BO_USE_SCANOUT);
++
++	union drm_amdgpu_gem_create args;
++	memset(&args, 0, sizeof(args));
++	args.in.bo_size = size;
++	args.in.alignment = 4096;
++	args.in.domains = AMDGPU_GEM_DOMAIN_GTT;
++	args.in.domain_flags = cpu_reads ? 0 : AMDGPU_GEM_CREATE_CPU_GTT_USWC;
++	int ret = drmIoctl(bo->drv->fd, DRM_IOCTL_AMDGPU_GEM_CREATE, &args);
++	if (ret) {
++		drv_loge("DRM_IOCTL_AMDGPU_GEM_CREATE failed (fd %d, %d)\n", bo->drv->fd, errno);
++		return -errno;
++	}
++	bo->handle.u32 = args.out.handle;
++	bo->meta.total_size = size;
++	return 0;
++}
++
++static void *amdgpu_gtt_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
+ {
+ 	union drm_amdgpu_gem_mmap args;
+ 	size_t i;
+-	int ret;
+ 
+ 	memset(&args, 0, sizeof(args));
+ 	args.in.handle = bo->handle.u32;
+-	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_AMDGPU_GEM_MMAP, &args);
+-	if (ret)
++	if (drmIoctl(bo->drv->fd, DRM_IOCTL_AMDGPU_GEM_MMAP, &args))
+ 		return drv_dumb_bo_map(bo, vma, map_flags);
+ 
+ 	for (i = 0; i < bo->meta.num_planes; i++)
+@@ -225,18 +335,19 @@ static void *amdgpu_dumb_bo_map(struct bo *bo, struct vma *vma, uint32_t map_fla
+ }
+ 
+ /* Named amdgpu_dumb because backend_amdgpu is already taken by the tiling-aware
+- * DRI backend in amdgpu.c, which this tree cannot build: it dlopens
+- * radeonsi_dri.so and resolves __driDriverGetExtensions_radeonsi, and Mesa 26.1
+- * exports no such symbol. The .name is what drv_backend_list matches on. */
++ * DRI backend in amdgpu.c, which this tree cannot build (it resolves
++ * __driDriverGetExtensions_radeonsi, which Mesa 26.1 no longer exports). The
++ * .name is what drv_backend_list matches on. */
+ const struct backend backend_amdgpu_dumb = {
+ 	.name = "amdgpu",
+-	.init = dumb_driver_init,
+-	.bo_create = drv_dumb_bo_create,
++	.init = amdgpu_gtt_init,
++	.close = amdgpu_gtt_close,
++	.bo_create = amdgpu_gtt_bo_create,
+ 	.bo_create_with_modifiers = dumb_bo_create_with_modifiers,
+-	.bo_destroy = drv_dumb_bo_destroy,
++	.bo_destroy = drv_gem_bo_destroy,
+ 	.bo_import = drv_prime_bo_import,
+ 	.bo_export = drv_prime_bo_export,
+-	.bo_map = amdgpu_dumb_bo_map,
++	.bo_map = amdgpu_gtt_bo_map,
+ 	.bo_unmap = drv_bo_munmap,
+ 	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
+ };
+-- 
+2.43.0
+
