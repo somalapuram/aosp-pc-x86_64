@@ -738,6 +738,30 @@ menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
     initrd /ramdisk.img
 }
 
+menuentry "Android pc_x86_64 (DIAG: pinctrl-amd ON, device probes OFF)" {
+    # Bisecting the pinctrl-amd boot hang WITHOUT a kernel rebuild -- every
+    # driver is built-in, so initcall_blacklist at the cmdline is enough.
+    # pinctrl-amd (amd_gpio) RUNS here, but the two drivers that probe hardware
+    # once its GPIO interrupts exist are blacklisted: the Synaptics touchpad
+    # (i2c_hid_acpi) and the CS35L41 speaker amp (cs35l41_i2c). Outcome:
+    #   boots -> pinctrl-amd itself is fine; the hang is a device probe over I2C,
+    #            and the touchpad/amp get re-enabled one at a time next.
+    #   hangs -> pinctrl-amd's own GPIO/IRQ setup is the hang (an IRQ storm),
+    #            and the fix is in the driver/quirks, not the probe path.
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           printk.devkmsg=on \\
+           androidboot.pc_logs=1 \\
+           androidboot.verifiedbootstate=orange \\
+           initcall_blacklist=i2c_hid_acpi_driver_init,cs35l41_i2c_driver_init \\
+           ${NOUVEAU_ARG} \\
+           console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
 menuentry "Android pc_x86_64 (ENABLE pinctrl-amd: touchpad+speakers, MAY HANG)" {
     linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
            androidboot.hardware=pc_x86_64 \\
