@@ -462,7 +462,26 @@ say "install complete: $TGT_NAME, userdata ${DATA_MB} MiB"
 say "rebooting"
 sync 2>/dev/null || true
 
-printf "  Press enter to reboot: "
-read _
+printf "  Press enter to reboot (auto-reboots in 15s)... "
+read -t 15 _ 2>/dev/null || true
 sync 2>/dev/null || true
-reboot
+
+# Reboot bulletproofed, because a bare `reboot` did nothing here and left the
+# machine sitting at the prompt after Enter. In the install environment most
+# services are stopped, so the toybox reboot binary -- which pokes init over a
+# socket -- can silently fail. Try the three ways in order of cleanliness:
+#   1. sys.powerctl: init's own reboot trigger, the canonical Android path.
+#   2. reboot(1): the toybox binary, in case init is fine.
+#   3. sysrq 'b': the kernel reboots itself, bypassing userspace entirely --
+#      safe here because every partition was already dd'd with conv=fsync and
+#      synced above, so there is nothing left to flush.
+say "rebooting now"
+setprop sys.powerctl reboot 2>/dev/null || true
+reboot 2>/dev/null || true
+sleep 4
+echo 1 > /proc/sys/kernel/sysrq 2>/dev/null || true
+echo b > /proc/sysrq-trigger 2>/dev/null || true
+# If even that did not take, tell the user rather than hang silently.
+sleep 2
+echo
+echo "  Automatic reboot did not fire. Power-cycle the machine and remove the USB."
