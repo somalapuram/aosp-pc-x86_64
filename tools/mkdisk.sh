@@ -496,6 +496,39 @@ menuentry "Android pc_x86_64" {
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
+# The same install, confirmed HERE instead of at a prompt.
+#
+# The interactive entry above asks the user to type ERASE on the machine's own
+# console. That assumes the kernel's VT layer delivers keystrokes to
+# /dev/console, and on this hardware it does not: the kernel has CONFIG_VT,
+# VT_CONSOLE, ATKBD, USB_HID and EVDEV all enabled, the prompt appears, and
+# nothing typed reaches the reader. Android drives input through evdev and
+# InputFlinger, not the VT, so a console prompt is not a reliable way to ask
+# this machine's owner a question.
+#
+# GRUB's own input demonstrably works -- selecting this entry at all requires
+# arrowing down to it and pressing enter -- so the confirmation is moved to
+# where the keyboard is known to function. androidboot.pc_install_confirm=ERASE
+# carries that answer to the installer, which then skips the prompt.
+#
+# This is a deliberate, clearly labelled, last-in-the-list choice, which is the
+# same standard the typed word was there to meet: nothing here can be reached by
+# accident, and the default entry is still a normal boot.
+menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
+    linux  /bzImage root=/dev/ram0 rw \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
+           androidboot.pc_install=1 \\
+           androidboot.pc_install_confirm=ERASE \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_ARG} \\
+           console=ttyS0,115200 console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+
 # The verbose entry stays PERMISSIVE on purpose. It is the escape hatch: if a
 # policy change makes the default entry unbootable, pick this one at the GRUB
 # menu and the denials are logged instead of enforced, which is the only way to
@@ -821,38 +854,6 @@ menuentry "Install Android to internal disk (ERASES IT)" {
     initrd /ramdisk.img${GPUFW_INITRD}
 }
 
-# The same install, confirmed HERE instead of at a prompt.
-#
-# The interactive entry above asks the user to type ERASE on the machine's own
-# console. That assumes the kernel's VT layer delivers keystrokes to
-# /dev/console, and on this hardware it does not: the kernel has CONFIG_VT,
-# VT_CONSOLE, ATKBD, USB_HID and EVDEV all enabled, the prompt appears, and
-# nothing typed reaches the reader. Android drives input through evdev and
-# InputFlinger, not the VT, so a console prompt is not a reliable way to ask
-# this machine's owner a question.
-#
-# GRUB's own input demonstrably works -- selecting this entry at all requires
-# arrowing down to it and pressing enter -- so the confirmation is moved to
-# where the keyboard is known to function. androidboot.pc_install_confirm=ERASE
-# carries that answer to the installer, which then skips the prompt.
-#
-# This is a deliberate, clearly labelled, last-in-the-list choice, which is the
-# same standard the typed word was there to meet: nothing here can be reached by
-# accident, and the default entry is still a normal boot.
-menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
-    linux  /bzImage root=/dev/ram0 rw \\
-           androidboot.hardware=pc_x86_64 \\
-           androidboot.boot_part_uuid=$ESP_PARTUUID \\
-           androidboot.selinux=permissive \\
-           initcall_blacklist=amd_gpio_driver_init \\
-           androidboot.pc_install=1 \\
-           androidboot.pc_install_confirm=ERASE \\
-           sysctl.kernel.dmesg_restrict=0 \\
-           video=Virtual-1:${GUEST_MODE:-1600x900} \\
-           ${NOUVEAU_ARG} \\
-           console=ttyS0,115200 console=tty0 loglevel=4 ${KERNEL_EXTRA_ARGS:-}
-    initrd /ramdisk.img${GPUFW_INITRD}
-}
 
 EOF
 
