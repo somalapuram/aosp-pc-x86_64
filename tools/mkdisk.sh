@@ -537,6 +537,7 @@ menuentry "Android pc_x86_64 (verbose, on screen)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
@@ -581,6 +582,7 @@ menuentry "Android pc_x86_64 (NVIDIA display debug)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=8 ignore_loglevel printk.devkmsg=on \\
            androidboot.pc_logs=1 \\
@@ -670,6 +672,7 @@ menuentry "Android pc_x86_64 (no firmware initrd, verbose)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=7 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
@@ -701,6 +704,7 @@ menuentry "Android pc_x86_64 (NVIDIA render offload)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            androidboot.pc_render_gpu=offload \\
            androidboot.vulkan_hal=nouveau \\
            sysctl.kernel.dmesg_restrict=0 \\
@@ -719,6 +723,7 @@ menuentry "Android pc_x86_64 (verbose, on screen, NVIDIA disabled)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            sysctl.kernel.dmesg_restrict=0 \\
            loglevel=1 printk.devkmsg=on \\
            androidboot.logcat_serial=1 \\
@@ -735,6 +740,7 @@ menuentry "Android pc_x86_64 (verbose, serial only)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            sysctl.kernel.dmesg_restrict=0 \\
            ${NOUVEAU_ARG} \\
            console=ttyS0,115200 \\
@@ -806,6 +812,7 @@ menuentry "Install Android to internal disk (ERASES IT)" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            androidboot.pc_install=1 \\
            sysctl.kernel.dmesg_restrict=0 \\
            video=Virtual-1:${GUEST_MODE:-1600x900} \\
@@ -837,6 +844,7 @@ menuentry "Install Android to internal disk -- NO PROMPT, ERASES IT NOW" {
            androidboot.hardware=pc_x86_64 \\
            androidboot.boot_part_uuid=$ESP_PARTUUID \\
            androidboot.selinux=permissive \\
+           initcall_blacklist=amd_gpio_driver_init \\
            androidboot.pc_install=1 \\
            androidboot.pc_install_confirm=ERASE \\
            sysctl.kernel.dmesg_restrict=0 \\
