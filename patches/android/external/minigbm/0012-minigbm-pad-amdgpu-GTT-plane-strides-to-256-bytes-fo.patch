@@ -1,0 +1,68 @@
+From 13916b6c62159b28e1b3049bac936c58a425c709 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sun, 13 Sep 2026 07:07:47 +0530
+Subject: [PATCH] minigbm: pad amdgpu GTT plane strides to 256 bytes for GPU
+ import
+
+Camera preview aborted HWUI the instant a frame was sampled:
+
+  F HWUI: AutoBackendTextureRelease.cpp Invalid GrBackendTexture.
+          Width==1920, height==1080
+  F libc: Fatal signal 6 (SIGABRT) in RenderThread (com.android.camera2)
+
+The preview buffer is NV12 1920x1080, allocated by amdgpu_gtt_bo_create().
+It was laid out with a tight 1920-byte stride -- only 64-byte aligned via
+MESA_LLVMPIPE_TILE_SIZE -- with the chroma plane at offset 2073600.
+
+radeonsi imports each YUV plane as its own resource_from_handle(). For a
+LINEAR surface on GFX9..GFX11, ac_surface_override_offset_stride() requires
+the pitch aligned to 256/bpe elements, i.e. a 256-byte stride. The chroma
+plane (R8G8, bpe 2) at stride 1920 fails that check (1920 % 256 == 128), so
+resource_from_handle() returns NULL, EGLImageKHR creation returns NULL, and
+Skia's MakeGLBackendTexture yields an invalid texture -> the fatal abort.
+The Y plane (R8, stride 1920) is equally misaligned; the chroma plane just
+fails first because the plane loop runs in reverse. RGBA never tripped this
+because bpp 4 over a 64-aligned width already lands on 256.
+
+Pass stride_align = 256 to drv_bo_from_format() so every plane's stride is
+padded to 256 bytes. NV12 now allocates stride 2048, chroma at offset
+2211840 (both 256-aligned; the offset is even 4096-aligned), and the import
+succeeds. Verified on AMD Phoenix hardware: camera preview streams 323/323
+NV12 frames imported with zero failures and a live picture on screen, where
+before it aborted on frame one.
+
+Change-Id: I0da59219ab5fe77e3f25578a761b8c4cb439da48
+---
+ dumb_driver.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/dumb_driver.c b/dumb_driver.c
+index 141fb6e..7fcc4ef 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -293,8 +293,20 @@ static int amdgpu_gtt_bo_create(struct bo *bo, uint32_t width, uint32_t height,
+ 	aligned_height = ALIGN(aligned_height, MESA_LLVMPIPE_TILE_SIZE);
+ 
+ 	uint32_t stride = drv_stride_from_format(format, aligned_width, 0);
+-	drv_bo_from_format(bo, stride, 1, height, format);
+-	uint64_t size = (uint64_t)stride * aligned_height;
++	/*
++	 * These buffers are imported into the GPU by radeonsi, which requires a
++	 * LINEAR surface pitch aligned to 256/bpe elements -- i.e. a 256-byte
++	 * stride -- on GFX9..GFX11 (ac_surface_override_offset_stride() rejects
++	 * anything else and resource_from_handle() then returns NULL). A tight
++	 * NV12 stride of 1920 is only 64-byte aligned via MESA_LLVMPIPE_TILE_SIZE
++	 * and fails that check on the chroma (R8G8) plane, aborting HWUI with
++	 * "Invalid GrBackendTexture" the moment a camera preview frame is sampled.
++	 * Pad every plane's stride to 256 bytes so the same allocation is directly
++	 * importable. RGBA already lands on 256 (bpp 4 x 64-aligned width), so this
++	 * only changes single-byte and sub-sampled formats.
++	 */
++	drv_bo_from_format(bo, stride, 256, height, format);
++	uint64_t size = (uint64_t)ALIGN(stride, 256) * aligned_height;
+ 	if (size < bo->meta.total_size)
+ 		size = bo->meta.total_size;
+ 	size = ALIGN(size, 4096);
+-- 
+2.43.0
+
