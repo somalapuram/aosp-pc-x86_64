@@ -132,16 +132,32 @@
         <!-- address is what selects the ALSA capture device.
              StreamPrimary::getCardAndDeviceId() rfind()s "CARD_" in this string
              and sscanf()s "CARD_%d_DEV_%d" from there; with no match it returns
-             kDefaultCardAndDeviceId, which is card 0 device 0. This machine has
-             two capture PCMs: 00-00 "HDA Analog", the analog jack, and 00-06
-             "DMIC Raw", the internal mics, so the default recorded an empty
-             socket. Measured: the jack sat at RMS -66.5 dBFS and did not move
-             (-66.6) while a 1 kHz tone played through the speaker; the DMIC went
-             from -60.2 to -29.1, i.e. +31 dB. The "bottom_" prefix is ignored by
-             the parser and kept only so the address still reads as a microphone
-             position, matching the value the HAL would otherwise have forced. -->
+             kDefaultCardAndDeviceId, which is card 0 device 0.
+
+             This is the SAME card split as the Speaker above: with pinctrl-amd
+             enabled the amdgpu HDMI audio is card 0 and the Realtek ALC245 is
+             card 1. Card 0 here is HDMI ONLY -- /proc/asound/pcm lists 00-03..09
+             as "HDMI 0..3 playback" with no capture line at all, and
+             /proc/asound/card0 has no pcm*c node -- so any CARD_0 capture
+             address (the old bottom_CARD_0_DEV_6, tuned for an Intel/SOF box
+             whose card 0 carried a DMIC array) opens a device that does not
+             exist. The camcorder's AAC audio track then receives zero buffers
+             and MPEG4Writer fails the whole recording:
+
+               E MPEG4Writer: The number of recorded samples is 0
+               V MediaWriter: ...trackId:2...val:-1007          (audio track)
+               E MediaRecorder: stop failed: -1007
+               E CAM_VideoModule: stop failed.
+
+             so the 38 MB of video that WAS written is discarded and nothing is
+             saved. The only capture PCM on this machine is 01-00, the ALC245
+             analog input (tinypcminfo -D 1 -d 0 shows a "PCM in" endpoint,
+             S16_LE/S32_LE, stereo, 48 kHz in range). CARD_1_DEV_0 points the
+             mic there; the audio track then receives buffers and the file
+             saves. Same card:device as the Speaker, opposite direction -- HDA
+             analog codecs expose playback and capture sub-streams on one PCM. -->
         <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source"
-                    address="bottom_CARD_0_DEV_6">
+                    address="CARD_1_DEV_0">
             <!-- The device port needs the profile too, not just the mix port.
                  Module::setAudioPortConfigImpl() matches the requested config
                  against THIS port's profiles, and an empty devicePort has none
