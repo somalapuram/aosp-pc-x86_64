@@ -136,9 +136,9 @@
 
              This is the SAME card split as the Speaker above: with pinctrl-amd
              enabled the amdgpu HDMI audio is card 0 and the Realtek ALC245 is
-             card 1. Card 0 here is HDMI ONLY -- /proc/asound/pcm lists 00-03..09
+             card 1. Card 0 here is HDMI ONLY; /proc/asound/pcm lists 00-03..09
              as "HDMI 0..3 playback" with no capture line at all, and
-             /proc/asound/card0 has no pcm*c node -- so any CARD_0 capture
+             /proc/asound/card0 has no pcm*c node, so any CARD_0 capture
              address (the old bottom_CARD_0_DEV_6, tuned for an Intel/SOF box
              whose card 0 carried a DMIC array) opens a device that does not
              exist. The camcorder's AAC audio track then receives zero buffers
@@ -154,7 +154,7 @@
              analog input (tinypcminfo -D 1 -d 0 shows a "PCM in" endpoint,
              S16_LE/S32_LE, stereo, 48 kHz in range). CARD_1_DEV_0 points the
              mic there; the audio track then receives buffers and the file
-             saves. Same card:device as the Speaker, opposite direction -- HDA
+             saves. Same card:device as the Speaker, opposite direction; HDA
              analog codecs expose playback and capture sub-streams on one PCM. -->
         <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source"
                     address="CARD_1_DEV_0">
