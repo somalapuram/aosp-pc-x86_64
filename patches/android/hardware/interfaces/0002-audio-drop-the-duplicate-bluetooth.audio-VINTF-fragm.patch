@@ -1,0 +1,48 @@
+From 446c55a98e3e4930dfa7699bb37bc3466f04982b Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sun, 13 Sep 2026 09:17:59 +0530
+Subject: [PATCH] audio: drop the duplicate bluetooth.audio VINTF fragment from
+ the APEX
+
+A full build failed at checkvintf with a fatal duplicate:
+
+  VINTF parse error: Conflicting FqInstance:
+    IBluetoothAudioProviderFactory/default (@6)
+    from /vendor/etc/vintf/manifest/bluetooth_audio.xml vs.
+    from /apex/com.android.hardware.audio/.../android.hardware.bluetooth.audio.xml
+  ERROR: Cannot fetch vendor manifest.
+
+android.hardware.bluetooth.audio is declared twice: the base product
+(inherited) installs the standalone android.hardware.bluetooth.audio-impl
+with its bluetooth_audio.xml vintf fragment into /vendor, and this APEX
+also bundles the identical manifest as a prebuilt. The APEX's audio
+service already links the impl and registers the factory, so the running
+provider is the APEX either way; the two manifests are byte-identical
+(same interface, version 6, same fqname). Drop the APEX's copy so the
+device declares the HAL exactly once. The standalone /vendor manifest
+remains and the APEX service continues to serve it.
+
+Latent until now: it only fires when the APEX is reassembled, which this
+device had not done since the manifests diverged. It blocks every image
+build regardless of the change that triggers the reassembly.
+
+Change-Id: Ib841bd951fb37cc12432e513ed484aef1f3ca396
+---
+ audio/aidl/default/apex/com.android.hardware.audio/Android.bp | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/audio/aidl/default/apex/com.android.hardware.audio/Android.bp b/audio/aidl/default/apex/com.android.hardware.audio/Android.bp
+index 510fee5f84..e1353e3361 100644
+--- a/audio/aidl/default/apex/com.android.hardware.audio/Android.bp
++++ b/audio/aidl/default/apex/com.android.hardware.audio/Android.bp
+@@ -47,7 +47,6 @@ apex {
+     prebuilts: [
+         "android.hardware.audio.service-aidl.example.rc",
+         "android.hardware.audio.service-aidl.xml",
+-        "android.hardware.bluetooth.audio.xml",
+         "audio_eraser_classifier_model",
+         "audio_eraser_separator_model",
+     ],
+-- 
+2.43.0
+
