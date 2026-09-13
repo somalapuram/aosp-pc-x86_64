@@ -195,6 +195,20 @@ write_part_in_place() {
 
 if [[ "$MODE" == keep ]]; then
     command -v sgdisk >/dev/null 2>&1 || die "sgdisk is required for a keep-data write (apt-get install gdisk), or pass --wipe-data"
+    # Preflight the privileged read that check_layout depends on. part_info runs
+    # '$SUDO sgdisk' with stderr suppressed, so a sudo that cannot authenticate
+    # returns nothing and looks EXACTLY like a genuinely empty disk: names_seen
+    # stays 0, VERDICT becomes "fresh", and keep-data silently degrades into a
+    # full wipe that erases userdata -- the one thing keep-data promises never to
+    # do. Prove privileged access works first; if it does not, stop hard rather
+    # than guess the disk is blank.
+    if [[ -b "$TARGET" && -n "$SUDO" ]] && ! $SUDO -n true 2>/dev/null; then
+        info "keep-data needs to read $TARGET's partition table as root; authenticating sudo"
+        $SUDO -v || die "cannot authenticate sudo -- a keep-data write must read the GPT as root.
+     Without it the layout check cannot tell a formatted Android disk from a blank
+     one and would fall back to erasing userdata. Authenticate (e.g. 'sudo -v')
+     and retry, or pass --wipe-data if a full erase is truly intended."
+    fi
     check_layout
     case "$VERDICT" in
         match) ;;
