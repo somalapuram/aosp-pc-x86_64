@@ -1,0 +1,215 @@
+================================================================================
+ AOSP-on-PC x86_64  —  YOUTUBE SCREEN-RECORDING SCRIPT
+ One image. Two very different laptops. Intel + AMD, side by side, live.
+================================================================================
+
+HOW TO READ THIS FILE
+  - Each SEGMENT has a HEADLINE (placeholder — edit/replace as you like),
+    a rough DURATION, what to SHOW, and the exact STEPS / URLs.
+  - "[HEADLINE: ...]" lines are the on-screen text/title cards. Change freely.
+  - Everything is done on BOTH machines IN PARALLEL:
+        LEFT  half of the frame  =  AMD  laptop  (Radeon, 2560x1600 @120Hz)
+        RIGHT half of the frame  =  INTEL laptop (Meteor Lake, 1920x1200 @60Hz)
+    Do the SAME step on both at the SAME time so the viewer sees one image
+    behaving identically on two unrelated GPUs.
+
+RECORDING SETUP (do this once, before Segment 0)
+  - Put the two laptops physically side by side, or capture each screen and
+    place them left/right in the editor. Record both continuously.
+  - Full screen, hide nothing. The point is "this is real hardware."
+  - Optional: a small label overlay on each half — "AMD Ryzen / Radeon" and
+    "Intel Core / Arc(iris)". (Exact model names are in Segment 2.)
+  - Keep both on wall power and Wi-Fi connected.
+
+--------------------------------------------------------------------------------
+ SEGMENT 0  —  TITLE / COLD OPEN                                   (0:00–0:15)
+--------------------------------------------------------------------------------
+[HEADLINE: "Android (AOSP) on a PC — one image, any GPU"]
+[SUB-HEADLINE: "Same USB image. Intel on the left, AMD on the right."]
+
+SHOW: both desktops already booted, wallpaper + app grid visible on each.
+STEPS: nothing yet — just hold on the two live desktops for a few seconds.
+
+--------------------------------------------------------------------------------
+ SEGMENT 1  —  IT IS THE SAME IMAGE                               (0:15–0:45)
+--------------------------------------------------------------------------------
+[HEADLINE: "The exact same disk image boots both"]
+
+SHOW: prove it is one build, not two.
+STEPS (both machines, in parallel):
+  1. Open Settings > About  ->  point at the SAME build number / device name
+     ("Android on PC x86_64"). They match.
+  2. (Optional) show the same USB stick / that you wrote one image to both.
+
+--------------------------------------------------------------------------------
+ SEGMENT 2  —  THE HARDWARE IS DIFFERENT                          (0:45–1:45)
+--------------------------------------------------------------------------------
+[HEADLINE: "Two different CPUs, two different GPUs"]
+
+SHOW: the actual silicon under each machine, on screen.
+
+  A) GPU identity (fastest, most visual) — in Firefox:
+       URL:  https://webglreport.com/
+     -> The big "Unmasked Renderer" line is the proof:
+          AMD  half  ->  "AMD Radeon Graphics (radeonsi, phoenix, ...)"
+          INTEL half ->  "Mesa Intel(R) Graphics (MTL)"
+     Same OpenGL ES 3.2 / Mesa on both, different silicon.
+
+  B) GPU driver, inside Firefox itself:
+       URL / address bar:  about:support
+     -> scroll to the "Graphics" section: renderer, driver, compositor.
+
+  C) CPU + cores + RAM (pick ONE way):
+     - Easiest visual: a terminal app.
+         Install "Termux" from F-Droid (already on the device), then:
+           cat /proc/cpuinfo | grep -m1 "model name"
+           nproc
+           cat /proc/meminfo | grep MemTotal
+       Do it on both, side by side — different model names.
+     - Or Settings > About for the RAM/soc summary.
+
+[NOTE for you: the two model names go here once you read them off screen —
+ leave a headline like "AMD Ryzen ___  vs  Intel Core Ultra ___".]
+
+--------------------------------------------------------------------------------
+ SEGMENT 3  —  GPU BENCHMARK  (runs on the real GPU)             (1:45–4:00)
+--------------------------------------------------------------------------------
+[HEADLINE: "GPU test — hardware accelerated, not software"]
+
+Run the SAME web GPU benchmark on both at once. All are browser-only,
+no install, and they hammer the real driver (radeonsi / iris).
+
+  PRIMARY (visual + score), pick one and run it on both:
+    1. MotionMark 1.3.2  (browser graphics benchmark, gives a score)
+         https://browserbench.org/MotionMark1.3.2/
+    2. Volume Shader BM  (ray-marched 3D, WebGL2/WebGPU, FPS + score)
+         https://www.volumeshader.dev/en
+    3. WebGL Aquarium  (classic fish tank, raise fish count, watch FPS)
+         https://webglsamples.org/aquarium/aquarium.html
+         -> bump the fish to 5,000 / 10,000 and show the FPS counter.
+
+  BACKUP / extra GPU stress tools (all browser-based):
+    - Stress My GPU:            https://mprep.info/gpu/
+    - GPU Benchmark (WebGPU):   https://gpubenchtest.com/
+    - Tembrica GPU Benchmark:   https://tembrica.com/en/gpu-benchmark
+
+STEPS: open the chosen URL on both, press Start/Run at the same time,
+       let it finish, and hold on the two final scores side by side.
+
+--------------------------------------------------------------------------------
+ SEGMENT 4  —  CPU / JAVASCRIPT BENCHMARK                        (4:00–6:30)
+--------------------------------------------------------------------------------
+[HEADLINE: "CPU test — real-world responsiveness"]
+
+Same web CPU benchmark on both at once. These are the industry-standard
+browser CPU suites (Apple/Google/Mozilla governed), browser-only.
+
+  PRIMARY (pick one, run on both):
+    1. Speedometer 3.1  (web-app responsiveness — the headline CPU number)
+         https://browserbench.org/Speedometer3.1/
+    2. JetStream 3.0    (raw JavaScript + WebAssembly throughput)
+         https://browserbench.org/JetStream3.0/
+
+  QUICK / extra:
+    - Speed-Battle (fast JS CPU score):   https://www.speed-battle.com/
+
+STEPS: open on both, click "Start Test", let it run to the final score,
+       hold on the two scores side by side.
+
+--------------------------------------------------------------------------------
+ SEGMENT 5  —  FIREFOX + YOUTUBE (video actually plays)          (6:30–8:00)
+--------------------------------------------------------------------------------
+[HEADLINE: "YouTube in Firefox — real video decode"]
+
+SHOW: Firefox playing a YouTube video, full screen, on both.
+STEPS (both, in parallel):
+  1. Firefox -> https://www.youtube.com/
+  2. Play any 1080p video (pick something with motion so playback is obvious).
+  3. Go full screen for a few seconds; show it is smooth, audio on.
+  4. (Optional) scrub the timeline to show seeking works.
+
+[NOTE: WebView-based video also works elsewhere in the OS; this segment is
+ specifically Firefox so viewers see a normal desktop browser doing it.]
+
+--------------------------------------------------------------------------------
+ SEGMENT 6  —  FIREFOX + REAL WEBSITES                           (8:00–9:30)
+--------------------------------------------------------------------------------
+[HEADLINE: "A normal desktop browser, normal websites"]
+
+SHOW: everyday heavy sites loading and scrolling smoothly, on both.
+STEPS (both, in parallel — pick 3–4):
+  - Google Maps (WebGL map, pan/zoom):   https://www.google.com/maps
+  - A news site (scroll, images):        https://www.bbc.com/news
+  - Wikipedia (search + article):        https://www.wikipedia.org/
+  - GitHub (the project, if you like):   https://github.com/somalapuram/aosp-pc-x86_64
+  - A WebGL toy (fun):                   https://madebyevan.com/webgl-water/
+
+--------------------------------------------------------------------------------
+ SEGMENT 7  —  CAMERA + RECORDING (bonus, proves the HAL stack)  (9:30–10:30)
+--------------------------------------------------------------------------------
+[HEADLINE: "Camera preview + video recording, on both GPUs"]
+
+SHOW: the Camera app previewing, then record a short clip and play it back.
+STEPS (both, in parallel):
+  1. Open Camera -> live preview (this is the NV12-on-GPU path, now fixed).
+  2. Switch to video, record ~5 seconds, stop.
+  3. Open Gallery / Files -> play the clip back with sound.
+  [Audio auto-routes to the right card on each machine — AMD card 1,
+   Intel card 0 / internal DMIC — no per-machine config.]
+
+--------------------------------------------------------------------------------
+ SEGMENT 8  —  WRAP UP                                           (10:30–11:00)
+--------------------------------------------------------------------------------
+[HEADLINE: "One image. Intel, AMD (and NVIDIA-ready). No per-vendor build."]
+
+SHOW: both desktops again, side by side, benchmark tabs still open.
+Talking points to leave on screen / say:
+  - Same USB image, zero per-machine setup.
+  - Hardware-accelerated GPU on each (radeonsi / iris), not software.
+  - CPU + GPU benchmark scores shown live.
+  - YouTube + real websites in Firefox.
+  - Camera, recording, audio, Wi-Fi, touchpad all working.
+  - NVIDIA (nouveau) driver is in the same image and loads; a NVIDIA-primary
+    machine is the next one to film.
+
+================================================================================
+ QUICK REFERENCE — ALL ONLINE TOOLS (browser-only, no install)
+================================================================================
+
+HARDWARE INFO
+  GPU renderer string ....... https://webglreport.com/
+  GPU/driver in Firefox ..... about:support   (Graphics section)
+  CPU/cores/RAM ............. Termux (F-Droid): cat /proc/cpuinfo ; nproc ;
+                              cat /proc/meminfo    — or Settings > About
+
+GPU BENCHMARKS
+  MotionMark 1.3.2 .......... https://browserbench.org/MotionMark1.3.2/
+  Volume Shader BM .......... https://www.volumeshader.dev/en
+  WebGL Aquarium ............ https://webglsamples.org/aquarium/aquarium.html
+  Stress My GPU ............. https://mprep.info/gpu/
+  GPU Benchmark (WebGPU) .... https://gpubenchtest.com/
+  Tembrica GPU Benchmark .... https://tembrica.com/en/gpu-benchmark
+
+CPU BENCHMARKS
+  Speedometer 3.1 ........... https://browserbench.org/Speedometer3.1/
+  JetStream 3.0 ............. https://browserbench.org/JetStream3.0/
+  Speed-Battle .............. https://www.speed-battle.com/
+
+WEBSITES FOR THE DEMO
+  YouTube ................... https://www.youtube.com/
+  Google Maps ............... https://www.google.com/maps
+  BBC News .................. https://www.bbc.com/news
+  Wikipedia ................. https://www.wikipedia.org/
+  WebGL Water (fun) ......... https://madebyevan.com/webgl-water/
+
+================================================================================
+ TIPS
+================================================================================
+  - Run each benchmark on BOTH machines at the SAME time; the split-screen
+    "same test, two GPUs" shot is the whole story.
+  - Let each benchmark FINISH and hold on the final score for a few seconds so
+    it is readable/pausable.
+  - MotionMark and Volume Shader BM are the most visual (motion on screen).
+  - Speedometer 3.1 is the CPU number people recognize.
+  - If a site refuses to load, it is usually just Wi-Fi — retry, don't cut.
+================================================================================

@@ -1,0 +1,111 @@
+From 841d8f251893e0232c2e25a0d2b0d04996e575f4 Mon Sep 17 00:00:00 2001
+From: Somalapuram Amaranath <somalapuram@gmail.com>
+Date: Sun, 13 Sep 2026 05:59:24 +0530
+Subject: [PATCH] egl/android + gallium/dri: CAMDBG instrumentation for the
+ NV12 EGLImage import
+
+Temporary logging to find why the camera preview (and Firefox video) fail to
+turn an NV12 gralloc buffer into a GL texture on radeonsi, which HWUI then hits
+a LOG_ALWAYS_FATAL on ("Invalid GrBackendTexture Width==1920").
+
+platform_android.c droid_create_image_from_native_buffer: log the hal_format,
+the resolved drm_fourcc/modifier/planes/strides/offsets, and the import result
+for both the real-modifier and the modifier=INVALID fallback attempts.
+
+dri2.c dri_create_image_from_winsys: log the pipe_format/planes/modifier and the
+final tex_usage, the "no tex_usage -> return NULL" path (format not sampleable),
+and resource_from_handle failures (dmabuf import failure). Tagged CAMDBG for a
+clean logcat grep. To be reverted once the failure point is identified.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NzM9d6UTbgoE8FxzXbB9QK
+Change-Id: I3b3d3a4f74dbb112efc2e611003103b20abbaf3a
+---
+ src/egl/drivers/dri2/platform_android.c | 22 ++++++++++++++++++++--
+ src/gallium/frontends/dri/dri2.c        | 13 ++++++++++++-
+ 2 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+index a7e9da0fe6d..ef5077c0092 100644
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -84,17 +84,34 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
+    };
+    struct dri_image *img = NULL;
+ 
++   _eglLog(_EGL_WARNING, "CAMDBG native_buffer: hal_format=0x%x %dx%d stride=%d",
++           buf->format, buf->width, buf->height, buf->stride);
++
+    if (u_gralloc_get_buffer_basic_info(dri2_dpy->gralloc, &gr_handle,
+-                                       &buf_info))
++                                       &buf_info)) {
++      _eglLog(_EGL_WARNING, "CAMDBG u_gralloc_get_buffer_basic_info FAILED");
+       return NULL;
++   }
++
++   _eglLog(_EGL_WARNING,
++           "CAMDBG basic_info: drm_fourcc=0x%x modifier=0x%llx num_planes=%d "
++           "strides[0]=%d offsets[0]=%d strides[1]=%d offsets[1]=%d",
++           buf_info.drm_fourcc, (unsigned long long)buf_info.modifier,
++           buf_info.num_planes, buf_info.strides[0], buf_info.offsets[0],
++           buf_info.strides[1], buf_info.offsets[1]);
+ 
+    if (u_gralloc_get_buffer_color_info(dri2_dpy->gralloc, &gr_handle,
+-                                       &color_info))
++                                       &color_info)) {
++      _eglLog(_EGL_WARNING, "CAMDBG u_gralloc_get_buffer_color_info FAILED");
+       return NULL;
++   }
+ 
+    img = droid_create_image_from_buffer_info(dri2_dpy, buf->width, buf->height,
+                                              &buf_info, &color_info, priv);
+ 
++   _eglLog(_EGL_WARNING, "CAMDBG first import (modifier=0x%llx) img=%p",
++           (unsigned long long)buf_info.modifier, img);
++
+    if (!img) {
+       /* If dri driver is gallium virgl, real modifier info queried back from
+        * CrOS info (and potentially mapper metadata if integrated later) cannot
+@@ -105,6 +122,7 @@ droid_create_image_from_native_buffer(_EGLDisplay *disp,
+       buf_info.modifier = DRM_FORMAT_MOD_INVALID;
+       img = droid_create_image_from_buffer_info(
+          dri2_dpy, buf->width, buf->height, &buf_info, &color_info, priv);
++      _eglLog(_EGL_WARNING, "CAMDBG fallback import (modifier=INVALID) img=%p", img);
+    }
+ 
+    return img;
+diff --git a/src/gallium/frontends/dri/dri2.c b/src/gallium/frontends/dri/dri2.c
+index 292757a2ab6..e27acdbb2b7 100644
+--- a/src/gallium/frontends/dri/dri2.c
++++ b/src/gallium/frontends/dri/dri2.c
+@@ -830,8 +830,17 @@ dri_create_image_from_winsys(struct dri_screen *screen,
+          tex_usage |= PIPE_BIND_SAMPLER_VIEW;
+    }
+ 
+-   if (!tex_usage)
++   if (!tex_usage) {
++      mesa_logi("CAMDBG dri_create_image_from_winsys: NO tex_usage for "
++                "pipe_format=0x%x planes=%u modifier=0x%llx -> returning NULL",
++                map->pipe_format, format_planes,
++                (unsigned long long)modifier);
+       return NULL;
++   }
++   mesa_logi("CAMDBG dri_create_image_from_winsys: pipe_format=0x%x planes=%u "
++             "modifier=0x%llx tex_usage=0x%x use_lowered=%d",
++             map->pipe_format, format_planes,
++             (unsigned long long)modifier, tex_usage, use_lowered);
+ 
+    img = CALLOC_STRUCT(dri_image);
+    if (!img)
+@@ -858,6 +867,8 @@ dri_create_image_from_winsys(struct dri_screen *screen,
+ 
+       tex = pscreen->resource_from_handle(pscreen, &templ, &whandle[i], handle_usage);
+       if (!tex) {
++         mesa_logi("CAMDBG resource_from_handle FAILED (plane %d) pipe_format=0x%x modifier=0x%llx",
++                   i, map->pipe_format, (unsigned long long)modifier);
+          pipe_resource_reference(&img->texture, NULL);
+          FREE(img);
+          return NULL;
+-- 
+2.43.0
+
