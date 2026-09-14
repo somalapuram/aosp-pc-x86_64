@@ -368,6 +368,42 @@ else
     say "no card has a connected connector; leaving drm.gpu.vendor_name unset"
 fi
 
+# Vulkan HAL follows the RENDER GPU, so one image picks the right one on any
+# machine without a per-board GRUB entry.
+#
+# nouveau does not render through its legacy nvc0 GL driver here; it renders
+# through zink, which is GL implemented on top of Vulkan, so it needs a REAL
+# Vulkan device -- NVK, shipped as vulkan.nouveau. Every other GPU renders
+# through native GL (radeonsi/iris) and keeps SwiftShader (vulkan.pastel),
+# which is what it has always used. NVK must not be chosen anywhere else:
+# it would open, find no nouveau device, and the Vulkan loader never falls
+# through to a second HAL.
+#
+# This used to be decided only by androidboot.vulkan_hal on the kernel command
+# line, present on the NVIDIA render-offload GRUB entry alone. The DEFAULT
+# entry therefore booted every nouveau-display machine with pastel, zink
+# reported "failed to choose pdev", Mesa fell back to the software path and
+# SurfaceFlinger died in drisw_init_screen (SIGSEGV, fault addr 0x8) in a
+# 5-second crash loop: the workstation with the monitor on its RTX 3070 Ti
+# never reached a desktop from the default entry. Deriving it from the render
+# GPU detected above closes that; the command-line value still wins when set,
+# so the offload entry keeps behaving exactly as before.
+#
+# Published as vendor.pc.vulkan_hal because ro.hardware.vulkan is an
+# exported_default_prop that vendor_shell may never set (domain.te neverallow);
+# init.pc_x86_64.rc assigns the ro.* property from this right after this
+# script returns. Only the two known HAL names are ever emitted, so a bad
+# detection cannot turn into a bad ro.hardware.vulkan.
+vk=$(getprop ro.boot.vulkan_hal)
+if [ -z "$vk" ]; then
+    case "$(getprop drm.gpu.vendor_name)" in
+        nouveau) vk=nouveau ;;
+        *)       vk=pastel ;;
+    esac
+fi
+setprop vendor.pc.vulkan_hal "$vk"
+say "vulkan HAL follows render GPU -> vendor.pc.vulkan_hal=$vk"
+
 setprop vendor.pc.gpu "$egl"
 
 # Whether the DRM present fence can be trusted, published for init to turn into
