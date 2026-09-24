@@ -42,6 +42,7 @@ export REPO=$(pwd)      # from the top of the clone
 | 06 | [Boot and storage](06-boot-and-storage.md) | UEFI, GRUB, GPT, ext4, disabling AVB for bring-up |
 | 07 | [HAL long tail](07-hals.md) | Audio, input, WiFi, BT, power, camera, SELinux |
 | 08 | [Roadmap](08-roadmap.md) | Phases, milestones, risk register |
+| 09 | [Multi-display](09-multi-display.md) | A second monitor as an extended desktop: the three changes required, what every other layer already did, and the diagnostics that lie |
 
 ---
 
