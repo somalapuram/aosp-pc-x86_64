@@ -122,24 +122,45 @@ die()  { printf '%sfail%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 # SUCCEEDS against the previous libgallium_dri.so and silently ships an
 # unchanged Mesa. That cost a boot cycle on 2026-09-11: the driver's mtime
 # never moved off the earlier build and the flicker fix was not in the image.
-PATH="$HOME/.local/aosp-deps/usr/bin:$PATH"
-# Same story for python: the prefix is rootless, so `pip install --prefix` put
-# mako in its own dist-packages, which is on nobody's sys.path. Mesa generates
-# much of its source from mako templates in BOTH the host and the cross build,
-# so this is exported rather than scoped to one of them.
-export PYTHONPATH="$HOME/.local/aosp-deps/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
-# And bison has its data path compiled in as /usr/share/bison, which does not
-# exist on a rootless install -- it fails as
-#     bison: /usr/share/bison/m4sugar/m4sugar.m4: cannot open
-# generating glcpp-parse.c, roughly 34 targets in. bison, flex, meson and
-# llvm-config all exist ONLY in this prefix (nothing is in /usr/bin), so the
-# prefix is not an override here, it is the only source.
-export BISON_PKGDATADIR="$HOME/.local/aosp-deps/usr/share/bison"
-# bison finds m4 through $M4, falling back to the absolute path it was
-# CONFIGURED with (/usr/bin/m4), not by searching PATH -- so putting the prefix
-# on PATH is not enough and it fails as "m4 subprocess failed: No such file or
-# directory". m4 is in the prefix like everything else.
-export M4="$HOME/.local/aosp-deps/usr/bin/m4"
+# ONLY when that prefix exists. There are two kinds of build host and this
+# recipe has to serve both:
+#
+#   the rootless host   nothing in /usr/bin; bison, flex, m4, meson and mako
+#                       live only in ~/.local/aosp-deps. The four exports
+#                       below are the only way those tools are found at all.
+#   a normal host       apt-installed bison/flex/m4 in /usr/bin, no prefix.
+#
+# Set unconditionally, the last two exports BREAK the normal host: /usr/bin/bison
+# is told its data dir is a path that does not exist, and /usr/bin/flex is told
+# to exec an m4 that does not exist, so both fail ~34 targets into the x86_64
+# build --
+#     bison: ~/.local/aosp-deps/usr/share/bison/m4sugar/m4sugar.m4: cannot open
+#     flex: fatal internal error, exec of ~/.local/aosp-deps/usr/bin/m4 failed
+# -- on a machine where the system tools were fine. That is exactly the case the
+# gotcha for this block warned "would bite on a machine with no prefix at all",
+# and it did, on the workstation, on 2026-09-24. Guarding on the prefix keeps
+# both hosts on one script: with it present nothing changes; without it the
+# system tools are used and the prereq checks underneath say so if any is missing.
+if [[ -d "$HOME/.local/aosp-deps/usr" ]]; then
+    PATH="$HOME/.local/aosp-deps/usr/bin:$PATH"
+    # Same story for python: the prefix is rootless, so `pip install --prefix`
+    # put mako in its own dist-packages, which is on nobody's sys.path. Mesa
+    # generates much of its source from mako templates in BOTH the host and the
+    # cross build, so this is exported rather than scoped to one of them.
+    export PYTHONPATH="$HOME/.local/aosp-deps/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+    # And bison has its data path compiled in as /usr/share/bison, which does
+    # not exist on a rootless install -- it fails as
+    #     bison: /usr/share/bison/m4sugar/m4sugar.m4: cannot open
+    # generating glcpp-parse.c, roughly 34 targets in. bison, flex, meson and
+    # llvm-config all exist ONLY in this prefix (nothing is in /usr/bin), so the
+    # prefix is not an override here, it is the only source.
+    export BISON_PKGDATADIR="$HOME/.local/aosp-deps/usr/share/bison"
+    # bison finds m4 through $M4, falling back to the absolute path it was
+    # CONFIGURED with (/usr/bin/m4), not by searching PATH -- so putting the
+    # prefix on PATH is not enough and it fails as "m4 subprocess failed: No
+    # such file or directory". m4 is in the prefix like everything else.
+    export M4="$HOME/.local/aosp-deps/usr/bin/m4"
+fi
 
 for t in meson ninja pkg-config; do
     command -v "$t" >/dev/null || die "$t missing.  sudo apt install meson ninja-build pkg-config"
