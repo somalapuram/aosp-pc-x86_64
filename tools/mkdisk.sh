@@ -324,17 +324,31 @@ done
 
 for g in $HW_FW_GLOBS; do
     # Count first: an unmatched glob stays literal, and cp would then fail.
-    # shellcheck disable=SC2086
-    matches=$(ls -d $GPU_FW_SRC/$g 2>/dev/null | wc -l)
+    #
+    # Expand it as a bash glob under nullglob, NOT through `ls -d ... | wc -l`.
+    # That form looked like a count and was a trap: on a glob with no match
+    # `ls -d` exits 2, `pipefail` carries the 2 through `wc`, and `set -e`
+    # kills the whole script on the assignment -- one line BEFORE the
+    # `matches == 0` check that was written to handle exactly this case. The
+    # image step then dies with no error text at all, after "ok intel/ibt-*",
+    # and android-pc.img is silently left as the previous build. It bit on the
+    # workstation on 2026-09-24, whose /lib/firmware has no htc_9271.fw. A
+    # nullglob array has no exit status to propagate and no word-splitting to
+    # disable, and it feeds cp and du the same list, so the count and the copy
+    # can never disagree.
+    shopt -s nullglob
+    # shellcheck disable=SC2206
+    files=( $GPU_FW_SRC/$g )
+    shopt -u nullglob
+    matches=${#files[@]}
     if (( matches == 0 )); then
         warn "no firmware matching $g -- that hardware will probe and fail"
         continue
     fi
     mkdir -p "$FWROOT/lib/firmware/$(dirname "$g")"
-    # shellcheck disable=SC2086
-    cp -a $GPU_FW_SRC/$g "$FWROOT/lib/firmware/$(dirname "$g")/"
+    cp -a "${files[@]}" "$FWROOT/lib/firmware/$(dirname "$g")/"
     FW_COUNT=$(( FW_COUNT + matches ))
-    ok "$g: $matches files, $(du -shc --apparent-size $GPU_FW_SRC/$g 2>/dev/null | tail -1 | cut -f1)"
+    ok "$g: $matches files, $(du -shc --apparent-size "${files[@]}" | tail -1 | cut -f1)"
 done
 
 if (( FW_COUNT > 0 )); then
