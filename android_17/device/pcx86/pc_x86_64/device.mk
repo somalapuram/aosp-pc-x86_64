@@ -681,13 +681,15 @@ PRODUCT_PACKAGES += \
 # off because the reference devices are phones, so they have to be turned on
 # explicitly here.
 #
-# Three parts, and all three are needed -- any one alone does nothing:
+# Four parts, and all four are needed -- any one alone does nothing:
 #   1. the framework config booleans, in overlay/ (config_isDesktopModeSupported
 #      and friends);
 #   2. android.software.freeform_window_management, without which the window
 #      manager will not put a task in freeform at all;
 #   3. window_extensions, via large_screen_common.mk, which is what activity
-#      embedding and the large-screen settings layout key off.
+#      embedding and the large-screen settings layout key off;
+#   4. android.software.activities_on_secondary_displays, without which nothing
+#      is ever placed on a second monitor -- see below.
 DEVICE_PACKAGE_OVERLAYS += device/pcx86/pc_x86_64/overlay
 
 # Put the built-in panel in WINDOWING_MODE_FREEFORM. Without this desktop mode
@@ -697,6 +699,29 @@ PRODUCT_COPY_FILES += \
 
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.freeform_window_management.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.freeform_window_management.xml
+
+# A second monitor gets a desktop only if this feature is declared.
+#
+# ActivityTaskManagerService derives mSupportsMultiDisplay from
+# FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS (ActivityTaskManagerService.java:943)
+# and three places refuse a non-default display when it is false:
+# RootWindowContainer.shouldPlaceSecondaryHomeOnDisplayArea (no home on it),
+# ActivityTaskSupervisor and LaunchParamsUtil (no app launch onto it). None of
+# them log anything.
+#
+# What that looked like on the HP laptop with an HP 527pq on HDMI-A-1: every
+# other layer had done its part -- drm_hwcomposer bound the connector,
+# DisplayManager enabled display 2 extended, SystemUI put a status bar on it,
+# WM Shell created freeform desk roots for it, the cursor crossed to it -- and
+# `Set shouldShowSystemDecors for display: displayId=2, shouldShow=true` fired,
+# which is the exact call that starts the home on a new display. No START ever
+# followed. `pm has-feature android.software.activities_on_secondary_displays`
+# said false. The monitor showed a status bar over black, and
+# `am start --display 2` of anything landed on display 0.
+#
+# The feature file is upstream's; it declares nothing but the feature name.
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.software.activities_on_secondary_displays.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.activities_on_secondary_displays.xml
 
 $(call inherit-product, $(SRC_TARGET_DIR)/product/large_screen_common.mk)
 
