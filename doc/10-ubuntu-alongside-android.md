@@ -260,16 +260,16 @@ Each step ends with an image that boots and with every box ticked before the nex
   multi-user, see section 5):
   - [ ] The default GRUB entry boots exactly as on `main`: no `vendor.ubuntu` started, same
         `sys.boot_completed` time within ±1 s (R1, R2).
-  - [ ] The `Android + Ubuntu` entry runs `adb shell getprop vendor.ubuntu.state` and gets
-        `running`, and `ssh amar@<laptop>` gets a shell.
-  - [x] systemd reaches `multi-user.target` (journal, QEMU, 2026-11-03). Still to do:
-        `systemctl is-system-running` reports `running`. If it reports `degraded`, only masked
-        units are listed (R3).
-  - [ ] `apt update && apt install htop` works over Android's WiFi.
-  - [ ] Inside Ubuntu, `reboot` restarts it, `poweroff` stops it, and `kill -SEGV 1` from Android
-        is restarted by the backoff. Android stays up through all three (R4, R5).
-  - [ ] Shutting Android down produces a clean ext4 on the next boot, with no journal recovery
-        message in dmesg (R8).
+  - [x] The `Android + Ubuntu` entry runs `adb shell getprop vendor.ubuntu.state` and gets
+        `running`, and `ssh amar@<laptop>` gets a shell (HP laptop, after fix 1).
+  - [x] `systemctl is-system-running` reports `running` (HP laptop, after fix 1) (R3).
+  - [x] `apt update && apt install htop` works over Android's WiFi (after fixes 2 and 3).
+  - [x] Inside Ubuntu, `reboot` restarts it and `poweroff` stops it. A crash, `kill -9 <systemd>`
+        from Android, is restarted by the backoff. Android stays up through all three (R4, R5).
+        Not `kill -SEGV 1`: systemd catches SIGSEGV as PID 1 and freezes rather than exiting.
+  - [ ] Shutting Android down halts Ubuntu gracefully, and ext4 is clean on the next boot (R8).
+        ext4: clean. Graceful halt: from Android yes (77 ms); on Android's own shutdown, fix
+        written, not yet verified.
 
 ### Step 2: good neighbour (1 week)
 
@@ -384,7 +384,60 @@ Acceptance status after this run:
   open, because neither build completes boot in QEMU.
 - R3: met in the journal.
 - ssh, apt, the reboot, poweroff and crash cycle, and clean shutdown: all **open**. They need
-  either the QEMU regression fixed or the T7 on the laptop.
+  either the QEMU regression fixed or the T7 on the laptop. (They were done on hardware the
+  same day; see below.)
+
+**On hardware, 2026-11-03: HP laptop (Intel Meteor Lake), booted from the T7.** The T7 was
+written with a keep-data write of partitions 1 to 3. Then partition 6 (`ubuntu`, 16 GiB) was
+added in the free space after userdata with `sgdisk -n 6:0:+16GiB`, the image was dd'd into
+it, and `resize2fs` grew it, so userdata survived. The test image had the Ubuntu entry as the
+GRUB default (`GRUB_DEFAULT=1`), because the laptop keyboard cannot be relied on at the menu.
+
+What worked first time:
+- Android booted fully (`sys.boot_completed=1`), and `vendor.ubuntu.state` was `running`.
+- From the workstation, `ssh amar@192.168.0.100` gave `hostname` `ubuntu`, PID 1 `systemd`, and
+  `uname -r` `7.2.0-rc6-00064-g0fbb39df2ee0`, the Android kernel. `systemctl
+  is-system-running` reported `running`.
+- `apt-get update` fetched 34.5 MB in 29 s over the laptop's WiFi, and `apt-get install htop`
+  worked.
+- `apt-cache policy linux-image-generic` shows no candidate, so the kernel pin holds.
+- TCP out of Ubuntu works for any uid, including `nobody`, so Android's per-UID network firewall
+  does not stand in the way.
+- The cgroup limits applied: `memory.max` 24637976576 (75% of 31 GiB) and `pids.max` 8192.
+- Reboot inside Ubuntu restarted systemd under the same launcher in about 0.5 s.
+- `poweroff` inside Ubuntu went to `stopped`, and `start vendor.ubuntu` brought it back.
+- SIGKILL to systemd from Android restarted it after the 1 s backoff.
+- Through all of that, Android stayed up: `boot_completed` stayed 1, and pclauncher kept its
+  PID.
+- From Android, `nsenter -t <systemd pid> -m -p` gives a root shell inside Ubuntu, which is the
+  way in when ssh is not up. toybox's `nsenter` has no `-a`, and its `-i` failed on this kernel.
+
+Six bugs, each found on the hardware and fixed:
+
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 1 | Port 22 resets: `sshd: no hostkeys available -- exiting`, then `ssh.socket` failed (start limit) | The `ExecStartPre=ssh-keygen -A` drop-in is appended *after* Ubuntu's own `ExecStartPre=sshd -t`, which fails first | `pc-ssh-hostkeys.service`, a oneshot ordered `Before=` and wanted by `ssh.service` and `ssh.socket` |
+| 2 | DNS fails for every user except root, including apt's `_apt` | resolv.conf created under init's umask, so 0600 | chmod 0644 after writing, with a test under `umask(077)` |
+| 3 | DNS fails for root too: resolv.conf had only `1.1.1.1` | The launcher runs at post-fs-data, before WiFi has a default route. 1.1.1.1 does not answer on this network at all, not even ping. Android's own DNS is the gateway, 192.168.0.1 | Recheck every 10 s until a gateway or `vendor.ubuntu.dns` has been written |
+| 4 | Every restart logged `attach <pid> to ubuntu: Device or resource busy`, and the new systemd stayed in the launcher's cgroup with no limits | The previous systemd enabled controllers in `ubuntu/cgroup.subtree_control` and left children behind. The cgroup v2 no-internal-process rule then refuses new members | `ub_cgroup_reset()` removes the old tree, deepest first, before each start. After the fix, 0 processes sit at the root and systemd builds its tree under it |
+| 5 | `stop vendor.ubuntu` killed Ubuntu outright, with no halt logged | init's `stop` is SIGKILL (`gentle_kill` gives SIGTERM for only 200 ms) | `pc_ubuntu_launch --halt`, run by `setprop vendor.ubuntu.request halt` |
+| 6 | The halt was sent, but systemd ignored it for the full 20 s | `SIGRTMIN+3` compiled against bionic is signal 45: bionic's SIGRTMIN is 32 + 10 reserved. systemd's is glibc's 34 + 3 = **37** | Send 37 explicitly (`SYSTEMD_SIGHALT`) |
+
+After the fixes:
+- `--halt` stops Ubuntu in 77 ms, and the kernel logs `EXT4-fs (sda6): unmounting filesystem`.
+- `setprop vendor.ubuntu.request halt` (rc trigger, as the shell user) halts it in 94 ms.
+- `setprop ctl.start vendor.ubuntu` brings it back without root.
+
+**Android shutdown, not yet graceful.** After an `adb reboot`, Ubuntu's journal for the previous
+boot ends with `systemd[1]: Received SIGTERM.` and `Reexecuting.`, then stops. The cause is
+`reboot.cpp`'s `StopUntrackedProcesses`, which SIGTERMs every process group outside a service
+cgroup. Ubuntu's processes are all outside one, so systemd gets the signal directly, and for
+PID 1 that means re-execute. 3 s later everything is SIGKILLed. ext4 still came up clean on the
+next boot, with no journal recovery message, because the kernel unmounts the filesystem when
+the last process in its mount namespace dies. But it is not a clean shutdown of Ubuntu. Fix,
+written and **not yet verified on hardware**: `on shutdown && property:vendor.ubuntu.state=running
+→ exec_start vendor.ubuntu-halt`. `on shutdown` runs before the built-in `shutdown_done` that
+calls DoReboot, and `exec_start` makes init wait.
 
 ---
 
