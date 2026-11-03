@@ -456,8 +456,14 @@ next boot.
 **Bug 7, found on that same boot.** The DNS recheck (fix 3) gave up on its second pass. With no
 network yet, it treated "nothing found" as final and logged `dns: ` with nothing after it, so the
 boot kept only `1.1.1.1`, and Ubuntu had no DNS. The decision now lives in
-`ub_dns_next()` in ubuntu_lib, with a test for repeated empty passes. Not yet re-verified on a
-boot.
+`ub_dns_next()` in ubuntu_lib, with a test for repeated empty passes. Verified on the next boot:
+`dns: 1.1.1.1 for now, no network yet` at 05 s, three empty rechecks, then `dns: 192.168.0.1`
+at 45 s, once WiFi had its route. After that, `apt-get update` worked with no workaround.
+Ubuntu therefore has no working DNS for its first ~40 s, until Android's WiFi is up. Step 2's
+DNS forwarder (3.6) removes that window.
+
+**Step 1 is complete on hardware.** Every acceptance box above is ticked except the R1 boot-time
+comparison, which needs a default-entry boot on the laptop next to an Ubuntu-entry one.
 
 ---
 
