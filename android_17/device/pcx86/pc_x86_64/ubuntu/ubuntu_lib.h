@@ -51,6 +51,17 @@ long ub_meminfo_total_kb(const char *text);
  */
 int ub_cgroup_setup(const char *cgroot, const char *name, long long mem_max, long pids_max);
 
+/*
+ * Remove <cgroot>/<name> and every cgroup below it, deepest first, so the next
+ * start gets a fresh one. Needed because systemd enables controllers in its
+ * root cgroup's subtree_control and leaves init.scope, system.slice and so on
+ * behind; cgroup v2's no-internal-process rule then refuses to put the next
+ * systemd into <name> at all (EBUSY). Only directories are removed: on
+ * cgroupfs, rmdir removes a cgroup together with its interface files.
+ * Returns 0 (also when <name> did not exist), or -errno.
+ */
+int ub_cgroup_reset(const char *cgroot, const char *name);
+
 /* Move `pid` into <cgroot>/<name>. Returns 0 or -errno. */
 int ub_cgroup_attach(const char *cgroot, const char *name, pid_t pid);
 

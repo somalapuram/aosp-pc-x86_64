@@ -449,8 +449,17 @@ on property:sys.boot_completed=1
 #
 # oneshot: the launcher supervises systemd itself -- it tells a reboot inside
 # Ubuntu from a poweroff from a crash by how systemd died, which init cannot.
-# `stop vendor.ubuntu` sends SIGTERM; the launcher asks systemd to halt and
-# allows it 20 s. `start vendor.ubuntu` brings it back without a reboot.
+#
+# Stopping it cleanly is NOT `stop vendor.ubuntu`. init's stop is SIGKILL
+# (gentle_kill only buys 200 ms of SIGTERM first, system/core/init
+# service.cpp StopOrReset), which gives systemd no time at all; the launcher's
+# PDEATHSIG then takes the namespace down hard. Measured on the HP laptop: the
+# launcher never logged the halt. Use
+#     setprop vendor.ubuntu.request halt
+# which runs vendor.ubuntu-halt below: SIGTERM to the launcher, which sends
+# systemd its container halt signal and allows it 20 s. On Android's own
+# shutdown init SIGTERMs every service first anyway (reboot.cpp), so that path
+# is graceful without this. `start vendor.ubuntu` brings Ubuntu back.
 #
 # post-fs-data, not sys.boot_completed: nothing here needs /data or the
 # framework, and starting it after boot_completed would put Ubuntu's start in
@@ -466,6 +475,29 @@ service vendor.ubuntu /vendor/bin/pc_ubuntu_launch
 
 on post-fs-data && property:ro.boot.ubuntu=1
     start vendor.ubuntu
+
+service vendor.ubuntu-halt /vendor/bin/pc_ubuntu_launch --halt
+    user root
+    group root
+    oneshot
+    disabled
+    seclabel u:r:ubuntu_launch:s0
+
+on property:vendor.ubuntu.request=halt
+    setprop vendor.ubuntu.request ""
+    start vendor.ubuntu-halt
+
+# Android's own shutdown is NOT graceful for Ubuntu on its own. reboot.cpp
+# SIGTERMs every service *and* every untracked process group at once
+# (StopUntrackedProcesses) -- Ubuntu's processes are in /sys/fs/cgroup/ubuntu,
+# not in a service cgroup, so systemd gets SIGTERM directly, which for PID 1
+# means "re-execute", not "halt"; 3 s later everything is SIGKILLed. Seen in
+# Ubuntu's journal on the HP laptop: "Received SIGTERM. Reexecuting." and then
+# nothing. `on shutdown` actions run before that (the shutdown trigger is
+# queued ahead of the built-in shutdown_done that calls DoReboot), and
+# exec_start makes init wait for the halt to finish.
+on shutdown && property:vendor.ubuntu.state=running
+    exec_start vendor.ubuntu-halt
 
 on property:ro.debuggable=1
     start console

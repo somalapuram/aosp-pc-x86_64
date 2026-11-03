@@ -5,6 +5,7 @@
 #include "ubuntu_lib.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/netlink.h>
@@ -109,6 +110,36 @@ int ub_cgroup_setup(const char *cgroot, const char *name, long long mem_max, lon
     return 0;
 }
 
+static int rmdir_tree(const char *path)
+{
+    DIR *d = opendir(path);
+    struct dirent *e;
+    char sub[512];
+    int err = 0;
+
+    if (!d)
+        return errno == ENOENT ? 0 : -errno;
+    while ((e = readdir(d))) {
+        if (e->d_type != DT_DIR || !strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        snprintf(sub, sizeof(sub), "%s/%s", path, e->d_name);
+        if ((err = rmdir_tree(sub)) < 0)
+            break;
+    }
+    closedir(d);
+    if (err < 0)
+        return err;
+    return rmdir(path) < 0 && errno != ENOENT ? -errno : 0;
+}
+
+int ub_cgroup_reset(const char *cgroot, const char *name)
+{
+    char path[512];
+
+    snprintf(path, sizeof(path), "%s/%s", cgroot, name);
+    return rmdir_tree(path);
+}
+
 int ub_cgroup_attach(const char *cgroot, const char *name, pid_t pid)
 {
     char path[512], num[32];
@@ -177,6 +208,7 @@ int ub_write_resolv(const char *path, const char *servers, const char *gateway)
 {
     char text[1024], copy[256], *tok, *save = NULL;
     size_t used = 0;
+    int err;
 
     append(text, sizeof(text), &used, "%s",
            "# Written by pc_ubuntu_launch at every start; edits are lost.\n"
@@ -195,5 +227,9 @@ int ub_write_resolv(const char *path, const char *servers, const char *gateway)
 
     if (unlink(path) < 0 && errno != ENOENT)
         return -errno;
-    return write_file(path, text);
+    if ((err = write_file(path, text)) < 0)
+        return err;
+    /* Every Ubuntu user resolves names, apt's _apt among them; init's umask
+     * would otherwise leave this 0600 and DNS working for root only. */
+    return chmod(path, 0644) < 0 ? -errno : 0;
 }

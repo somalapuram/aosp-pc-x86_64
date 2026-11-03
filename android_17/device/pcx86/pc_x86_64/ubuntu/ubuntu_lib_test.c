@@ -121,6 +121,38 @@ static void test_cgroup(void)
     CHECK(ub_cgroup_attach(tmpdir, "missing", 1) == -ENOENT);
 }
 
+static void test_cgroup_reset(void)
+{
+    char path[256];
+
+    /* What systemd leaves behind: nested cgroups. Interface files cannot be
+     * modelled on a normal filesystem (cgroupfs removes them with the
+     * directory), so this tree is directories only. */
+    snprintf(path, sizeof(path), "%s/reset", tmpdir);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/reset/init.scope", tmpdir);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/reset/system.slice", tmpdir);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/reset/system.slice/ssh.service", tmpdir);
+    CHECK(mkdir(path, 0755) == 0);
+
+    CHECK(ub_cgroup_reset(tmpdir, "reset") == 0);
+    snprintf(path, sizeof(path), "%s/reset", tmpdir);
+    CHECK(access(path, F_OK) < 0 && errno == ENOENT);
+
+    /* Nothing there yet: not an error. */
+    CHECK(ub_cgroup_reset(tmpdir, "reset") == 0);
+
+    /* A cgroup that cannot be removed (here: a regular file inside, standing
+     * in for a cgroup that still has processes) is reported, not ignored. */
+    snprintf(path, sizeof(path), "%s/busy", tmpdir);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/busy/cgroup.procs", tmpdir);
+    close(open(path, O_WRONLY | O_CREAT, 0644));
+    CHECK(ub_cgroup_reset(tmpdir, "busy") == -ENOTEMPTY);
+}
+
 /* Append one RTM_NEWROUTE to buf; gw may be NULL. Returns the new length. */
 static size_t add_route(char *buf, size_t len, unsigned char family, unsigned char dst_len,
                         unsigned char type, unsigned table, const char *gw)
@@ -208,6 +240,13 @@ static void test_write_resolv(void)
     snprintf(path, sizeof(path), "%s/resolv.conf", tmpdir);
 
     CHECK(ub_write_resolv(path, "", "192.168.0.1") == 0);
+    {
+        struct stat st;
+        mode_t old = umask(077);    /* what init gives a service */
+        CHECK(ub_write_resolv(path, "", "192.168.0.1") == 0);
+        umask(old);
+        CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0644);
+    }
     read_text(path, buf, sizeof(buf));
     CHECK(strstr(buf, "nameserver 192.168.0.1\nnameserver 1.1.1.1\n") != NULL);
     CHECK(strstr(buf, "options timeout:2 attempts:2\n") != NULL);
@@ -262,6 +301,7 @@ int main(void)
     test_backoff();
     test_meminfo();
     test_cgroup();
+    test_cgroup_reset();
     test_default_gateway();
     test_write_resolv();
 

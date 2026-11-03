@@ -62,7 +62,19 @@
 #define CGROUP_NAME  "ubuntu"
 #define STOP_TIMEOUT 20     /* seconds systemd gets to shut down, R8 */
 
+/*
+ * systemd's container "halt" signal is SIGRTMIN+3 *as glibc numbers it*:
+ * glibc's SIGRTMIN is 34, so 37. Bionic reserves more real-time signals for
+ * itself (SIGRTMIN = __SIGRTMIN + __SIGRT_RESERVED), so SIGRTMIN+3 compiled
+ * here is a different signal that systemd ignores. Found on the HP laptop:
+ * the halt was sent and systemd sat out the whole 20 s until SIGKILL.
+ */
+#define SYSTEMD_SIGHALT (__SIGRTMIN + 2 + 3)
+
+#define DNS_RECHECK  10     /* seconds between gateway lookups until one is found */
+
 static volatile sig_atomic_t g_term, g_alarm;
+static int g_dns_final;     /* resolv.conf has its real servers, stop looking */
 
 static void on_term(int sig) { (void)sig; g_term = 1; }
 static void on_alarm(int sig) { (void)sig; g_alarm = 1; }
@@ -323,7 +335,14 @@ static void setup_cgroup(void)
               strerror(-err));
 }
 
-static void setup_dns(void)
+/*
+ * Write resolv.conf. The launcher starts at post-fs-data, usually before WiFi
+ * has a network, so the first pass often finds no gateway and writes only the
+ * fallback -- which on the bring-up network does not answer at all. The
+ * supervisor loop therefore calls this again every DNS_RECHECK seconds until
+ * a gateway (or vendor.ubuntu.dns) has been written. Returns 1 once final.
+ */
+static int setup_dns(void)
 {
     char servers[PROP_VALUE_MAX] = "", gw[64] = "";
     int err;
@@ -331,11 +350,24 @@ static void setup_dns(void)
     __system_property_get("vendor.ubuntu.dns", servers);
     if (!*servers && find_gateway(gw, sizeof(gw)) < 0)
         gw[0] = '\0';
+    if (!*servers && !*gw && g_dns_final >= 0) {
+        /* Nothing better than the fallback yet; write it once. */
+        if (g_dns_final == 0) {
+            if ((err = ub_write_resolv(UBUNTU_ROOT "/etc/resolv.conf", NULL, NULL)) < 0)
+                ALOGW("resolv.conf: %s", strerror(-err));
+            ALOGI("dns: %s for now, no network yet", UB_FALLBACK_DNS);
+            g_dns_final = -1;
+        }
+        return 0;
+    }
     err = ub_write_resolv(UBUNTU_ROOT "/etc/resolv.conf", servers, gw);
-    if (err < 0)
+    if (err < 0) {
         ALOGW("resolv.conf: %s", strerror(-err));
-    else
-        ALOGI("dns: %s", *servers ? servers : *gw ? gw : UB_FALLBACK_DNS);
+        return 0;
+    }
+    ALOGI("dns: %s", *servers ? servers : gw);
+    g_dns_final = 1;
+    return 1;
 }
 
 /* Start one Ubuntu. Returns systemd's PID in our namespace, or -1. */
@@ -343,9 +375,15 @@ static pid_t start_ubuntu(int init_fd)
 {
     static char stack[64 * 1024] __attribute__((aligned(16)));
     struct child_args args;
+    char num[16];
     int pfd[2];
     pid_t pid;
     int err;
+
+    /* A fresh cgroup every time; see ub_cgroup_reset() for why. */
+    if ((err = ub_cgroup_reset(CGROUP_ROOT, CGROUP_NAME)) < 0)
+        ALOGW("reset %s/%s: %s", CGROUP_ROOT, CGROUP_NAME, strerror(-err));
+    setup_cgroup();
 
     if (pipe2(pfd, O_CLOEXEC) < 0)
         return -1;
@@ -366,6 +404,8 @@ static pid_t start_ubuntu(int init_fd)
         ALOGE("release child: %s", strerror(errno));
     close(pfd[1]);
     ALOGI("systemd started, pid %d", pid);
+    snprintf(num, sizeof(num), "%d", (int)getpid());
+    __system_property_set("vendor.ubuntu.pid", num);
     return pid;
 }
 
@@ -375,10 +415,17 @@ static int wait_ubuntu(pid_t pid)
 {
     int status, asked = 0;
 
+    if (!g_dns_final || g_dns_final < 0)
+        alarm(DNS_RECHECK);
     for (;;) {
+        if (g_alarm && !asked) {
+            g_alarm = 0;
+            if (setup_dns() == 0)
+                alarm(DNS_RECHECK);
+        }
         if (g_term && !asked) {
             ALOGI("stopping: asking systemd to halt");
-            kill(pid, SIGRTMIN + 3);
+            kill(pid, SYSTEMD_SIGHALT);
             alarm(STOP_TIMEOUT);
             asked = 1;
         } else if (g_alarm) {
@@ -411,7 +458,45 @@ static void pause_for(int seconds)
         ;
 }
 
-int main(void)
+/*
+ * --halt: stop Ubuntu gracefully, which `stop vendor.ubuntu` cannot do --
+ * init's stop is SIGKILL (or SIGTERM for 200 ms with gentle_kill), with no
+ * time for systemd to shut down. This sends the running launcher the SIGTERM
+ * it treats as "halt systemd", then waits for it to report stopped. Run by the
+ * vendor.ubuntu-halt service on `setprop vendor.ubuntu.request halt`.
+ */
+static int halt_running(void)
+{
+    char value[PROP_VALUE_MAX] = "", path[64], comm[32] = "";
+    int fd, i;
+    pid_t pid;
+    ssize_t n;
+
+    if (__system_property_get("vendor.ubuntu.state", value) <= 0 || strcmp(value, "running"))
+        return 0;
+    __system_property_get("vendor.ubuntu.pid", value);
+    pid = (pid_t)atoi(value);
+    snprintf(path, sizeof(path), "/proc/%d/comm", (int)pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    n = fd < 0 ? -1 : read(fd, comm, sizeof(comm) - 1);
+    if (fd >= 0)
+        close(fd);
+    if (pid <= 1 || n <= 0 || strncmp(comm, "pc_ubuntu_launc", 15)) {
+        ALOGE("halt: vendor.ubuntu.pid=%s is not the launcher", value);
+        return 1;
+    }
+    ALOGI("halt: asking launcher %d to stop Ubuntu", pid);
+    kill(pid, SIGTERM);
+    for (i = 0; i < (STOP_TIMEOUT + 5) * 5; i++) {
+        if (__system_property_get("vendor.ubuntu.state", value) > 0 && !strcmp(value, "stopped"))
+            return 0;
+        usleep(200 * 1000);
+    }
+    ALOGE("halt: Ubuntu did not stop within %d s", STOP_TIMEOUT + 5);
+    return 1;
+}
+
+int main(int argc, char **argv)
 {
     struct sigaction sa = { 0 };
     struct ub_backoff backoff = { 0 };
@@ -423,12 +508,14 @@ int main(void)
     sa.sa_handler = on_alarm;
     sigaction(SIGALRM, &sa, NULL);
 
+    if (argc > 1 && !strcmp(argv[1], "--halt"))
+        return halt_running();
+
     set_state("starting");
     if (mount_ubuntu() < 0) {
         set_state("failed");
         return 1;
     }
-    setup_cgroup();
     setup_dns();
     init_fd = open(UBUNTU_INIT, O_PATH | O_CLOEXEC);
     if (init_fd < 0) {
