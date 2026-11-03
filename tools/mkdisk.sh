@@ -37,6 +37,20 @@ VENDOR_MB=${VENDOR_MB:-2048}
 #     IllegalArgumentException: Invalid feature flag: android.security.*
 METADATA_MB=${METADATA_MB:-64}
 
+# Ubuntu alongside Android (doc/10-ubuntu-alongside-android.md 3.9). Only when
+# UBUNTU_IMG names an image from tools/mkubuntu.sh: it becomes partition 6,
+# "ubuntu", and the disk grows by its size, so userdata keeps its share and
+# partitions 1-5 are exactly where they always were. Without UBUNTU_IMG the
+# layout is byte-for-byte the old one (R9). Android never mounts partition 6;
+# only pc_ubuntu_launch does, in its own mount namespace.
+UBUNTU_IMG=${UBUNTU_IMG:-}
+UBUNTU_MB=0
+if [[ -n "$UBUNTU_IMG" ]]; then
+    [[ -f "$UBUNTU_IMG" ]] || { echo "UBUNTU_IMG=$UBUNTU_IMG: no such file" >&2; exit 1; }
+    UBUNTU_MB=$(( ( $(stat -c %s "$UBUNTU_IMG") + 1048575 ) / 1048576 ))
+    DISK_SIZE_MB=$(( DISK_SIZE_MB + UBUNTU_MB ))
+fi
+
 # Deterministic PARTUUID for the ESP.
 #
 # Android init only creates /dev/block/by-name/* symlinks for partitions on the
@@ -385,6 +399,29 @@ info "building standalone GRUB EFI image"
 # GRUB_TIMEOUT is 5 rather than 3 because the menu is not decoration: the
 # install entry is the last one, and three seconds is not enough time to read
 # the entries and arrow down to it before the default boots.
+# The "Android + Ubuntu" entry: the default entry plus androidboot.ubuntu=1,
+# which is what starts vendor.ubuntu (init.pc_x86_64.rc). Second in the menu,
+# never first, so GRUB_DEFAULT=0 still boots plain Android (R1).
+UBUNTU_ENTRY=""
+if [[ -n "$UBUNTU_IMG" ]]; then
+    UBUNTU_ENTRY="
+menuentry \"Android + Ubuntu pc_x86_64\" {
+    linux  /bzImage root=/dev/ram0 rw ${AMDGPU_ARG} \\
+           androidboot.hardware=pc_x86_64 \\
+           androidboot.boot_part_uuid=$ESP_PARTUUID \\
+           androidboot.selinux=permissive \\
+           androidboot.ubuntu=1 \\
+           video=Virtual-1:${GUEST_MODE:-1600x900} \\
+           ${NOUVEAU_ARG} \\
+           sysctl.kernel.dmesg_restrict=0 \\
+           printk.devkmsg=on \\
+           androidboot.pc_logs=1 \\
+           console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
+    initrd /ramdisk.img${GPUFW_INITRD}
+}
+"
+fi
+
 cat > "$WORK/grub.cfg" <<EOF
 # 20 s, not 5. Five seconds auto-boots the default before anyone can read the
 # menu, let alone pick a diagnostic entry. That cost four boot cycles on the AMD
@@ -538,7 +575,7 @@ menuentry "Android pc_x86_64" {
            console=tty0 loglevel=1 ${KERNEL_EXTRA_ARGS:-}
     initrd /ramdisk.img${GPUFW_INITRD}
 }
-
+${UBUNTU_ENTRY}
 
 # The verbose entry stays PERMISSIVE on purpose. It is the escape hatch: if a
 # policy change makes the default entry unbootable, pick this one at the GRUB
@@ -975,7 +1012,7 @@ truncate -s "${METADATA_MB}M" "$WORK/metadata.raw"
 mke2fs -q -t ext4 -L metadata "$WORK/metadata.raw" >/dev/null 2>&1
 ok "metadata ${METADATA_MB} MiB (empty ext4)"
 
-USERDATA_MB=$(( DISK_SIZE_MB - ESP_MB - SYSTEM_MB - VENDOR_MB - METADATA_MB - 16 ))
+USERDATA_MB=$(( DISK_SIZE_MB - ESP_MB - SYSTEM_MB - VENDOR_MB - METADATA_MB - UBUNTU_MB - 16 ))
 rm -f "$WORK/userdata.raw"
 truncate -s "${USERDATA_MB}M" "$WORK/userdata.raw"
 mke2fs -q -t ext4 -L userdata "$WORK/userdata.raw" >/dev/null 2>&1
@@ -988,13 +1025,20 @@ info "creating GPT disk ${DISK_SIZE_MB} MiB"
 rm -f "$DISK"
 truncate -s "${DISK_SIZE_MB}M" "$DISK"
 
+# userdata takes the rest of the disk, unless the ubuntu partition follows it.
+if [[ -n "$UBUNTU_IMG" ]]; then
+    PART_TAIL=(-n 5:0:+${USERDATA_MB}MiB -t 5:8300 -c 5:userdata
+               -n 6:0:0                  -t 6:8300 -c 6:ubuntu)
+else
+    PART_TAIL=(-n 5:0:0                  -t 5:8300 -c 5:userdata)
+fi
 sgdisk -Z "$DISK" >/dev/null 2>&1 || true
 sgdisk \
     -n 1:1MiB:+${ESP_MB}MiB    -t 1:ef00 -c 1:esp \
     -n 2:0:+${SYSTEM_MB}MiB    -t 2:8300 -c 2:system \
     -n 3:0:+${VENDOR_MB}MiB    -t 3:8300 -c 3:vendor \
     -n 4:0:+${METADATA_MB}MiB  -t 4:8300 -c 4:metadata \
-    -n 5:0:0                   -t 5:8300 -c 5:userdata \
+    "${PART_TAIL[@]}" \
     -u 1:"$ESP_PARTUUID" \
     "$DISK" >/dev/null
 ok "esp PARTUUID $ESP_PARTUUID (androidboot.boot_part_uuid)"
@@ -1014,9 +1058,10 @@ write_part 2 "$WORK/system.raw"   system
 write_part 3 "$WORK/vendor.raw"   vendor
 write_part 4 "$WORK/metadata.raw" metadata
 write_part 5 "$WORK/userdata.raw" userdata
+[[ -n "$UBUNTU_IMG" ]] && write_part 6 "$UBUNTU_IMG" ubuntu
 
 echo
-sgdisk -p "$DISK" | tail -6
+sgdisk -p "$DISK" | tail -7
 echo
 ok "disk ready: $DISK ($(du -h --apparent-size "$DISK" | cut -f1) apparent, $(du -h "$DISK" | cut -f1) on disk)"
 echo "    boot it with:  ./build.sh run"

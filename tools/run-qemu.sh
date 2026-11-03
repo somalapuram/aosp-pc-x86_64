@@ -99,6 +99,12 @@ VNC_DISPLAY=${VNC_DISPLAY:-1}
 #     ADB_PORT=5585 ./build.sh run
 ADB_PORT="${ADB_PORT:-5555}"
 
+# Optional ssh host-forward to the guest's port 22, for an image built with
+# UBUNTU_IMG (doc/10-ubuntu-alongside-android.md): Ubuntu's sshd shares
+# Android's network namespace, so it is reachable on the guest address.
+#     SSH_PORT=2222 ./build.sh run   then   ssh -p 2222 amar@localhost
+SSH_FWD=${SSH_PORT:+,hostfwd=tcp::${SSH_PORT}-:22}
+
 # A VM left running from a previous session holds the hostfwd, and QEMU then
 # refuses to start with a message that names the port and not the cause:
 #     qemu-system-x86_64: -netdev user,id=n0,hostfwd=tcp::5555-:5555:
@@ -504,7 +510,7 @@ exec qemu-system-x86_64 \
     "${FS[@]}" \
     -device intel-hda -device hda-duplex \
     -device virtio-net-pci,netdev=n0 \
-    -netdev user,id=n0,hostfwd=tcp::${ADB_PORT}-:5555 \
+    -netdev user,id=n0,hostfwd=tcp::${ADB_PORT}-:5555${SSH_FWD} \
     -device qemu-xhci -device usb-tablet -device usb-kbd \
     -serial mon:stdio \
     -qmp "unix:$QMP_SOCK,server,nowait" \
