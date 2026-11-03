@@ -43,6 +43,7 @@ export REPO=$(pwd)      # from the top of the clone
 | 07 | [HAL long tail](07-hals.md) | Audio, input, WiFi, BT, power, camera, SELinux |
 | 08 | [Roadmap](08-roadmap.md) | Phases, milestones, risk register |
 | 09 | [Multi-display](09-multi-display.md) | A second monitor as an extended desktop: the three changes required, what every other layer already did, and the diagnostics that lie |
+| 10 | [Ubuntu alongside Android](10-ubuntu-alongside-android.md) | Real systemd Ubuntu on the same kernel, started by Android init in its own namespaces: decision, requirements, design, step plan (branch `aosp_ubuntu`, not started) |
 
 ---
 

@@ -310,6 +310,24 @@ usual sinkholes.
 
 ---
 
+## Phase 9 — Ubuntu alongside Android (4 to 6 weeks to screen switching)
+
+Real systemd Ubuntu on the same kernel, started by Android init as a service
+in its own namespaces. Off by default, enabled by `androidboot.ubuntu=1`.
+Design, requirements and acceptance checks are in
+[10-ubuntu-alongside-android.md](10-ubuntu-alongside-android.md). The work
+happens on the `aosp_ubuntu` branch.
+
+- [ ] Step 1: systemd boots (`FHANDLE`, `USER_NS`, launcher, `ubuntu` partition), 1 week
+- [ ] Step 2: good neighbour (enforcing `ubuntu` domain, cgroup limits, DNS), 1 week
+- [ ] Step 3: screen switching (DRM master hand-off, input, sound), 2 to 3 weeks
+- [ ] Step 4, optional: Ubuntu windows on the Android desktop, 5 to 8 weeks
+
+**Risk:** low for steps 1 and 2. Nothing in Android changes unless the flag
+is set. Step 3 touches drm_hwcomposer and carries the real risk.
+
+---
+
 ## Risk register
 
 | Risk | Severity | Mitigation |
