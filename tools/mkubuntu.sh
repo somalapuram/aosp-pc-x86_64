@@ -141,12 +141,29 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 EOF
+# The keys must exist before ssh.service starts at all: its own first
+# ExecStartPre is `sshd -t`, which fails with "no hostkeys available", so an
+# ExecStartPre added by a drop-in never runs (drop-ins append). That shipped
+# once and left ssh.socket failed on first boot. A unit of its own, ordered
+# before, is the fix.
 rm -f "$root"/etc/ssh/ssh_host_*
-mkdir -p "$root/etc/systemd/system/ssh.service.d"
-cat > "$root/etc/systemd/system/ssh.service.d/hostkeys.conf" <<'EOF'
+cat > "$root/etc/systemd/system/pc-ssh-hostkeys.service" <<'EOF'
+[Unit]
+Description=Generate this machine's ssh host keys on first boot
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+Before=ssh.service ssh.socket
+
 [Service]
-ExecStartPre=/usr/bin/ssh-keygen -A
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=ssh.service ssh.socket
 EOF
+for u in ssh.service ssh.socket; do
+    mkdir -p "$root/etc/systemd/system/$u.wants"
+    ln -sf ../pc-ssh-hostkeys.service "$root/etc/systemd/system/$u.wants/pc-ssh-hostkeys.service"
+done
 
 # Keep the journal bounded; it lives on the ubuntu partition.
 mkdir -p "$root/etc/systemd/journald.conf.d"
