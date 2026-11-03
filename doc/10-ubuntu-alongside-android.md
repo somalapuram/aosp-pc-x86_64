@@ -113,7 +113,17 @@ unit-tested on the host. It follows systemd's container interface, published at
    - Mount `proc`, `sys` (read-only, which tells systemd it is in a container and skips udev),
      `/dev` as a tmpfs holding only `null zero full random urandom tty console ptmx` plus a
      `devpts` instance, `/run` and `/tmp` as tmpfs, and the delegated cgroup at `/sys/fs/cgroup`.
-   - Call `pivot_root`, then `sethostname("ubuntu")`.
+   - Call `sethostname("ubuntu")`, then `pivot_root`.
+   - Make `/proc/sys` and `/proc/sysrq-trigger` read-only, so Ubuntu cannot change Android's
+     kernel settings.
+   - Remove from the bounding set every capability that reaches past the namespaces:
+     `SYS_MODULE`, `SYS_TIME`, `SYS_RAWIO`, `MKNOD`, `DAC_READ_SEARCH`, `NET_ADMIN`,
+     `MAC_ADMIN`, `MAC_OVERRIDE`, `SYSLOG`, `WAKE_ALARM`, `BLOCK_SUSPEND`, `AUDIT_CONTROL` and
+     `SYS_PACCT`. `DAC_READ_SEARCH` matters because `FHANDLE=y` makes `open_by_handle_at()`
+     available, and with that capability it can walk out of a mount namespace. `NET_ADMIN`
+     goes because the network namespace is Android's.
+   - Set `PR_SET_PDEATHSIG` to SIGKILL. If init SIGKILLs the launcher, the whole Ubuntu
+     namespace dies with it instead of running unsupervised.
    - Exec `/sbin/init` with `container=pc-android` and `container_uuid` in the environment.
 4. The parent writes the child's PID into `/sys/fs/cgroup/ubuntu/cgroup.procs` *before*
    releasing it. It does this through a pipe handshake, so every Ubuntu process is born inside the
@@ -128,7 +138,7 @@ parent what was asked. The launcher uses that signal:
 |---|---|---|
 | `reboot` | child killed by SIGHUP | Starts systemd again |
 | `poweroff`, `halt` | child killed by SIGINT | Exits 0. Ubuntu stays off until `start vendor.ubuntu`. |
-| Crashes | Any other exit | Restarts it with a backoff of 1, 5 and 30 s. After 3 failures in 5 minutes, exits 1 and sets `vendor.ubuntu.state=failed`. |
+| Crashes | Any other exit | Restarts it after 1, 5, then 30 s. A fourth crash within 5 minutes exits 1 and sets `vendor.ubuntu.state=failed`. |
 | (Android sends SIGTERM) | — | Sends SIGRTMIN+3 to the child, waits 20 s, then sends SIGKILL to the namespace (R8) |
 
 The launcher publishes `vendor.ubuntu.state` as `starting`, `running`, `stopped` or `failed`. A
@@ -137,8 +147,9 @@ future pclauncher tile can read it.
 ### 3.5 cgroups (R4)
 
 Android mounts cgroup v2 at `/sys/fs/cgroup` and v1 controllers under `/dev`, per `cgroups.json`
-(doc/03-kernel.md). The launcher creates `/sys/fs/cgroup/ubuntu`, enables `memory pids cpu` on it
-and sets ceilings. The defaults are `memory.max` at 75% of RAM and `pids.max` at 8192, both
+(doc/03-kernel.md). The launcher creates `/sys/fs/cgroup/ubuntu`, enables `memory` and `pids` on it
+and sets ceilings. `cpu` is left out because Android mounts it as v1, and a controller cannot be
+on both hierarchies at once. The defaults are `memory.max` at 75% of RAM and `pids.max` at 8192, both
 overridable by a property. It then delegates the subtree, and inside the cgroup namespace systemd
 sees that subtree as its root.
 
@@ -200,9 +211,13 @@ non-vendor files. Each one is resolved there and recorded in section 5.
 ### 3.9 Disk layout: `tools/mkdisk.sh`
 
 The `ubuntu` partition is created only when `UBUNTU_IMG` is set (R9). It is appended as
-**partition 6**, carved out of userdata's share, so partition numbers 1 to 5 never move.
-fstab uses by-name paths, so nothing else changes. Android never mounts it. Only the launcher
-does, in its own namespace. Partition 5 then gets an explicit size instead of `0:0`.
+**partition 6**, and the disk grows by its size, so userdata keeps its share and partitions 1 to
+5 never move. fstab uses by-name paths, so nothing else changes. Android never mounts it. Only
+the launcher does, in its own namespace. Partition 5 then gets an explicit size instead of
+`0:0`.
+
+`tools/write-usb.sh` keeps userdata by writing only partitions 1 to 3 into an existing GPT.
+That GPT has no partition 6, so the **first** write of an Ubuntu image needs `--wipe-data`.
 
 A new GRUB entry, `Android + Ubuntu`, is the existing default entry plus `androidboot.ubuntu=1`.
 It goes after the default entry, never before it (R1).
@@ -234,18 +249,21 @@ Each step ends with an image that boots and with every box ticked before the nex
 
 ### Step 1: systemd boots (1 week)
 
-- [ ] `config/pc_x86_64.fragment`: `CONFIG_FHANDLE=y`, `CONFIG_USER_NS=y`, with a comment block
-- [ ] `tools/mkubuntu.sh` and its masking list (3.8)
-- [ ] `tools/mkdisk.sh`: optional partition 6 and the `Android + Ubuntu` GRUB entry (3.9)
-- [ ] `pc_ubuntu_launch.c`, with host unit tests for argument parsing, the exit-signal to action
-      table and the cgroup writer (R11)
-- [ ] rc service plus sepolicy, with `ubuntu` permissive (3.7)
-- **Accept:**
+- [x] `config/pc_x86_64.fragment`: `CONFIG_FHANDLE=y`, `CONFIG_USER_NS=y`, with a comment block
+- [x] `tools/mkubuntu.sh` and its masking list (3.8)
+- [x] `tools/mkdisk.sh`: optional partition 6 and the `Android + Ubuntu` GRUB entry (3.9)
+- [x] `pc_ubuntu_launch.c`, plus `pc_ubuntu_init.c` (section 5), with host unit tests for every
+      decision function: the exit-signal table, backoff, meminfo, the cgroup writer, the netlink
+      gateway parser and resolv.conf (`ubuntu/run_tests.sh`, also `pc_ubuntu_launch_test`) (R11)
+- [x] rc service plus sepolicy, with `ubuntu` permissive (3.7)
+- **Accept** (2026-11-03: everything above is built; in QEMU, systemd reached
+  multi-user, see section 5):
   - [ ] The default GRUB entry boots exactly as on `main`: no `vendor.ubuntu` started, same
         `sys.boot_completed` time within ±1 s (R1, R2).
   - [ ] The `Android + Ubuntu` entry runs `adb shell getprop vendor.ubuntu.state` and gets
         `running`, and `ssh amar@<laptop>` gets a shell.
-  - [ ] `systemctl is-system-running` reports `running`. If it reports `degraded`, only masked
+  - [x] systemd reaches `multi-user.target` (journal, QEMU, 2026-11-03). Still to do:
+        `systemctl is-system-running` reports `running`. If it reports `degraded`, only masked
         units are listed (R3).
   - [ ] `apt update && apt install htop` works over Android's WiFi.
   - [ ] Inside Ubuntu, `reboot` restarts it, `poweroff` stops it, and `kill -SEGV 1` from Android
@@ -280,7 +298,93 @@ This needs a Wayland-to-SurfaceFlinger bridge. It will not start before step 3 h
 Record what actually happened at each step: dates, commits, denials hit and how each was
 resolved. This follows the 09-multi-display rule: nothing here is inferred.
 
-*(empty: no step started)*
+### Step 1, 2026-11-03
+
+**Kernel.** `CONFIG_FHANDLE=y` and `CONFIG_USER_NS=y` were added to `config/pc_x86_64.fragment`,
+and both are in the built `linux/.config`. No patch was needed.
+
+**One file type cannot be both the entrypoint and Ubuntu's files.** The first policy gave the
+whole partition one type, with `exec_type` and `vendor_file_type`, so that exec'ing systemd
+could be the domain transition. checkpolicy rejected it on three neverallow rules in
+`private/domain.te`: line 802 forbids writing those types, and lines 810 and 2286 forbid
+mounting on them. The fix uses two types:
+- `ubuntu_file` is a plain type for the partition.
+- `ubuntu_exec` labels `/vendor/bin/pc_ubuntu_init`, a 1 kB freestanding static binary that
+  only execs `/sbin/init`.
+
+The launcher opens it `O_PATH` before `pivot_root` and runs it with `execveat(AT_EMPTY_PATH)`,
+so it runs inside the Ubuntu root although it lives on `/vendor`. It has to be freestanding.
+This tree has no static vendor libc variant: `static_executable` fails with "dependency libc
+missing variant". A dynamic binary would need `/system/bin/linker64`, which the Ubuntu root
+does not have.
+
+**Step 2 blocker: an enforcing `ubuntu` domain cannot run its own binaries under stock AOSP
+policy.** `private/domain.te:1982` forbids every domain except apps, shell, su and the
+zygotes to *execute* a file unless its type is `system_file_type`, `vendor_file_type` or
+`exec_type`. `domain.te:802` forbids *writing* files of exactly those types, and its only
+exemptions are `kernel` (userdebug), `asan_extract` and `overlay_remounter`. So no allow rule
+can let Ubuntu both run `/usr/bin/*` and let dpkg replace it. Step 1 is unaffected, because
+`ubuntu` is permissive and needs no allow rule. Step 2 must pick one of these:
+
+| Option | Cost |
+|---|---|
+| A. Keep `ubuntu` permissive for good. Android domains stay enforcing, and the Ubuntu side is confined by namespaces, dropped capabilities and DAC only. | Userdebug only: user builds reject permissive domains at build time |
+| B. Carry a `system/sepolicy` patch that exempts `ubuntu` from lines 802 and 1982, as AOSP itself does for `overlay_remounter` | One more patch in `patches/android/`. CTS `SELinuxNeverallowRulesTest` would flag it. |
+| C. Mount `/usr` from a read-only image labelled `exec_type`, and keep the rest writable | dpkg can no longer update `/usr`. Upgrades become image swaps. |
+
+**Boot test in QEMU, 2026-11-03.** The T7 was not attached, so the test ran in QEMU/KVM with
+an image built by `UBUNTU_IMG=out/ubuntu.img GRUB_DEFAULT=1 ./build.sh image`. The Ubuntu image
+was 4 GiB, minbase plus the step 1 packages, from `tools/mkubuntu.sh`: a 130 MB rootfs in 214
+seconds, rootless.
+
+The launcher and systemd worked:
+- `init: processing action (ro.boot.ubuntu=1 && post-fs-data)` then `starting service
+  'vendor.ubuntu'` at 15.08 s of uptime.
+- The launcher logged `state starting`, `dns: 1.1.1.1`, `systemd started, pid 815` and
+  `state running` within 24 ms.
+- The QEMU guest had no network yet (see below), so the gateway lookup found no default route
+  and fell back as designed.
+- Ubuntu's own journal was read afterwards from partition 6 on the host, with `debugfs rdump`
+  and `journalctl --directory`. systemd ran as PID 1, with hostname `ubuntu` and a generated
+  machine-id. It reached `multi-user.target` and `graphical.target`, and logged `Startup
+  finished in 300ms`.
+- Running were journald (persistent journal on the partition), dbus, logind ("New seat
+  seat0") and `ssh.socket`.
+- There was **one warning**: `systemd-logind.service: bpf-firewall: Attaching egress BPF
+  program ... failed: Operation not permitted`. That is the expected cost of dropping
+  `CAP_NET_ADMIN`, because cgroup-skb BPF needs it. It only affects units with `IPAddressDeny=`.
+- The permissive `ubuntu` domain produced 25,395 denials, from systemd, tmpfiles, ldconfig,
+  logind, journald, dbus and others. They are kept for step 2's audit2allow.
+
+**What could not be tested in QEMU: anything that needs Android's framework.** On this image
+SurfaceFlinger aborts in a loop:
+
+    Abort message: 'Failed to create a valid texture. [...]:[384,384] isProtected:0 isWriteable:1 format:1'
+    #03 ... GaneshBackendTexture::GaneshBackendTexture(...)
+
+So system_server never starts. That takes out two things Ubuntu's checks depend on:
+- **adb.** adbd waits for the framework (`Expecting lifecycle message over adbdauth`) and stays
+  `offline`.
+- **The guest network.** On Android, system_server configures `eth0`. ssh reached QEMU's port
+  forward but timed out waiting for the banner, because the guest had no IP.
+
+**This is not caused by this branch.** The base commit of `aosp_ubuntu` (`629e6ff`, main plus
+documents) was rebuilt and tested the same day with `./build.sh test`. It gave the same result:
+257 texture aborts, zygote_secondary restarting 129 times, and no `boot_completed`. The last
+good QEMU runs were on 2026-09-10, which had 14 to 36 aborts per boot but did complete. QEMU
+10.2.1 and virglrenderer 1.2.0 on the host have not changed since August. Between those dates
+there are about 15 graphics commits (minigbm 0010 and 0011, drm_hwcomposer 0001 and 0002, and
+zink). That regression is a separate job.
+
+Acceptance status after this run:
+- R1 and R2 (default entry): the image builds without `UBUNTU_IMG` with partitions 1 to 5
+  unchanged. On a default-entry boot, `vendor.ubuntu` is never started: logcat has no
+  launcher line. The only matches are `flags_health_check` opening the `vendor_ubuntu_prop`
+  property file, which it does for every property type. The boot-time comparison is still
+  open, because neither build completes boot in QEMU.
+- R3: met in the journal.
+- ssh, apt, the reboot, poweroff and crash cycle, and clean shutdown: all **open**. They need
+  either the QEMU regression fixed or the T7 on the laptop.
 
 ---
 
@@ -288,7 +392,7 @@ resolved. This follows the 09-multi-display rule: nothing here is inferred.
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| A neverallow rule blocks something systemd needs in an enforcing `ubuntu` domain | Medium | Find it in step 1 while permissive. Fallback: run that unit inside Ubuntu as masked. |
+| A neverallow rule blocks something systemd needs in an enforcing `ubuntu` domain | **Happened** (section 5): execute plus write on Ubuntu's own files | Step 2 picks option A, B or C |
 | `libprocessgroup` or lmkd interferes with the foreign cgroup subtree | Low to medium | Open item in 3.5. Check it with Android under memory pressure in step 2. |
 | Shared network namespace routing is wrong for unmarked traffic | Low | Already the Termux path. Fallback: veth option B. |
 | Ubuntu 24.04 systemd needs a kernel feature not listed in 3.10 | Low | Step 1 boots with `systemd.log_level=debug` and reads the failed units |
