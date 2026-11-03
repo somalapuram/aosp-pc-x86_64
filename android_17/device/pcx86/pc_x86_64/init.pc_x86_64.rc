@@ -438,6 +438,35 @@ service console /system/bin/sh
 on property:sys.boot_completed=1
     start pc-audio-setup
 
+# --- Ubuntu alongside Android ----------------------------------------------
+#
+# Full Ubuntu, systemd as PID 1 of its own PID/mount/UTS/IPC/cgroup namespaces,
+# on this kernel. See doc/10-ubuntu-alongside-android.md and
+# ubuntu/pc_ubuntu_launch.c.
+#
+# Only the "Android + Ubuntu" GRUB entry sets androidboot.ubuntu=1, so a normal
+# boot never starts this (requirement R1).
+#
+# oneshot: the launcher supervises systemd itself -- it tells a reboot inside
+# Ubuntu from a poweroff from a crash by how systemd died, which init cannot.
+# `stop vendor.ubuntu` sends SIGTERM; the launcher asks systemd to halt and
+# allows it 20 s. `start vendor.ubuntu` brings it back without a reboot.
+#
+# post-fs-data, not sys.boot_completed: nothing here needs /data or the
+# framework, and starting it after boot_completed would put Ubuntu's start in
+# the same seconds as pclauncher's. Revisit if boot time on the Ubuntu entry
+# regresses.
+service vendor.ubuntu /vendor/bin/pc_ubuntu_launch
+    class late_start
+    user root
+    group root
+    oneshot
+    disabled
+    seclabel u:r:ubuntu_launch:s0
+
+on post-fs-data && property:ro.boot.ubuntu=1
+    start vendor.ubuntu
+
 on property:ro.debuggable=1
     start console
 

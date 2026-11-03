@@ -113,6 +113,8 @@
 # and a USB/SATA install is sd*.
 /dev/block/(nvme0n1p4|sd[a-z]4)              u:object_r:metadata_block_device:s0
 /dev/block/(nvme0n1p5|sd[a-z]5)              u:object_r:userdata_block_device:s0
+# Partition 6 exists only on images built with UBUNTU_IMG (tools/mkdisk.sh).
+/dev/block/(nvme0n1p6|sd[a-z]6)              u:object_r:ubuntu_block_device:s0
 
 # Kernel-log capture destination (pc-kmsg-vendor). See sepolicy/file.te.
 /data/vendor/pc(/.*)?                        u:object_r:pc_debug_data_file:s0
@@ -122,3 +124,5 @@
 # this label init cannot entrypoint it and the service never starts.
 /vendor/bin/pc_audio_setup                   u:object_r:vendor_shell_exec:s0
 /vendor/bin/pc_v4l2_info                     u:object_r:vendor_shell_exec:s0
+/vendor/bin/pc_ubuntu_launch                 u:object_r:ubuntu_launch_exec:s0
+/vendor/bin/pc_ubuntu_init                   u:object_r:ubuntu_exec:s0

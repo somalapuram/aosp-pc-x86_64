@@ -149,3 +149,58 @@ cc_binary {
     vendor: true,
     cflags: ["-Wall", "-Werror"],
 }
+
+// Starts Ubuntu's systemd in its own namespaces and supervises it; the
+// vendor.ubuntu service in init.pc_x86_64.rc. See
+// doc/10-ubuntu-alongside-android.md. Off unless androidboot.ubuntu=1.
+cc_binary {
+    name: "pc_ubuntu_launch",
+    srcs: [
+        "ubuntu/pc_ubuntu_launch.c",
+        "ubuntu/ubuntu_lib.c",
+    ],
+    shared_libs: ["liblog"],
+    vendor: true,
+    cflags: ["-Wall", "-Werror"],
+}
+
+// The file the SELinux transition into the ubuntu domain happens on; see
+// ubuntu/pc_ubuntu_init.c. Freestanding and static: it runs inside the Ubuntu
+// root, which has no bionic linker, and there is no static vendor libc.
+cc_binary {
+    name: "pc_ubuntu_init",
+    srcs: ["ubuntu/pc_ubuntu_init.c"],
+    vendor: true,
+    static_executable: true,
+    nocrt: true,
+    system_shared_libs: [],
+    stl: "none",
+    sanitize: {
+        never: true,
+    },
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-ffreestanding",
+        "-fno-stack-protector",
+    ],
+    ldflags: ["-nostdlib"],
+    enabled: false,
+    arch: {
+        x86_64: {
+            enabled: true,
+        },
+    },
+}
+
+// Host tests for the launcher's decisions (ubuntu/ubuntu_lib.h). Also runnable
+// without Soong: ubuntu/run_tests.sh.
+cc_test_host {
+    name: "pc_ubuntu_launch_test",
+    srcs: [
+        "ubuntu/ubuntu_lib.c",
+        "ubuntu/ubuntu_lib_test.c",
+    ],
+    gtest: false,
+    cflags: ["-Wall", "-Werror"],
+}

@@ -1,0 +1,65 @@
+# Ubuntu alongside Android. See doc/10-ubuntu-alongside-android.md section 3.7.
+#
+#   ubuntu_launch   /vendor/bin/pc_ubuntu_launch, started by init (vendor.ubuntu)
+#   ubuntu          everything inside the Ubuntu namespaces, systemd down
+#   ubuntu_exec     /vendor/bin/pc_ubuntu_init, the door into ubuntu
+#   ubuntu_file     every file on the ubuntu partition, through the
+#                   context= mount option, so a foreign rootfs needs no
+#                   relabelling and no file_contexts entries
+#
+# STEP 1: both domains are permissive. That is allowed on userdebug only, keeps
+# every Android domain as it was, and lets the full set of denials be collected
+# with audit2allow from a real boot. Step 2 removes the two `permissive` lines
+# and replaces them with rules, each with a reason. Until then, the rules below
+# are the structure, not the whole policy.
+
+type ubuntu_launch, domain;
+type ubuntu_launch_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(ubuntu_launch)
+
+type ubuntu, domain;
+
+# Two file types, because one cannot do both jobs. private/domain.te lets a
+# vendor domain be entered only through a file that is exec_type AND
+# vendor_file_type:
+#     neverallow * { file_type -exec_type -postinstall_file }:file entrypoint;
+#     neverallow { domain -coredomain } { file_type -vendor_file_type -init_exec }:file entrypoint;
+# and forbids every domain to create, write, unlink or mount on such files
+# (domain.te:802, :810, :2286). That was tried first, with ubuntu_file carrying
+# both attributes, and checkpolicy rejected it on all three. Ubuntu's own files
+# must be writable (dpkg) and mountable (/proc, /sys, /dev are mounted on them),
+# so they get a plain type, and the entrypoint is a vendor binary instead.
+type ubuntu_exec, exec_type, vendor_file_type, file_type;
+type ubuntu_file, file_type;
+
+type ubuntu_block_device, dev_type;
+
+vendor_internal_prop(vendor_ubuntu_prop)
+
+# --- the launcher ------------------------------------------------------------
+allow ubuntu_launch ubuntu_block_device:blk_file rw_file_perms;
+allow ubuntu_launch ubuntu_file:filesystem { mount unmount relabelfrom relabelto };
+allow ubuntu_launch ubuntu_file:dir { search mounton };
+allow ubuntu_launch ubuntu_file:file { create write open unlink };
+allow ubuntu_launch ubuntu_exec:file { getattr open };
+set_prop(ubuntu_launch, vendor_ubuntu_prop)
+
+# Exec'ing the door moves the child out of the launcher's domain; the door
+# then execs systemd from the partition without a further transition.
+domain_auto_trans(ubuntu_launch, ubuntu_exec, ubuntu)
+
+# NOT allowed, and cannot be: `ubuntu` executing ubuntu_file. domain.te:1982
+# forbids every domain bar apps, shell and a few zygotes to execute any file
+# whose type is not system_file_type, vendor_file_type or exec_type -- and
+# domain.te:802 forbids writing files of exactly those types. So under stock
+# AOSP policy an enforcing domain cannot both run its binaries and let dpkg
+# replace them. Permissive (below) needs no rule, so step 1 is unaffected; step
+# 2 has to choose a way out. See doc/10-ubuntu-alongside-android.md section 5.
+
+# --- Ubuntu ------------------------------------------------------------------
+# Files on the context= mount carry its label, and the superblock does too.
+allow ubuntu_file self:filesystem associate;
+
+# step 1 only, see the top of this file
+permissive ubuntu_launch;
+permissive ubuntu;

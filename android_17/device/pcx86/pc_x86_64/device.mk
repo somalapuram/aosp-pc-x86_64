@@ -909,6 +909,15 @@ PRODUCT_SYSTEM_PROPERTIES += \
 PRODUCT_PACKAGES += \
     pc_audio_setup
 
+# Ubuntu alongside Android: the launcher Android init starts as vendor.ubuntu.
+# Inert on a normal boot -- the service is only started when the kernel command
+# line carries androidboot.ubuntu=1 (the "Android + Ubuntu" GRUB entry), and an
+# image built without UBUNTU_IMG has no ubuntu partition for it to mount. See
+# doc/10-ubuntu-alongside-android.md.
+PRODUCT_PACKAGES += \
+    pc_ubuntu_launch \
+    pc_ubuntu_init
+
 # Ethernet. This device really does have a wired NIC, and without the feature
 # EthernetService never configures eth0, so the guest has no IP at all:
 # nothing in logcat mentions eth0, DHCP or IpClient. That makes adb over TCP

@@ -3,6 +3,8 @@
 # vendor.pc.ran  - breadcrumb proving the detection script executed
 vendor.pc.    u:object_r:vendor_pc_gpu_prop:s0 prefix string
 
+vendor.ubuntu.    u:object_r:vendor_ubuntu_prop:s0 prefix string
+
 
 # Mesa's own Android options, read in-process by every GL client.
 # os_get_android_option() (os_misc.c:180-193) builds these names by lowercasing
