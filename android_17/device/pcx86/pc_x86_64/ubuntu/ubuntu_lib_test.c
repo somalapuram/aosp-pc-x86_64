@@ -233,6 +233,24 @@ static void test_default_gateway(void)
     CHECK(ub_default_gateway(buf, len - 4, out, sizeof(out)) == -1);
 }
 
+static void test_dns_next(void)
+{
+    /* Boot: no network yet. Write the fallback once, then wait -- and keep
+     * waiting, however many passes come back empty. */
+    CHECK(ub_dns_next("", "", 0) == UB_DNS_FALLBACK);
+    CHECK(ub_dns_next("", "", 1) == UB_DNS_WAIT);
+    CHECK(ub_dns_next(NULL, NULL, 1) == UB_DNS_WAIT);
+    CHECK(ub_dns_next(NULL, "", 1) == UB_DNS_WAIT);
+
+    /* WiFi comes up: the gateway is final, before or after the fallback. */
+    CHECK(ub_dns_next("", "192.168.0.1", 1) == UB_DNS_FINAL);
+    CHECK(ub_dns_next("", "192.168.0.1", 0) == UB_DNS_FINAL);
+
+    /* The property is final on its own, with or without a gateway. */
+    CHECK(ub_dns_next("9.9.9.9", "", 0) == UB_DNS_FINAL);
+    CHECK(ub_dns_next("9.9.9.9", NULL, 1) == UB_DNS_FINAL);
+}
+
 static void test_write_resolv(void)
 {
     char path[256], buf[1024];
@@ -303,6 +321,7 @@ int main(void)
     test_cgroup();
     test_cgroup_reset();
     test_default_gateway();
+    test_dns_next();
     test_write_resolv();
 
     if (failures) {

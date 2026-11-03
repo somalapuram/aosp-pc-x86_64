@@ -85,6 +85,21 @@ int ub_default_gateway(const void *buf, size_t len, char *out, size_t outlen);
  * regular file. Returns 0 or -errno.
  */
 #define UB_FALLBACK_DNS "1.1.1.1"
+
+/*
+ * What one DNS pass should do, given the vendor.ubuntu.dns property, the
+ * gateway found (either may be empty or NULL) and whether the fallback-only
+ * file has already been written:
+ *   UB_DNS_FINAL     write servers/gateway, stop looking
+ *   UB_DNS_FALLBACK  write the fallback-only file once, keep looking
+ *   UB_DNS_WAIT      nothing new to write, keep looking
+ * Kept here, not in the launcher, because the launcher's first version got
+ * it wrong: its second pass with no network treated "nothing found" as
+ * final, and a whole boot on the HP laptop had only 1.1.1.1, which does
+ * not answer there.
+ */
+enum ub_dns { UB_DNS_FINAL, UB_DNS_FALLBACK, UB_DNS_WAIT };
+enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written);
 int ub_write_resolv(const char *path, const char *servers, const char *gateway);
 
 #endif

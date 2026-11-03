@@ -75,6 +75,7 @@
 
 static volatile sig_atomic_t g_term, g_alarm;
 static int g_dns_final;     /* resolv.conf has its real servers, stop looking */
+static int g_dns_fallback;  /* the fallback-only file has been written */
 
 static void on_term(int sig) { (void)sig; g_term = 1; }
 static void on_alarm(int sig) { (void)sig; g_alarm = 1; }
@@ -350,15 +351,17 @@ static int setup_dns(void)
     __system_property_get("vendor.ubuntu.dns", servers);
     if (!*servers && find_gateway(gw, sizeof(gw)) < 0)
         gw[0] = '\0';
-    if (!*servers && !*gw && g_dns_final >= 0) {
-        /* Nothing better than the fallback yet; write it once. */
-        if (g_dns_final == 0) {
-            if ((err = ub_write_resolv(UBUNTU_ROOT "/etc/resolv.conf", NULL, NULL)) < 0)
-                ALOGW("resolv.conf: %s", strerror(-err));
-            ALOGI("dns: %s for now, no network yet", UB_FALLBACK_DNS);
-            g_dns_final = -1;
-        }
+    switch (ub_dns_next(servers, gw, g_dns_fallback)) {
+    case UB_DNS_WAIT:
         return 0;
+    case UB_DNS_FALLBACK:
+        if ((err = ub_write_resolv(UBUNTU_ROOT "/etc/resolv.conf", NULL, NULL)) < 0)
+            ALOGW("resolv.conf: %s", strerror(-err));
+        ALOGI("dns: %s for now, no network yet", UB_FALLBACK_DNS);
+        g_dns_fallback = 1;
+        return 0;
+    case UB_DNS_FINAL:
+        break;
     }
     err = ub_write_resolv(UBUNTU_ROOT "/etc/resolv.conf", servers, gw);
     if (err < 0) {
@@ -415,7 +418,7 @@ static int wait_ubuntu(pid_t pid)
 {
     int status, asked = 0;
 
-    if (!g_dns_final || g_dns_final < 0)
+    if (!g_dns_final)
         alarm(DNS_RECHECK);
     for (;;) {
         if (g_alarm && !asked) {

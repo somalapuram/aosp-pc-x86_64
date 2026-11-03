@@ -192,6 +192,13 @@ int ub_default_gateway(const void *buf, size_t len, char *out, size_t outlen)
     return -1;
 }
 
+enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written)
+{
+    if ((servers && *servers) || (gateway && *gateway))
+        return UB_DNS_FINAL;
+    return fallback_written ? UB_DNS_WAIT : UB_DNS_FALLBACK;
+}
+
 /* snprintf at text+*used, never past the end even when an earlier call was cut short. */
 static void append(char *text, size_t size, size_t *used, const char *fmt, const char *arg)
 {

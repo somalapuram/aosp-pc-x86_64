@@ -267,9 +267,8 @@ Each step ends with an image that boots and with every box ticked before the nex
   - [x] Inside Ubuntu, `reboot` restarts it and `poweroff` stops it. A crash, `kill -9 <systemd>`
         from Android, is restarted by the backoff. Android stays up through all three (R4, R5).
         Not `kill -SEGV 1`: systemd catches SIGSEGV as PID 1 and freezes rather than exiting.
-  - [ ] Shutting Android down halts Ubuntu gracefully, and ext4 is clean on the next boot (R8).
-        ext4: clean. Graceful halt: from Android yes (77 ms); on Android's own shutdown, fix
-        written, not yet verified.
+  - [x] Shutting Android down halts Ubuntu gracefully, and ext4 is clean on the next boot (R8).
+        HP laptop: init waited 0.218 s for the halt, and the journal reaches `halt.target`.
 
 ### Step 2: good neighbour (1 week)
 
@@ -435,9 +434,30 @@ cgroup. Ubuntu's processes are all outside one, so systemd gets the signal direc
 PID 1 that means re-execute. 3 s later everything is SIGKILLed. ext4 still came up clean on the
 next boot, with no journal recovery message, because the kernel unmounts the filesystem when
 the last process in its mount namespace dies. But it is not a clean shutdown of Ubuntu. Fix,
-written and **not yet verified on hardware**: `on shutdown && property:vendor.ubuntu.state=running
-→ exec_start vendor.ubuntu-halt`. `on shutdown` runs before the built-in `shutdown_done` that
-calls DoReboot, and `exec_start` makes init wait.
+`on shutdown && property:vendor.ubuntu.state=running → exec_start vendor.ubuntu-halt`.
+`on shutdown` runs before the built-in `shutdown_done` that calls DoReboot, and `exec_start`
+makes init wait.
+
+**Verified on the second reboot.** The first reboot after pushing the rc still shut down with the
+old one, because init reads rc files only at boot. The log went straight from `Clear action
+queue and start shutdown trigger` to `shutdown_done`. On the next reboot:
+
+    init: starting service 'vendor.ubuntu-halt'...
+    init: SVC_EXEC service 'vendor.ubuntu-halt' pid 2804 (... u:r:ubuntu_launch:s0) started; waiting...
+    pc_ubuntu_launch: stopping: asking systemd to halt
+    pc_ubuntu_launch: state stopped
+    init: Service 'vendor.ubuntu-halt' (pid 2804) exited with status 0 waiting took 0.218000 seconds
+    init: processing action (shutdown_done)
+
+Ubuntu's journal ends with `Reached target shutdown.target`, `Finished systemd-halt.service`,
+`Reached target halt.target` and `Shutting down.`, a complete halt. sda6 mounted clean on the
+next boot.
+
+**Bug 7, found on that same boot.** The DNS recheck (fix 3) gave up on its second pass. With no
+network yet, it treated "nothing found" as final and logged `dns: ` with nothing after it, so the
+boot kept only `1.1.1.1`, and Ubuntu had no DNS. The decision now lives in
+`ub_dns_next()` in ubuntu_lib, with a test for repeated empty passes. Not yet re-verified on a
+boot.
 
 ---
 
