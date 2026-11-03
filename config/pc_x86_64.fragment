@@ -52,6 +52,23 @@ CONFIG_CFS_BANDWIDTH=y
 CONFIG_CPUSETS_V1=y
 CONFIG_MEMCG_V1=y
 
+# --- Ubuntu alongside Android (doc/10-ubuntu-alongside-android.md) ---------
+# systemd as PID 1 of a namespace on this kernel, started by Android init.
+#
+# FHANDLE is a hard requirement: systemd tracks mounts with
+# name_to_handle_at() and will not boot without it. It also makes
+# open_by_handle_at() reachable, which can walk out of a mount namespace with
+# CAP_DAC_READ_SEARCH -- pc_ubuntu_launch drops that capability for this reason.
+#
+# USER_NS is not needed to boot Ubuntu, but without it unit sandboxing
+# (PrivateUsers=), Flatpak and rootless containers degrade or fail. Android's
+# own policy does not use user namespaces; step 2 of the plan re-checks the
+# exposure.
+#
+# Both are inert for Android, and are the only kernel change Ubuntu needs.
+CONFIG_FHANDLE=y
+CONFIG_USER_NS=y
+
 # --- Filesystems -----------------------------------------------------------
 # Android 17 system/vendor images are erofs; /data is ext4 or f2fs.
 CONFIG_EROFS_FS=y
