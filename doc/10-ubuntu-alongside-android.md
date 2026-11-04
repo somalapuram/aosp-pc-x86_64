@@ -417,6 +417,17 @@ Four problems found on the way:
 Also masked: `netplan-configure.service`, which is new in 26.04, fails here, and would
 configure Android's interfaces.
 
+**Hot-plugged mice and keyboards, 2026-11-04.**
+- **The problem:** a USB mouse plugged in did nothing in GNOME. Only the
+  `vendor.ubuntu.input` devices were copied, and GNOME cannot learn of later devices, because
+  there is no udev.
+- **The fix:** the launcher makes two generic copies at start, `pc-ubuntu-input-6` (a pointer)
+  and `pc-ubuntu-input-7` (a keyboard). It watches `/dev/input` with inotify. New devices that
+  `ub_classify()` calls a pointer or a keyboard are grabbed with the rest, and their events are
+  routed by `ub_route()` into the generic copies. Both functions are tested.
+- **Result:** the SIGMACHIP USB mouse was found as a pointer, and the user confirmed it works in
+  GNOME.
+
 **M4. Sound bridge. Working on the ZBook, 2026-11-04: the user heard Ubuntu's sound on the
 laptop speakers (first run by hand).**
 - **Ubuntu:** `tools/ubuntu-rootfs/etc/pipewire/pipewire.conf.d/pc-android.conf` makes a virtual
