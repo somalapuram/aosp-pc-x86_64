@@ -1,0 +1,13 @@
+[Unit]
+Description=Tell Android when Ubuntu is recording (microphone bridge)
+Documentation=file:/usr/local/bin/pc-mic-gate
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+ExecStart=/usr/local/bin/pc-mic-gate
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

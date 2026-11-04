@@ -17,6 +17,13 @@
  * digital silence the stream is paused, so Android's output can go to
  * standby; the first non-zero sample starts it again.
  *
+ * The microphone goes the other way, and only on demand: Android owns the
+ * mic, and recording it while nothing in Ubuntu listens would keep Android's
+ * mic-in-use indicator lit for nothing. Ubuntu's pc-mic-gate says "1" or "0"
+ * on 127.0.0.1:4713 as recorders come and go; while it says 1, a second thread
+ * records with AAudio and sends mono 48 kHz into 127.0.0.1:4712, which
+ * PipeWire plays into the "Android microphone" source.
+ *
  * A system_ext binary, not vendor: libaaudio is a framework library.
  */
 
@@ -27,6 +34,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -37,6 +45,8 @@
 #include "ubuntu_lib.h"
 
 #define PORT             4711
+#define MIC_PORT         4712
+#define GATE_PORT        4713
 #define RATE             48000
 #define CHANNELS         2
 #define FRAMES           480                 /* 10 ms per write */
@@ -70,9 +80,9 @@ static AAudioStream *open_stream(void)
     return s;
 }
 
-static int connect_ubuntu(void)
+static int connect_port(int port)
 {
-    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons(PORT) };
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port) };
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0), one = 1;
 
     if (fd < 0)
@@ -139,13 +149,101 @@ static void play(int fd)
     AAudioStream_close(s);
 }
 
+/* ------------------------------------------------------------ microphone - */
+
+static AAudioStream *open_mic(void)
+{
+    AAudioStreamBuilder *b = NULL;
+    AAudioStream *s = NULL;
+    aaudio_result_t r;
+
+    if ((r = AAudio_createStreamBuilder(&b)) != AAUDIO_OK)
+        return NULL;
+    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
+    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setChannelCount(b, 1);
+    AAudioStreamBuilder_setSampleRate(b, RATE);
+    AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_GENERIC);
+    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    r = AAudioStreamBuilder_openStream(b, &s);
+    AAudioStreamBuilder_delete(b);
+    if (r != AAUDIO_OK) {
+        ALOGE("AAudio mic open: %s", AAudio_convertResultToText(r));
+        return NULL;
+    }
+    if ((r = AAudioStream_requestStart(s)) != AAUDIO_OK) {
+        ALOGE("AAudio mic start: %s", AAudio_convertResultToText(r));
+        AAudioStream_close(s);
+        return NULL;
+    }
+    ALOGI("microphone open for Ubuntu: %d Hz, %d ch", AAudioStream_getSampleRate(s),
+          AAudioStream_getChannelCount(s));
+    return s;
+}
+
+/* Record into Ubuntu until the gate says 0 (or a socket goes away). */
+static void record(int gate)
+{
+    int16_t pcm[FRAMES];
+    char c;
+    int out = connect_port(MIC_PORT);
+    AAudioStream *s = out >= 0 ? open_mic() : NULL;
+
+    while (s) {
+        aaudio_result_t n = AAudioStream_read(s, pcm, FRAMES, 200 * 1000 * 1000LL);
+        if (n < 0)
+            break;
+        if (n > 0 && write(out, pcm, (size_t)n * sizeof(pcm[0])) < 0)
+            break;
+        /* Gate changes arrive as single lines; a non-blocking peek. */
+        if (recv(gate, &c, 1, MSG_DONTWAIT) == 1) {
+            if (c == '0')
+                break;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            break;
+        }
+    }
+    if (s) {
+        AAudioStream_requestStop(s);
+        AAudioStream_close(s);
+        ALOGI("microphone closed: nothing in Ubuntu is recording");
+    }
+    if (out >= 0)
+        close(out);
+}
+
+static void *mic_main(void *unused)
+{
+    char c;
+    int gate;
+
+    (void)unused;
+    for (;;) {
+        if ((gate = connect_port(GATE_PORT)) < 0) {
+            sleep(2);
+            continue;
+        }
+        ALOGI("following Ubuntu's mic gate");
+        while (read(gate, &c, 1) == 1)
+            if (c == '1')
+                record(gate);
+        close(gate);
+        sleep(1);
+    }
+    return NULL;
+}
+
 int main(void)
 {
     int fd, waited = 0;
+    pthread_t mic;
+
+    if (pthread_create(&mic, NULL, mic_main, NULL) == 0)
+        pthread_detach(mic);
 
     ALOGI("waiting for Ubuntu's sound on 127.0.0.1:%d", PORT);
     for (;;) {
-        if ((fd = connect_ubuntu()) < 0) {
+        if ((fd = connect_port(PORT)) < 0) {
             if (waited++ == 30)
                 ALOGW("still no sound server on 127.0.0.1:%d (is Ubuntu's PipeWire up?)", PORT);
             sleep(2);

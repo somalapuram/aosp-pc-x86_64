@@ -1,0 +1,110 @@
+#!/usr/bin/python3
+"""pc-mic-gate -- tell Android when something in Ubuntu is recording.
+
+Ubuntu alongside Android, step 3 M4 (doc/10-ubuntu-alongside-android.md).
+Android owns the microphone. Its pc_ubuntu_audio service records it and sends
+the samples into "Android microphone", a virtual PipeWire source here
+(pipewire.conf.d/pc-android.conf). It must only record while some program in
+Ubuntu is actually listening: recording all the time would keep Android's
+mic-in-use indicator lit and the laptop's microphone open for nothing.
+
+So this watches PipeWire for links out of that source -- a recorder is a link
+whose output node is the source -- and serves the answer on 127.0.0.1:4713:
+one line, "1" or "0", on connect and again on every change. Loopback only;
+Ubuntu shares Android's network namespace, so nothing outside the machine can
+reach it.
+
+    pc-mic-gate              run (a systemd user service)
+    pc-mic-gate --self-test  check recorders() against sample pw-dump output
+"""
+
+import json
+import select
+import socket
+import subprocess
+import sys
+import time
+
+SOURCE = "pc-android-mic"
+ADDR = ("127.0.0.1", 4713)
+POLL_S = 0.5
+
+
+def recorders(dump, source=SOURCE):
+    """How many links take audio out of the node named `source`, in a parsed
+    `pw-dump`. 0 if the node does not exist."""
+    ids = {o["id"] for o in dump
+           if o.get("type") == "PipeWire:Interface:Node"
+           and o.get("info", {}).get("props", {}).get("node.name") == source}
+    return sum(1 for o in dump
+               if o.get("type") == "PipeWire:Interface:Link"
+               and o.get("info", {}).get("output-node-id") in ids)
+
+
+def snapshot():
+    try:
+        out = subprocess.run(["pw-dump"], capture_output=True, timeout=5, check=True).stdout
+        return json.loads(out or b"[]")
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return []
+
+
+def serve():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(ADDR)
+    srv.listen(2)
+    clients, state = [], None
+    while True:
+        r, _, _ = select.select([srv], [], [], POLL_S)
+        new = recorders(snapshot()) > 0
+        if r:
+            c, _ = srv.accept()
+            clients.append(c)
+            state = None                        # tell the newcomer at once
+        if new != state:
+            state = new
+            line = b"1\n" if state else b"0\n"
+            for c in clients[:]:
+                try:
+                    c.sendall(line)
+                except OSError:
+                    clients.remove(c)
+                    c.close()
+            print(f"pc-mic-gate: {'recording' if state else 'idle'}", flush=True)
+
+
+def self_test():
+    node = lambda i, name: {"id": i, "type": "PipeWire:Interface:Node",
+                            "info": {"props": {"node.name": name}}}
+    link = lambda out, inp: {"id": 100 + out * 10 + inp, "type": "PipeWire:Interface:Link",
+                             "info": {"output-node-id": out, "input-node-id": inp}}
+    mic, rec, sink = node(1, SOURCE), node(2, "chrome-recorder"), node(3, "pc-android")
+    feeder = node(4, "protocol-simple-playback")
+    cases = [
+        ([], 0),                                        # PipeWire not up
+        ([sink, link(3, 2)], 0),                        # no mic node at all
+        ([mic, feeder, link(4, 1)], 0),                 # only Android feeding it
+        ([mic, rec, link(1, 2)], 1),                    # one recorder
+        ([mic, rec, feeder, link(4, 1), link(1, 2), link(1, 5)], 2),   # two
+        ([mic, rec, link(1, 2), {"type": "PipeWire:Interface:Link", "info": {}}], 1),
+    ]
+    bad = 0
+    for dump, want in cases:
+        got = recorders(dump)
+        if got != want:
+            print(f"FAIL: want {want}, got {got} for {dump}")
+            bad += 1
+    print("pc-mic-gate: self-test", "failed" if bad else "passed")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        sys.exit(self_test())
+    while True:
+        try:
+            serve()
+        except OSError as e:                    # e.g. port not free yet
+            print(f"pc-mic-gate: {e}; retrying", flush=True)
+            time.sleep(2)
