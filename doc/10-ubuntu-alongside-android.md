@@ -387,7 +387,10 @@ The design as planned:
   system-owned property type that vendor may read, and a small vendor AIDL service. It is
   decided at the start of M3.
 
-**M3 on the ZBook, 2026-11-04, after Ubuntu was upgraded to 26.04.1 (systemd 259, GNOME 50.1).**
+**M3 done on the ZBook, 2026-11-04.** The user confirmed: Ctrl+Alt+F2 and Ctrl+Alt+F1 switch
+the panel between GNOME and Android, and the keyboard works in GNOME.
+
+**Details of that run (Ubuntu upgraded to 26.04.1 first: systemd 259, GNOME 50.1).**
 - The launcher made `pc-ubuntu-input-0..2` (event15 to 17) from event5, event13 and event14.
   Android logged `EventHub: ignoring event id /dev/input/event15 driver pc-ubuntu-input-0` for
   each, and gnome-shell holds only the copies.
