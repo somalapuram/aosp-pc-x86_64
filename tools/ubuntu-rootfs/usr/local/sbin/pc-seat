@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# pc-seat ubuntu|android -- give seat0 to GNOME, or take it away again.
+#
+# Run by pc_ubuntu_launch inside this container on a screen switch
+# (Ctrl+Alt+F2 / Ctrl+Alt+F1, or setprop vendor.ubuntu.screen). seat0 has no
+# VTs, so switching is done the way gdm does it on such a seat: two logind
+# sessions on seat0, and `loginctl activate` on the one that should have the
+# screen. logind then sets or drops DRM master for GNOME and pauses or resumes
+# its input devices.
+#
+#   pc-gnome.service         the GNOME session
+#   pc-android-seat.service  a placeholder session, active while Android has
+#                            the screen
+#
+# Android's own side (drm_hwcomposer giving up master, input grabbed) is the
+# launcher's; it calls this after releasing the screen and before taking it.
+set -eu
+
+# The seat0 session whose leader runs in the given unit.
+session_of() {
+    loginctl list-sessions --no-legend | while read -r id _uid _user seat _rest; do
+        [ "$seat" = seat0 ] || continue
+        leader=$(loginctl show-session "$id" -p Leader --value)
+        if grep -q "/$1\$" "/proc/$leader/cgroup" 2>/dev/null; then
+            echo "$id"
+            return
+        fi
+    done
+}
+
+wait_session() {
+    i=0
+    while [ $i -lt 50 ]; do
+        s=$(session_of "$1")
+        [ -n "$s" ] && { echo "$s"; return 0; }
+        sleep 0.1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+case "${1:-}" in
+ubuntu)
+    systemctl is-active -q pc-android-seat.service || systemctl start pc-android-seat.service
+    systemctl is-active -q pc-gnome.service || systemctl start pc-gnome.service
+    s=$(wait_session pc-gnome.service) || { echo "pc-seat: no GNOME session" >&2; exit 1; }
+    loginctl activate "$s"
+    ;;
+android)
+    systemctl is-active -q pc-android-seat.service || systemctl start pc-android-seat.service
+    s=$(wait_session pc-android-seat.service) || { echo "pc-seat: no placeholder session" >&2; exit 1; }
+    loginctl activate "$s"
+    ;;
+*)
+    echo "usage: pc-seat ubuntu|android" >&2
+    exit 2
+    ;;
+esac

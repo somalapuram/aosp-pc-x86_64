@@ -52,6 +52,7 @@
 
 #include <log/log.h>
 
+#include "pc_ubuntu_input.h"
 #include "ubuntu_lib.h"
 
 #define UBUNTU_DEV   "/dev/block/by-name/ubuntu"
@@ -74,6 +75,9 @@
 #define DNS_RECHECK  10     /* seconds between gateway lookups until one is found */
 
 static volatile sig_atomic_t g_term, g_alarm;
+static volatile pid_t g_systemd_pid;    /* read by the input thread on a switch */
+static char g_extra_dev[8][UB_DEV_LEN]; /* uinput copies from pc_ubuntu_input */
+static int g_n_extra;
 static int g_dns_final;     /* resolv.conf has its real servers, stop looking */
 static int g_dns_fallback;  /* the fallback-only file has been written */
 
@@ -165,13 +169,15 @@ static int readonly_at(const char *root, const char *rel)
  */
 static int pass_devices(const char *root)
 {
-    char value[PROP_VALUE_MAX] = "", list[8][UB_DEV_LEN], src[96], dst[256], *slash;
+    char value[PROP_VALUE_MAX] = "", list[16][UB_DEV_LEN], src[96], dst[256], *slash;
     struct stat st;
     int n, i, rejected = 0;
 
     if (__system_property_get("vendor.ubuntu.devices", value) <= 0)
         snprintf(value, sizeof(value), "%s", UB_DEV_DEFAULT);
     n = ub_parse_devices(value, list, 8, &rejected);
+    for (i = 0; i < g_n_extra && n < 16; i++)
+        snprintf(list[n++], UB_DEV_LEN, "%s", g_extra_dev[i]);
     if (rejected)
         ALOGW("vendor.ubuntu.devices: %d entr%s rejected in \"%s\"", rejected,
               rejected == 1 ? "y" : "ies", value);
@@ -455,6 +461,7 @@ static pid_t start_ubuntu(int init_fd)
         ALOGE("release child: %s", strerror(errno));
     close(pfd[1]);
     ALOGI("systemd started, pid %d", pid);
+    g_systemd_pid = pid;
     snprintf(num, sizeof(num), "%d", (int)getpid());
     __system_property_set("vendor.ubuntu.pid", num);
     return pid;
@@ -578,6 +585,8 @@ int main(int argc, char **argv)
         return 1;
     }
     setup_dns();
+    g_n_extra = ui_setup(g_extra_dev, 8);
+    ui_start(&g_systemd_pid);
     init_fd = open(UBUNTU_INIT, O_PATH | O_CLOEXEC);
     if (init_fd < 0) {
         ALOGE("open %s: %s", UBUNTU_INIT, strerror(errno));
@@ -595,6 +604,8 @@ int main(int argc, char **argv)
         }
         set_state("running");
         status = wait_ubuntu(pid);
+        g_systemd_pid = 0;
+        ui_reset_to_android();      /* never leave Android without its screen */
         wait_cgroup_empty();
         if (g_term)
             break;

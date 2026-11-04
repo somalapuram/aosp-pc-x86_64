@@ -7,6 +7,7 @@
 #include "ubuntu_lib.h"
 
 #include <arpa/inet.h>
+#include <linux/input-event-codes.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/netlink.h>
@@ -293,6 +294,70 @@ static void test_parse_devices(void)
     CHECK(ub_parse_devices(NULL, out, 4, NULL) == 0);
 }
 
+#define K(code, value) ub_combo_feed(&c, EV_KEY, (code), (value))
+
+static void test_combo(void)
+{
+    struct ub_combo c = { 0 };
+
+    /* Ctrl+Alt+F2, then letting go: Ubuntu, on the LAST modifier release. */
+    CHECK(K(KEY_LEFTCTRL, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTALT, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTALT, 0) == UB_SWITCH_NONE);    /* Ctrl still down */
+    CHECK(K(KEY_LEFTCTRL, 0) == UB_SWITCH_UBUNTU);
+    CHECK(c.pending == UB_SWITCH_NONE);
+
+    /* Right-hand modifiers, F1, released in the other order: Android. */
+    CHECK(K(KEY_RIGHTALT, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_RIGHTCTRL, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F1, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_RIGHTCTRL, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F1, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_RIGHTALT, 0) == UB_SWITCH_ANDROID);
+
+    /* Not a combo: F2 alone, Ctrl+F2, Alt+F2, and an autorepeat of F2. */
+    CHECK(K(KEY_F2, 1) == UB_SWITCH_NONE && c.pending == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTCTRL, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 1) == UB_SWITCH_NONE && c.pending == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTCTRL, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTALT, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 1) == UB_SWITCH_NONE && c.pending == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTCTRL, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 2) == UB_SWITCH_NONE && c.pending == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTCTRL, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTALT, 0) == UB_SWITCH_NONE);
+
+    /* Mixed hands count: left Ctrl + right Alt. Last combo pressed wins. */
+    CHECK(K(KEY_LEFTCTRL, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_RIGHTALT, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F2, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_F1, 1) == UB_SWITCH_NONE);
+    CHECK(K(KEY_RIGHTALT, 0) == UB_SWITCH_NONE);
+    CHECK(K(KEY_LEFTCTRL, 0) == UB_SWITCH_ANDROID);
+
+    /* Other event types and keys are ignored entirely. */
+    CHECK(ub_combo_feed(&c, EV_REL, 0, 5) == UB_SWITCH_NONE);
+    CHECK(K(KEY_A, 1) == UB_SWITCH_NONE && K(KEY_A, 0) == UB_SWITCH_NONE);
+}
+
+static void test_parse_inputs(void)
+{
+    char out[4][UB_INPUT_LEN];
+    int bad;
+
+    CHECK(ub_parse_inputs("event5,event13 event14", out, 4, &bad) == 3 && bad == 0);
+    CHECK(strcmp(out[2], "event14") == 0);
+    CHECK(ub_parse_inputs("event", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_inputs("event1234", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_inputs("event5x", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_inputs("../event5", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_inputs("mouse0,event1", out, 4, &bad) == 1 && bad == 1);
+    CHECK(ub_parse_inputs("event1 event2 event3", out, 2, &bad) == 2 && bad == 1);
+    CHECK(ub_parse_inputs(NULL, out, 4, NULL) == 0);
+}
+
 static void test_write_resolv(void)
 {
     char path[256], buf[1024];
@@ -365,6 +430,8 @@ int main(void)
     test_default_gateway();
     test_dns_next();
     test_parse_devices();
+    test_combo();
+    test_parse_inputs();
     test_write_resolv();
 
     if (failures) {

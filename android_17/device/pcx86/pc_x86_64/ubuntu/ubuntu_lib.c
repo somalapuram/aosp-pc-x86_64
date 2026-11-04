@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input-event-codes.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <signal.h>
@@ -242,6 +243,56 @@ int ub_parse_devices(const char *spec, char out[][UB_DEV_LEN], int max, int *rej
             continue;
         }
         snprintf(out[n++], UB_DEV_LEN, "%s", tok);
+    }
+    if (rejected)
+        *rejected = bad;
+    return n;
+}
+
+enum ub_switch ub_combo_feed(struct ub_combo *c, int type, int code, int value)
+{
+    int down = value != 0;          /* 1 press, 2 autorepeat, 0 release */
+    enum ub_switch out;
+
+    if (type != EV_KEY)
+        return UB_SWITCH_NONE;
+    switch (code) {
+    case KEY_LEFTCTRL:  c->lctrl = down; break;
+    case KEY_RIGHTCTRL: c->rctrl = down; break;
+    case KEY_LEFTALT:   c->lalt = down;  break;
+    case KEY_RIGHTALT:  c->ralt = down;  break;
+    case KEY_F1:
+    case KEY_F2:
+        if (value == 1 && (c->lctrl || c->rctrl) && (c->lalt || c->ralt))
+            c->pending = code == KEY_F1 ? UB_SWITCH_ANDROID : UB_SWITCH_UBUNTU;
+        return UB_SWITCH_NONE;
+    default:
+        return UB_SWITCH_NONE;
+    }
+    if (c->pending == UB_SWITCH_NONE || c->lctrl || c->rctrl || c->lalt || c->ralt)
+        return UB_SWITCH_NONE;
+    out = c->pending;
+    c->pending = UB_SWITCH_NONE;
+    return out;
+}
+
+int ub_parse_inputs(const char *spec, char out[][UB_INPUT_LEN], int max, int *rejected)
+{
+    char copy[256], *tok, *save = NULL;
+    int n = 0, bad = 0;
+    size_t len;
+
+    if (!spec)
+        spec = "";
+    snprintf(copy, sizeof(copy), "%s", spec);
+    for (tok = strtok_r(copy, " ,", &save); tok; tok = strtok_r(NULL, " ,", &save)) {
+        len = strlen(tok);
+        if (len < 6 || len > 8 || strncmp(tok, "event", 5) ||
+            strspn(tok + 5, "0123456789") != len - 5 || n >= max) {
+            bad++;
+            continue;
+        }
+        snprintf(out[n++], UB_INPUT_LEN, "%s", tok);
     }
     if (rejected)
         *rejected = bad;

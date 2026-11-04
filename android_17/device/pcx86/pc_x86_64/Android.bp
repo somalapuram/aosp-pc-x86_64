@@ -157,6 +157,7 @@ cc_binary {
     name: "pc_ubuntu_launch",
     srcs: [
         "ubuntu/pc_ubuntu_launch.c",
+        "ubuntu/pc_ubuntu_input.c",
         "ubuntu/ubuntu_lib.c",
     ],
     shared_libs: ["liblog"],

@@ -1,0 +1,18 @@
+# The session that is active on seat0 while Android has the screen.
+#
+# Switching away from GNOME on a seat without VTs means activating another
+# session on that seat: logind then drops GNOME's DRM master and pauses its
+# input devices. This is that other session -- it does nothing but exist.
+# See /usr/local/sbin/pc-seat and doc/10 step 3 M3.
+[Unit]
+Description=Placeholder seat0 session while Android has the screen
+After=systemd-logind.service pc-udev-shim.service systemd-user-sessions.service
+
+[Service]
+User=amar
+PAMName=login
+Environment=XDG_SEAT=seat0 XDG_SESSION_TYPE=unspecified XDG_SESSION_CLASS=user
+ExecStart=/bin/sleep infinity
+
+[Install]
+WantedBy=multi-user.target

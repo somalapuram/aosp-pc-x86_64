@@ -185,8 +185,11 @@ printf '[Journal]\nSystemMaxUse=200M\n' > "$root/etc/systemd/journald.conf.d/siz
 # This project's own files, and the udev shim enabled (it only acts on the
 # device nodes the launcher passed in, so it is harmless without a display).
 cp -a "$work/overlay/." "$root/"
-chown -R 0:0 "$root/usr/local/sbin/pc-udev-shim" "$root/etc/systemd/system/pc-udev-shim.service" \
-    "$root/etc/systemd/system/pc-gnome.service"
+chown 0:0 "$root/usr/local/sbin/pc-udev-shim" "$root/usr/local/sbin/pc-seat" \
+    "$root/etc/systemd/system/pc-udev-shim.service" "$root/etc/systemd/system/pc-gnome.service" \
+    "$root/etc/systemd/system/pc-android-seat.service"
+mkdir -p "$root/etc/systemd/system/multi-user.target.wants"
+ln -sf ../pc-android-seat.service "$root/etc/systemd/system/multi-user.target.wants/pc-android-seat.service"
 mkdir -p "$root/etc/systemd/system/sysinit.target.wants"
 ln -sf ../pc-udev-shim.service "$root/etc/systemd/system/sysinit.target.wants/pc-udev-shim.service"
 

@@ -117,4 +117,26 @@ int ub_write_resolv(const char *path, const char *servers, const char *gateway);
 #define UB_DEV_DEFAULT "dri/renderD128"
 int ub_parse_devices(const char *spec, char out[][UB_DEV_LEN], int max, int *rejected);
 
+/*
+ * Screen switching (doc/10 step 3 M3). The launcher reads the real keyboard
+ * in both states and feeds every event here. Ctrl+Alt+F2 asks for Ubuntu,
+ * Ctrl+Alt+F1 for Android. The answer is given only once Ctrl and Alt have
+ * both been released after the combo, so the side losing the keyboard has
+ * seen every key go up again and is left with no stuck modifier.
+ */
+enum ub_switch { UB_SWITCH_NONE, UB_SWITCH_ANDROID, UB_SWITCH_UBUNTU };
+struct ub_combo {
+    unsigned lctrl : 1, rctrl : 1, lalt : 1, ralt : 1;
+    enum ub_switch pending;
+};
+enum ub_switch ub_combo_feed(struct ub_combo *c, int type, int code, int value);
+
+/*
+ * vendor.ubuntu.input: the real input devices to share with Ubuntu, by event
+ * node name, e.g. "event5,event13,event14". Only "event" plus 1-3 digits is
+ * accepted. Same contract as ub_parse_devices().
+ */
+#define UB_INPUT_LEN 16
+int ub_parse_inputs(const char *spec, char out[][UB_INPUT_LEN], int max, int *rejected);
+
 #endif

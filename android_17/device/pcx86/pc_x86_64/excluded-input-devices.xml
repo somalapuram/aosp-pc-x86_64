@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Input devices Android must never open: the uinput copies pc_ubuntu_launch
+  makes of the keyboard, touchpad and mouse for Ubuntu's GNOME
+  (ubuntu/pc_ubuntu_input.c). The launcher forwards real events to them only
+  while Ubuntu has the screen; if Android read them too, it would see those
+  keys a second time. Names must match exactly (EventHub::openDeviceLocked).
+  Read once at boot by InputManagerService from /vendor/etc.
+-->
+<devices>
+    <device name="pc-ubuntu-input-0" />
+    <device name="pc-ubuntu-input-1" />
+    <device name="pc-ubuntu-input-2" />
+    <device name="pc-ubuntu-input-3" />
+    <device name="pc-ubuntu-input-4" />
+    <device name="pc-ubuntu-input-5" />
+    <device name="pc-ubuntu-input-6" />
+    <device name="pc-ubuntu-input-7" />
+</devices>

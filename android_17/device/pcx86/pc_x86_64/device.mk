@@ -918,6 +918,11 @@ PRODUCT_PACKAGES += \
     pc_ubuntu_launch \
     pc_ubuntu_init
 
+# The uinput copies of the keyboard and touchpad that the launcher makes for
+# Ubuntu's GNOME must never be opened by Android (ubuntu/pc_ubuntu_input.c).
+PRODUCT_COPY_FILES += \
+    device/pcx86/pc_x86_64/excluded-input-devices.xml:$(TARGET_COPY_OUT_VENDOR)/etc/excluded-input-devices.xml
+
 # Ethernet. This device really does have a wired NIC, and without the feature
 # EthernetService never configures eth0, so the guest has no IP at all:
 # nothing in logcat mentions eth0, DHCP or IpClient. That makes adb over TCP
