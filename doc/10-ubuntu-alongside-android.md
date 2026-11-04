@@ -417,8 +417,8 @@ Four problems found on the way:
 Also masked: `netplan-configure.service`, which is new in 26.04, fails here, and would
 configure Android's interfaces.
 
-**M4. Sound bridge. Working on the ZBook, 2026-11-04 (first run by hand; the user is checking by
-ear).**
+**M4. Sound bridge. Working on the ZBook, 2026-11-04: the user heard Ubuntu's sound on the
+laptop speakers (first run by hand).**
 - **Ubuntu:** `tools/ubuntu-rootfs/etc/pipewire/pipewire.conf.d/pc-android.conf` makes a virtual
   sink, "Android speakers" (`support.null-audio-sink`, priority 2000, so it is the default).
   `libpipewire-module-protocol-simple` serves its monitor as raw S16LE 48 kHz stereo on
