@@ -916,7 +916,8 @@ PRODUCT_PACKAGES += \
 # doc/10-ubuntu-alongside-android.md.
 PRODUCT_PACKAGES += \
     pc_ubuntu_launch \
-    pc_ubuntu_init
+    pc_ubuntu_init \
+    pc_ubuntu_audio
 
 # The uinput copies of the keyboard and touchpad that the launcher makes for
 # Ubuntu's GNOME must never be opened by Android (ubuntu/pc_ubuntu_input.c).

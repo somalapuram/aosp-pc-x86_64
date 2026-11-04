@@ -358,6 +358,19 @@ static void test_parse_inputs(void)
     CHECK(ub_parse_inputs(NULL, out, 4, NULL) == 0);
 }
 
+static void test_pcm_silent(void)
+{
+    int16_t pcm[960] = { 0 };
+
+    CHECK(ub_pcm_silent(pcm, 960) == 1);
+    CHECK(ub_pcm_silent(pcm, 0) == 1);           /* nothing is silence */
+    pcm[959] = 1;                                /* the very last sample */
+    CHECK(ub_pcm_silent(pcm, 960) == 0);
+    CHECK(ub_pcm_silent(pcm, 959) == 1);         /* ...outside the range */
+    pcm[0] = -1;
+    CHECK(ub_pcm_silent(pcm, 1) == 0);
+}
+
 static void test_write_resolv(void)
 {
     char path[256], buf[1024];
@@ -431,6 +444,7 @@ int main(void)
     test_dns_next();
     test_parse_devices();
     test_combo();
+    test_pcm_silent();
     test_parse_inputs();
     test_write_resolv();
 

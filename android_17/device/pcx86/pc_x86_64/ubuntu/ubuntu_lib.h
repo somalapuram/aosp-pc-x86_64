@@ -139,4 +139,13 @@ enum ub_switch ub_combo_feed(struct ub_combo *c, int type, int code, int value);
 #define UB_INPUT_LEN 16
 int ub_parse_inputs(const char *spec, char out[][UB_INPUT_LEN], int max, int *rejected);
 
+/*
+ * Sound bridge (doc/10 step 3 M4): PipeWire in Ubuntu keeps streaming while
+ * Ubuntu is quiet, so pc_ubuntu_audio pauses its AAudio stream after a run of
+ * pure silence and resumes on the first sample that is not. 1 if every one of
+ * the `n` samples is exactly zero (PipeWire's silence is digital zero).
+ */
+#include <stdint.h>
+int ub_pcm_silent(const int16_t *pcm, size_t n);
+
 #endif

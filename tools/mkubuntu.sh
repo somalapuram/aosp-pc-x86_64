@@ -190,7 +190,7 @@ printf '[Journal]\nSystemMaxUse=200M\n' > "$root/etc/systemd/journald.conf.d/siz
 cp -a "$work/overlay/." "$root/"
 chown 0:0 "$root/usr/local/sbin/pc-udev-shim" "$root/usr/local/sbin/pc-seat" \
     "$root/etc/systemd/system/pc-udev-shim.service" "$root/etc/systemd/system/pc-gnome.service" \
-    "$root/etc/systemd/system/pc-android-seat.service"
+    "$root/etc/systemd/system/pc-android-seat.service" "$root/etc/pipewire/pipewire.conf.d/pc-android.conf"
 mkdir -p "$root/etc/systemd/system/multi-user.target.wants"
 ln -sf ../pc-android-seat.service "$root/etc/systemd/system/multi-user.target.wants/pc-android-seat.service"
 mkdir -p "$root/etc/systemd/system/sysinit.target.wants"

@@ -299,6 +299,16 @@ int ub_parse_inputs(const char *spec, char out[][UB_INPUT_LEN], int max, int *re
     return n;
 }
 
+int ub_pcm_silent(const int16_t *pcm, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++)
+        if (pcm[i] != 0)
+            return 0;
+    return 1;
+}
+
 enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written)
 {
     if ((servers && *servers) || (gateway && *gateway))

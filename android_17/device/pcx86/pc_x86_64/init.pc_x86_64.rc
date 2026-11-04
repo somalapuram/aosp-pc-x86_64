@@ -499,6 +499,24 @@ on property:vendor.ubuntu.request=halt
 on shutdown && property:vendor.ubuntu.state=running
     exec_start vendor.ubuntu-halt
 
+# Ubuntu's sound, played through Android (ubuntu/pc_ubuntu_audio.c). Android's
+# audio HAL keeps the card; this is one more AAudio client, so Android mixes it
+# with its own sound. Runs while Ubuntu does. shell domain like the other
+# system_ext helpers here, with inet for the localhost socket and audio for
+# AAudio; a proper domain comes with step 2's policy.
+service pc-ubuntu-audio /system_ext/bin/pc_ubuntu_audio
+    class late_start
+    user shell
+    group audio inet
+    disabled
+    seclabel u:r:shell:s0
+
+on property:vendor.ubuntu.state=running
+    start pc-ubuntu-audio
+
+on property:vendor.ubuntu.state=stopped
+    stop pc-ubuntu-audio
+
 on property:ro.debuggable=1
     start console
 

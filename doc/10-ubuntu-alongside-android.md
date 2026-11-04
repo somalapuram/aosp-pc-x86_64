@@ -417,7 +417,25 @@ Four problems found on the way:
 Also masked: `netplan-configure.service`, which is new in 26.04, fails here, and would
 configure Android's interfaces.
 
-**M4. Sound bridge.**
+**M4. Sound bridge. Working on the ZBook, 2026-11-04 (first run by hand; the user is checking by
+ear).**
+- **Ubuntu:** `tools/ubuntu-rootfs/etc/pipewire/pipewire.conf.d/pc-android.conf` makes a virtual
+  sink, "Android speakers" (`support.null-audio-sink`, priority 2000, so it is the default).
+  `libpipewire-module-protocol-simple` serves its monitor as raw S16LE 48 kHz stereo on
+  `127.0.0.1:4711`, loopback only. `wpctl status` shows `* 33. Android speakers`, and
+  `ss -ltn` shows the port listening.
+- **Android:** `pc_ubuntu_audio` (system_ext, because libaaudio is a framework library)
+  connects to it and writes 10 ms blocks to an AAudio media stream. After 2 s of digital
+  silence it pauses the stream, so the output can go to standby (`ub_pcm_silent`, tested). The
+  rc service `pc-ubuntu-audio` runs while `vendor.ubuntu.state=running`.
+- **Seen:** `pw-play` in Ubuntu produced `pc_ubuntu_audio: Ubuntu is playing`. AudioFlinger then
+  showed `Standby: no` and an active track for the bridge, with frames written to the ALC245
+  output (card 1, device 0).
+- **Not done yet:** the binary was run by hand from `/data/local/tmp`. The rc service and the
+  system_ext install arrive with the next image. Microphone (Ubuntu recording through Android)
+  is the reverse direction, and is still to do.
+
+The plan as written:
 - PipeWire in Ubuntu sends its mix over a socket to an Android-side service that plays it
   through AAudio, so both systems are heard together.
 - The open Android audio boot race (silent until audioserver restarts) is fixed first.

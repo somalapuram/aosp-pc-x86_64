@@ -194,6 +194,23 @@ cc_binary {
     },
 }
 
+// Plays Ubuntu's sound through Android: reads the PCM PipeWire serves on
+// 127.0.0.1:4711 and writes it to AAudio. system_ext, because libaaudio is a
+// framework library. See ubuntu/pc_ubuntu_audio.c and doc/10 step 3 M4.
+cc_binary {
+    name: "pc_ubuntu_audio",
+    srcs: [
+        "ubuntu/pc_ubuntu_audio.c",
+        "ubuntu/ubuntu_lib.c",
+    ],
+    shared_libs: [
+        "libaaudio",
+        "liblog",
+    ],
+    system_ext_specific: true,
+    cflags: ["-Wall", "-Werror"],
+}
+
 // Host tests for the launcher's decisions (ubuntu/ubuntu_lib.h). Also runnable
 // without Soong: ubuntu/run_tests.sh.
 cc_test_host {
