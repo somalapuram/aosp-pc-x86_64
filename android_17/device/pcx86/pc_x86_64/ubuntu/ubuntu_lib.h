@@ -148,4 +148,26 @@ int ub_parse_inputs(const char *spec, char out[][UB_INPUT_LEN], int max, int *re
 #include <stdint.h>
 int ub_pcm_silent(const int16_t *pcm, size_t n);
 
+/*
+ * Hot-plugged mice and keyboards (doc/10 step 3 M3). Ubuntu has no udev, so
+ * GNOME never learns of a device that appears after it started. Instead it
+ * gets two generic copies from the start, a pointer and a keyboard, and the
+ * launcher forwards any mouse or keyboard plugged in later into them.
+ *
+ * ub_classify: what a device is, from its EV_*, KEY_* and REL_* capability
+ * bitmaps (as EVIOCGBIT fills them). A pointer has relative X and Y and a
+ * left button; a keyboard has letter keys. Anything else -- power button, lid
+ * switch, jack detection, hotkey strips -- is left to Android.
+ *
+ * ub_route: which generic copy one event from such a device goes to.
+ * Buttons (BTN_MISC up to KEY_OK) and motion go to the pointer, other keys to
+ * the keyboard; SYN_REPORT closes a frame on both; the rest is dropped.
+ */
+enum ub_class { UB_CLASS_NONE, UB_CLASS_POINTER, UB_CLASS_KEYBOARD };
+enum ub_class ub_classify(const unsigned long *ev, const unsigned long *key,
+                          const unsigned long *rel);
+
+enum ub_route { UB_ROUTE_DROP, UB_ROUTE_POINTER, UB_ROUTE_KEYBOARD, UB_ROUTE_BOTH };
+enum ub_route ub_route(int type, int code);
+
 #endif

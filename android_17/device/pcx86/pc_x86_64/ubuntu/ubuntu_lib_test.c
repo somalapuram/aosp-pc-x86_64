@@ -371,6 +371,64 @@ static void test_pcm_silent(void)
     CHECK(ub_pcm_silent(pcm, 1) == 0);
 }
 
+#define SETBIT(arr, n) ((arr)[(n) / (8 * sizeof(long))] |= 1UL << ((n) % (8 * sizeof(long))))
+
+static void test_classify(void)
+{
+    unsigned long ev[4], key[(KEY_CNT + 63) / 64 + 1], rel[4];
+
+#define CLEAR() do { memset(ev, 0, sizeof(ev)); memset(key, 0, sizeof(key)); memset(rel, 0, sizeof(rel)); } while (0)
+
+    /* A USB mouse. */
+    CLEAR();
+    SETBIT(ev, EV_KEY); SETBIT(ev, EV_REL);
+    SETBIT(key, BTN_LEFT); SETBIT(key, BTN_RIGHT);
+    SETBIT(rel, REL_X); SETBIT(rel, REL_Y); SETBIT(rel, REL_WHEEL);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_POINTER);
+
+    /* A USB keyboard. */
+    CLEAR();
+    SETBIT(ev, EV_KEY); SETBIT(ev, EV_REP);
+    SETBIT(key, KEY_A); SETBIT(key, KEY_Z); SETBIT(key, KEY_SPACE); SETBIT(key, KEY_ENTER);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_KEYBOARD);
+
+    /* What stays Android's: a power button, a lid switch, a hotkey strip,
+     * a wheel with no buttons, buttons with no motion. */
+    CLEAR();
+    SETBIT(ev, EV_KEY); SETBIT(key, KEY_POWER);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_NONE);
+    CLEAR();
+    SETBIT(ev, EV_SW);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_NONE);
+    CLEAR();
+    SETBIT(ev, EV_KEY); SETBIT(key, KEY_BRIGHTNESSUP); SETBIT(key, KEY_A);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_NONE);
+    CLEAR();
+    SETBIT(ev, EV_REL); SETBIT(rel, REL_WHEEL);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_NONE);
+    CLEAR();
+    SETBIT(ev, EV_KEY); SETBIT(key, BTN_LEFT);
+    CHECK(ub_classify(ev, key, rel) == UB_CLASS_NONE);
+#undef CLEAR
+}
+
+static void test_route(void)
+{
+    CHECK(ub_route(EV_REL, REL_X) == UB_ROUTE_POINTER);
+    CHECK(ub_route(EV_REL, REL_WHEEL_HI_RES) == UB_ROUTE_POINTER);
+    CHECK(ub_route(EV_KEY, BTN_LEFT) == UB_ROUTE_POINTER);
+    CHECK(ub_route(EV_KEY, BTN_EXTRA) == UB_ROUTE_POINTER);
+    CHECK(ub_route(EV_KEY, KEY_A) == UB_ROUTE_KEYBOARD);
+    CHECK(ub_route(EV_KEY, KEY_VOLUMEUP) == UB_ROUTE_KEYBOARD);
+    CHECK(ub_route(EV_KEY, KEY_BRIGHTNESSDOWN) == UB_ROUTE_KEYBOARD);
+    CHECK(ub_route(EV_SYN, SYN_REPORT) == UB_ROUTE_BOTH);
+    CHECK(ub_route(EV_SYN, SYN_DROPPED) == UB_ROUTE_DROP);
+    CHECK(ub_route(EV_MSC, MSC_SCAN) == UB_ROUTE_DROP);
+    CHECK(ub_route(EV_LED, LED_CAPSL) == UB_ROUTE_DROP);
+    CHECK(ub_route(EV_KEY, 0) == UB_ROUTE_DROP);
+    CHECK(ub_route(EV_KEY, KEY_CNT) == UB_ROUTE_DROP);
+}
+
 static void test_write_resolv(void)
 {
     char path[256], buf[1024];
@@ -444,6 +502,8 @@ int main(void)
     test_dns_next();
     test_parse_devices();
     test_combo();
+    test_classify();
+    test_route();
     test_pcm_silent();
     test_parse_inputs();
     test_write_resolv();

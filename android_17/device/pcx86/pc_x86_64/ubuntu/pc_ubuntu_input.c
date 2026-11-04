@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/system_properties.h>
@@ -28,19 +29,35 @@
 
 #include <log/log.h>
 
-#define MAX_INPUTS 8
+#define MAX_INPUTS  6               /* vendor.ubuntu.input, each with its own copy */
+#define MAX_SOURCES 16              /* real devices read, configured + hot-plugged */
+#define MAX_COPIES  (MAX_INPUTS + 2)
 #define LONGS(bits) (((bits) + 8 * sizeof(long) - 1) / (8 * sizeof(long)))
 #define TEST(bit, arr) (((arr)[(bit) / (8 * sizeof(long))] >> ((bit) % (8 * sizeof(long)))) & 1)
 
-struct shared_input {
-    int real;                       /* Android's node, read always, grabbed for Ubuntu */
-    int copy;                       /* uinput fd; its node is what Ubuntu sees */
-    unsigned long down[LONGS(KEY_CNT)];   /* keys pressed on the copy */
-    char name[UB_INPUT_LEN];
+/* A uinput device Ubuntu sees. Copies 0..MAX_INPUTS-1 mirror one configured
+ * device each; GENERIC_POINTER and GENERIC_KEYBOARD take everything plugged
+ * in later. All are named pc-ubuntu-input-<index>, which
+ * /vendor/etc/excluded-input-devices.xml hides from Android. */
+#define GENERIC_POINTER  MAX_INPUTS
+#define GENERIC_KEYBOARD (MAX_INPUTS + 1)
+struct copy {
+    int fd;
+    unsigned long down[LONGS(KEY_CNT)];   /* keys pressed on it */
 };
 
-static struct shared_input g_in[MAX_INPUTS];
-static int g_n;
+/* A real device: read always (for the switch keys), grabbed while Ubuntu has
+ * the screen, its events forwarded to `copy`, or routed (ub_route) between
+ * the two generic copies when copy is -1. */
+struct source {
+    int real;
+    int copy;
+    char node[UB_INPUT_LEN];        /* "eventN" */
+};
+
+static struct copy g_copy[MAX_COPIES];
+static struct source g_src[MAX_SOURCES];
+static int g_nsrc;
 static volatile pid_t *g_systemd;
 static enum ub_switch g_screen = UB_SWITCH_ANDROID;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -141,34 +158,151 @@ fail:
     return -1;
 }
 
+/* The two generic copies: a pointer with buttons and both wheels, and a
+ * keyboard with every key. */
+static int make_generic(int idx, char *node, size_t nodelen)
+{
+    struct uinput_setup us;
+    int u, code;
+
+    if ((u = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC)) < 0)
+        return -1;
+    ioctl(u, UI_SET_EVBIT, EV_KEY);
+    if (idx == GENERIC_POINTER) {
+        static const int rels[] = { REL_X, REL_Y, REL_WHEEL, REL_HWHEEL,
+                                    REL_WHEEL_HI_RES, REL_HWHEEL_HI_RES };
+        size_t i;
+        ioctl(u, UI_SET_EVBIT, EV_REL);
+        for (code = BTN_LEFT; code <= BTN_TASK; code++)
+            ioctl(u, UI_SET_KEYBIT, code);
+        for (i = 0; i < sizeof(rels) / sizeof(rels[0]); i++)
+            ioctl(u, UI_SET_RELBIT, rels[i]);
+        ioctl(u, UI_SET_PROPBIT, INPUT_PROP_POINTER);
+    } else {
+        ioctl(u, UI_SET_EVBIT, EV_REP);
+        for (code = 1; code < KEY_CNT; code++)
+            if (code < BTN_MISC || code >= KEY_OK)
+                ioctl(u, UI_SET_KEYBIT, code);
+    }
+    memset(&us, 0, sizeof(us));
+    us.id.bustype = BUS_VIRTUAL;
+    snprintf(us.name, sizeof(us.name), "pc-ubuntu-input-%d", idx);
+    if (ioctl(u, UI_DEV_SETUP, &us) < 0 || ioctl(u, UI_DEV_CREATE) < 0 ||
+        copy_node(u, node, nodelen) < 0) {
+        close(u);
+        return -1;
+    }
+    return u;
+}
+
+static int has_source(const char *node)
+{
+    int i;
+
+    for (i = 0; i < g_nsrc; i++)
+        if (!strcmp(g_src[i].node, node))
+            return 1;
+    return 0;
+}
+
+/* Consider /dev/input/<node> as a hot-plugged (or boot-time extra) device:
+ * a mouse or keyboard that is not one of ours becomes a source routed to the
+ * generic copies. Called with g_lock held. */
+static void try_add_source(const char *node)
+{
+    unsigned long ev[LONGS(EV_CNT)] = { 0 }, key[LONGS(KEY_CNT)] = { 0 }, rel[LONGS(REL_CNT)] = { 0 };
+    char path[48], name[80] = "";
+    enum ub_class cls;
+    int fd;
+
+    if (g_nsrc >= MAX_SOURCES || has_source(node) || strncmp(node, "event", 5))
+        return;
+    snprintf(path, sizeof(path), "/dev/input/%s", node);
+    if ((fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)) < 0)
+        return;
+    ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+    if (!strncmp(name, "pc-ubuntu-input-", 16)) {       /* one of our copies */
+        close(fd);
+        return;
+    }
+    ioctl(fd, EVIOCGBIT(0, EV_MAX), ev);
+    ioctl(fd, EVIOCGBIT(EV_KEY, KEY_MAX), key);
+    ioctl(fd, EVIOCGBIT(EV_REL, REL_MAX), rel);
+    cls = ub_classify(ev, key, rel);
+    if (cls == UB_CLASS_NONE ||
+        g_copy[cls == UB_CLASS_POINTER ? GENERIC_POINTER : GENERIC_KEYBOARD].fd < 0) {
+        close(fd);
+        return;
+    }
+    if (g_screen == UB_SWITCH_UBUNTU && ioctl(fd, EVIOCGRAB, 1) < 0)
+        ALOGW("grab %s: %s", node, strerror(errno));
+    g_src[g_nsrc++] = (struct source){ .real = fd, .copy = -1 };
+    snprintf(g_src[g_nsrc - 1].node, UB_INPUT_LEN, "%s", node);
+    ALOGI("input %s (%s) plugged in: shared as a %s", node, name,
+          cls == UB_CLASS_POINTER ? "pointer" : "keyboard");
+}
+
+static void drop_source(int i)
+{
+    ALOGI("input %s unplugged", g_src[i].node);
+    close(g_src[i].real);
+    g_src[i] = g_src[--g_nsrc];
+}
+
 int ui_setup(char out[][UB_DEV_LEN], int max)
 {
     char value[PROP_VALUE_MAX] = "", names[MAX_INPUTS][UB_INPUT_LEN], path[48];
     int n, i, rejected = 0, added = 0;
+    DIR *d;
+    struct dirent *e;
 
+    for (i = 0; i < MAX_COPIES; i++)
+        g_copy[i].fd = -1;
     if (__system_property_get("vendor.ubuntu.input", value) <= 0)
         return 0;
     n = ub_parse_inputs(value, names, MAX_INPUTS, &rejected);
     if (rejected)
         ALOGW("vendor.ubuntu.input: %d entries rejected in \"%s\"", rejected, value);
     for (i = 0; i < n && added < max; i++) {
-        struct shared_input *s = &g_in[g_n];
+        struct source *s = &g_src[g_nsrc];
         snprintf(path, sizeof(path), "/dev/input/%s", names[i]);
         s->real = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (s->real < 0) {
             ALOGW("input %s: %s", path, strerror(errno));
             continue;
         }
-        s->copy = make_copy(s->real, g_n, out[added], UB_DEV_LEN);
-        if (s->copy < 0) {
+        g_copy[i].fd = make_copy(s->real, i, out[added], UB_DEV_LEN);
+        if (g_copy[i].fd < 0) {
             ALOGE("input %s: cannot make a uinput copy: %s", path, strerror(errno));
             close(s->real);
             continue;
         }
-        snprintf(s->name, sizeof(s->name), "%s", names[i]);
-        ALOGI("input %s shared as pc-ubuntu-input-%d (%s)", path, g_n, out[added]);
-        g_n++;
+        s->copy = i;
+        snprintf(s->node, sizeof(s->node), "%s", names[i]);
+        ALOGI("input %s shared as pc-ubuntu-input-%d (%s)", path, i, out[added]);
+        g_nsrc++;
         added++;
+    }
+
+    /* The generic copies, for whatever is plugged in later. GNOME cannot see
+     * a device that appears after it started (no udev in the container), so
+     * these exist from the start and hot-plugged devices feed into them. */
+    for (i = GENERIC_POINTER; i <= GENERIC_KEYBOARD && added < max; i++) {
+        g_copy[i].fd = make_generic(i, out[added], UB_DEV_LEN);
+        if (g_copy[i].fd < 0) {
+            ALOGW("generic %s copy: %s", i == GENERIC_POINTER ? "pointer" : "keyboard",
+                  strerror(errno));
+            continue;
+        }
+        ALOGI("generic %s for hot-plugged devices: pc-ubuntu-input-%d (%s)",
+              i == GENERIC_POINTER ? "pointer" : "keyboard", i, out[added]);
+        added++;
+    }
+    /* Extra mice and keyboards already plugged in at boot. */
+    if ((d = opendir("/dev/input"))) {
+        while ((e = readdir(d)))
+            try_add_source(e->d_name);
+        closedir(d);
     }
     return added;
 }
@@ -270,9 +404,9 @@ static void grab(int on)
 {
     int i;
 
-    for (i = 0; i < g_n; i++)
-        if (ioctl(g_in[i].real, EVIOCGRAB, on) < 0)
-            ALOGW("%sgrab %s: %s", on ? "" : "un", g_in[i].name, strerror(errno));
+    for (i = 0; i < g_nsrc; i++)
+        if (ioctl(g_src[i].real, EVIOCGRAB, on) < 0)
+            ALOGW("%sgrab %s: %s", on ? "" : "un", g_src[i].node, strerror(errno));
 }
 
 /* Lift every key still down on the copies, so GNOME does not come back to a
@@ -282,15 +416,17 @@ static void release_copies(void)
     struct input_event up = { .type = EV_KEY }, syn = { .type = EV_SYN, .code = SYN_REPORT };
     int i, code;
 
-    for (i = 0; i < g_n; i++) {
+    for (i = 0; i < MAX_COPIES; i++) {
+        if (g_copy[i].fd < 0)
+            continue;
         for (code = 0; code < KEY_CNT; code++)
-            if (TEST(code, g_in[i].down)) {
+            if (TEST(code, g_copy[i].down)) {
                 up.code = (unsigned short)code;
-                if (write(g_in[i].copy, &up, sizeof(up)) < 0)
+                if (write(g_copy[i].fd, &up, sizeof(up)) < 0)
                     break;
             }
-        memset(g_in[i].down, 0, sizeof(g_in[i].down));
-        if (write(g_in[i].copy, &syn, sizeof(syn)) < 0)
+        memset(g_copy[i].down, 0, sizeof(g_copy[i].down));
+        if (write(g_copy[i].fd, &syn, sizeof(syn)) < 0)
             continue;
     }
 }
@@ -336,48 +472,104 @@ void ui_reset_to_android(void)
 
 /* --------------------------------------------------------------- thread ---- */
 
-static void forward(struct shared_input *s, const struct input_event *ev)
+static void emit(int c, const struct input_event *ev)
 {
+    struct copy *cp;
+
+    if (c < 0 || c >= MAX_COPIES || (cp = &g_copy[c])->fd < 0)
+        return;
     if (ev->type == EV_KEY && ev->code < KEY_CNT) {
         unsigned long bit = 1UL << (ev->code % (8 * sizeof(long)));
         if (ev->value)
-            s->down[ev->code / (8 * sizeof(long))] |= bit;
+            cp->down[ev->code / (8 * sizeof(long))] |= bit;
         else
-            s->down[ev->code / (8 * sizeof(long))] &= ~bit;
+            cp->down[ev->code / (8 * sizeof(long))] &= ~bit;
     }
-    if (write(s->copy, ev, sizeof(*ev)) < 0 && errno != EAGAIN)
-        ALOGW("forward to %s: %s", s->name, strerror(errno));
+    if (write(cp->fd, ev, sizeof(*ev)) < 0 && errno != EAGAIN)
+        ALOGW("forward to pc-ubuntu-input-%d: %s", c, strerror(errno));
+}
+
+static void forward(const struct source *s, const struct input_event *ev)
+{
+    if (s->copy >= 0) {
+        emit(s->copy, ev);
+        return;
+    }
+    switch (ub_route(ev->type, ev->code)) {
+    case UB_ROUTE_POINTER:  emit(GENERIC_POINTER, ev); break;
+    case UB_ROUTE_KEYBOARD: emit(GENERIC_KEYBOARD, ev); break;
+    case UB_ROUTE_BOTH:     emit(GENERIC_POINTER, ev); emit(GENERIC_KEYBOARD, ev); break;
+    case UB_ROUTE_DROP:     break;
+    }
+}
+
+/* New nodes in /dev/input. ueventd creates the node and then sets its
+ * owner and mode, so IN_ATTRIB is the moment it can be opened. */
+static void hotplug(int ino)
+{
+    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+    ssize_t n;
+    char *p;
+
+    while ((n = read(ino, buf, sizeof(buf))) > 0)
+        for (p = buf; p < buf + n; p += sizeof(struct inotify_event) + ((struct inotify_event *)p)->len) {
+            struct inotify_event *e = (struct inotify_event *)p;
+            if (e->len) {
+                pthread_mutex_lock(&g_lock);
+                try_add_source(e->name);
+                pthread_mutex_unlock(&g_lock);
+            }
+        }
 }
 
 static void *thread_main(void *unused)
 {
-    struct pollfd pfd[MAX_INPUTS];
+    struct pollfd pfd[MAX_SOURCES + 1];
     struct ub_combo combo = { 0 };
     char want[PROP_VALUE_MAX], seen[PROP_VALUE_MAX] = "";
-    int i;
+    int i, nsrc, ino;
 
     (void)unused;
-    for (i = 0; i < g_n; i++)
-        pfd[i] = (struct pollfd){ .fd = g_in[i].real, .events = POLLIN };
+    ino = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (ino >= 0 && inotify_add_watch(ino, "/dev/input", IN_CREATE | IN_ATTRIB) < 0) {
+        ALOGW("no input hot-plug: %s", strerror(errno));
+        close(ino);
+        ino = -1;
+    }
 
     for (;;) {
         enum ub_switch sw = UB_SWITCH_NONE;
 
-        poll(pfd, (nfds_t)g_n, 250);
-        for (i = 0; i < g_n; i++) {
+        pthread_mutex_lock(&g_lock);
+        nsrc = g_nsrc;
+        for (i = 0; i < nsrc; i++)
+            pfd[i] = (struct pollfd){ .fd = g_src[i].real, .events = POLLIN };
+        pthread_mutex_unlock(&g_lock);
+        pfd[nsrc] = (struct pollfd){ .fd = ino, .events = POLLIN };
+
+        poll(pfd, (nfds_t)nsrc + 1, 250);
+        if (ino >= 0 && (pfd[nsrc].revents & POLLIN))
+            hotplug(ino);
+
+        pthread_mutex_lock(&g_lock);
+        for (i = nsrc - 1; i >= 0; i--) {
             struct input_event ev[64];
             ssize_t n, k;
-            if (!(pfd[i].revents & POLLIN))
+            if (!pfd[i].revents || i >= g_nsrc || g_src[i].real != pfd[i].fd)
                 continue;
-            while ((n = read(g_in[i].real, ev, sizeof(ev))) > 0)
+            while ((n = read(g_src[i].real, ev, sizeof(ev))) > 0)
                 for (k = 0; k < n / (ssize_t)sizeof(ev[0]); k++) {
                     enum ub_switch c = ub_combo_feed(&combo, ev[k].type, ev[k].code, ev[k].value);
                     if (c != UB_SWITCH_NONE)
                         sw = c;
                     if (g_screen == UB_SWITCH_UBUNTU)
-                        forward(&g_in[i], &ev[k]);
+                        forward(&g_src[i], &ev[k]);
                 }
+            if ((n < 0 && errno == ENODEV) || (pfd[i].revents & (POLLHUP | POLLERR)))
+                drop_source(i);         /* unplugged */
         }
+        pthread_mutex_unlock(&g_lock);
+
         /* The property: tests, and a pclauncher tile later. */
         if (__system_property_get("vendor.ubuntu.screen", want) > 0 && strcmp(want, seen)) {
             snprintf(seen, sizeof(seen), "%s", want);

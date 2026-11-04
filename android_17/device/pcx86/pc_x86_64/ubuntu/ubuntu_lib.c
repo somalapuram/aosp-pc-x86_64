@@ -309,6 +309,39 @@ int ub_pcm_silent(const int16_t *pcm, size_t n)
     return 1;
 }
 
+static int bit_set(const unsigned long *bits, int n)
+{
+    return (int)((bits[n / (8 * sizeof(long))] >> (n % (8 * sizeof(long)))) & 1);
+}
+
+enum ub_class ub_classify(const unsigned long *ev, const unsigned long *key,
+                          const unsigned long *rel)
+{
+    if (bit_set(ev, EV_REL) && bit_set(rel, REL_X) && bit_set(rel, REL_Y) &&
+        bit_set(ev, EV_KEY) && bit_set(key, BTN_LEFT))
+        return UB_CLASS_POINTER;
+    if (bit_set(ev, EV_KEY) && bit_set(key, KEY_A) && bit_set(key, KEY_Z) &&
+        bit_set(key, KEY_SPACE))
+        return UB_CLASS_KEYBOARD;
+    return UB_CLASS_NONE;
+}
+
+enum ub_route ub_route(int type, int code)
+{
+    switch (type) {
+    case EV_SYN:
+        return code == SYN_REPORT ? UB_ROUTE_BOTH : UB_ROUTE_DROP;
+    case EV_REL:
+        return UB_ROUTE_POINTER;
+    case EV_KEY:
+        if (code >= BTN_MISC && code < KEY_OK)
+            return UB_ROUTE_POINTER;
+        return code > 0 && code < KEY_CNT ? UB_ROUTE_KEYBOARD : UB_ROUTE_DROP;
+    default:
+        return UB_ROUTE_DROP;           /* MSC scan codes, LEDs, ... */
+    }
+}
+
 enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written)
 {
     if ((servers && *servers) || (gateway && *gateway))
