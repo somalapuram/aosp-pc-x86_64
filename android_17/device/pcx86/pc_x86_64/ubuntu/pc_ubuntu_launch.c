@@ -155,6 +155,52 @@ static int readonly_at(const char *root, const char *rel)
     return 0;
 }
 
+/*
+ * Recreate the Android device nodes named by vendor.ubuntu.devices (default:
+ * the GPU render node) in Ubuntu's /dev, with the same device number. Runs in
+ * the child before pivot_root, so /dev here is still Android's, and before
+ * CAP_MKNOD is dropped. The render node is made 0666 as on Android: the kernel
+ * shares it between any number of users. Anything else is 0660 root:root until
+ * the display work (step 3) decides who in Ubuntu may open it.
+ */
+static int pass_devices(const char *root)
+{
+    char value[PROP_VALUE_MAX] = "", list[8][UB_DEV_LEN], src[96], dst[256], *slash;
+    struct stat st;
+    int n, i, rejected = 0;
+
+    if (__system_property_get("vendor.ubuntu.devices", value) <= 0)
+        snprintf(value, sizeof(value), "%s", UB_DEV_DEFAULT);
+    n = ub_parse_devices(value, list, 8, &rejected);
+    if (rejected)
+        ALOGW("vendor.ubuntu.devices: %d entr%s rejected in \"%s\"", rejected,
+              rejected == 1 ? "y" : "ies", value);
+    for (i = 0; i < n; i++) {
+        snprintf(src, sizeof(src), "/dev/%s", list[i]);
+        if (stat(src, &st) < 0 || !S_ISCHR(st.st_mode)) {
+            ALOGW("pass %s: not a character device here", src);
+            continue;
+        }
+        snprintf(dst, sizeof(dst), "%s/dev/%s", root, list[i]);
+        if ((slash = strrchr(dst, '/')) && slash > dst + strlen(root) + 4) {
+            *slash = '\0';
+            /* chmod, not mkdir's mode: init's umask (077) would make this
+             * 0700 and hide the node from every Ubuntu user but root -- Mesa
+             * then silently falls back to llvmpipe (seen on the laptop). */
+            if ((mkdir(dst, 0755) < 0 && errno != EEXIST) || chmod(dst, 0755) < 0)
+                ALOGW("mkdir %s: %s", dst, strerror(errno));
+            *slash = '/';
+        }
+        if (mknod(dst, S_IFCHR | 0600, st.st_rdev) < 0 ||
+            chmod(dst, strncmp(list[i], "dri/render", 10) ? 0660 : 0666) < 0) {
+            ALOGE("pass %s: %s", src, strerror(errno));
+            return -1;
+        }
+        ALOGI("passed %s (%u:%u) into Ubuntu", src, major(st.st_rdev), minor(st.st_rdev));
+    }
+    return 0;
+}
+
 static int make_dev(const char *root)
 {
     static const struct { const char *name; unsigned maj, min; mode_t mode; } nodes[] = {
@@ -187,6 +233,8 @@ static int make_dev(const char *root)
         if (must(symlink(links[i].target, path), path) < 0)
             return -1;
     }
+    if (pass_devices(root) < 0)
+        return -1;
     /* gid 5 is "tty" in Ubuntu's /etc/group. */
     if (mount_at(root, "/dev/pts", "devpts", "devpts", MS_NOSUID | MS_NOEXEC,
                  "newinstance,ptmxmode=0666,mode=0620,gid=5") < 0 ||
@@ -491,7 +539,11 @@ static int halt_running(void)
     ALOGI("halt: asking launcher %d to stop Ubuntu", pid);
     kill(pid, SIGTERM);
     for (i = 0; i < (STOP_TIMEOUT + 5) * 5; i++) {
-        if (__system_property_get("vendor.ubuntu.state", value) > 0 && !strcmp(value, "stopped"))
+        /* "stopped" is published a moment before the launcher exits; wait
+         * for the exit too, or a `start vendor.ubuntu` right after this is
+         * dropped by init as "already running" (seen on the laptop). */
+        if (__system_property_get("vendor.ubuntu.state", value) > 0 && !strcmp(value, "stopped") &&
+            kill(pid, 0) < 0 && errno == ESRCH)
             return 0;
         usleep(200 * 1000);
     }
@@ -513,6 +565,12 @@ int main(int argc, char **argv)
 
     if (argc > 1 && !strcmp(argv[1], "--halt"))
         return halt_running();
+
+    /* init starts services with umask 077. Everything this process creates
+     * is Ubuntu's -- its /dev, its cgroup root, resolv.conf -- and under 077
+     * each was 0600/0700 and usable by root alone. That bit three times on the
+     * laptop (DNS, the GPU node, systemd's user manager) before this line. */
+    umask(022);
 
     set_state("starting");
     if (mount_ubuntu() < 0) {

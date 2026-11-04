@@ -281,10 +281,90 @@ Each step ends with an image that boots and with every box ticked before the nex
   responsive, and there are zero `avc: denied` lines for `ubuntu` during a full boot plus `apt
   upgrade`.
 
-### Step 3: screen switching (2 to 3 weeks)
+### Step 3: Ubuntu on screen (3 to 4 weeks), started 2026-11-04
 
-This step needs DRM master hand-off in drm_hwcomposer, an input grab and sound handover. It gets
-its own design section when step 2 is done. The Ubuntu deck's display slide is its outline.
+The user asked for this before step 2. The SELinux decision only changes policy files, so the
+device work does not wait for it. Model A (screen switching) comes first. Four milestones, each
+of which boots:
+
+**M1. GPU render node and desktop packages. Done 2026-11-04 on the ZBook.** `eglinfo -B` as
+`amar` reports "AMD Radeon 780M Graphics (radeonsi, phoenix, LLVM 20.1.2, DRM 3.64,
+7.2.0-rc6-…)" for core and ES profiles. `vulkaninfo` reports "AMD Radeon 780M Graphics (RADV
+PHOENIX)". `ubuntu-desktop-minimal` installed with 0 errors (GNOME Shell 46, 3.5 GB). Found on
+the way:
+- `/dev/dri` was 0700 and Mesa silently fell back to llvmpipe.
+- `/sys/fs/cgroup/ubuntu` was 0700, so `user@1000.service` failed with "Failed to create
+  …/init.scope control group: Permission denied".
+- Both were init's umask 077, the same cause as bug 2. The launcher now calls `umask(022)` at
+  start, and the cgroup chmod is tested under umask 077.
+- `--halt` returned before the launcher exited, so an immediate `ctl.start` was dropped as
+  "already running". It now waits for the exit.
+- `tpm-udev` (needs udev) and `rtkit-daemon` were masked. rtkit's `cap_set_proc` wants
+  `CAP_DAC_READ_SEARCH`, which stays dropped, and PipeWire works without rtkit.
+- seat0 reports `CanGraphical=no`, as expected before M2.
+
+The design as planned:
+- The launcher recreates the Android device nodes named by `vendor.ubuntu.devices` in Ubuntu's
+  `/dev`, with the same device number, before `CAP_MKNOD` is dropped. The default is
+  `dri/renderD128`.
+- `ub_parse_devices()` accepts only paths under `dri/`, `input/` or `snd/`, made of
+  `[A-Za-z0-9_-]` components, so the property can never name a disk. It is tested.
+- The render node is 0666, as on Android, because the kernel shares it between any number of
+  users. Anything else is 0660 root:root until M2 decides who may open it.
+- Ubuntu installs `mesa-utils`, `vulkan-tools`, `mesa-vulkan-drivers` and then
+  `ubuntu-desktop-minimal`. gdm3, NetworkManager and snapd stay masked.
+- Accept: `eglinfo -B` and `vulkaninfo --summary` inside Ubuntu, over ssh, name the Intel GPU
+  rather than llvmpipe.
+
+**M2. GNOME on the panel, while Android is told nothing (test entry only).**
+- Pass `dri/card0` and the keyboard and touchpad `input/event*` nodes.
+- **No VTs and no udev in the container.** logind, mutter and libinput all find devices through
+  udev: tags `seat`, `master-of-seat` and `uaccess`, plus `ID_INPUT*` properties. libinput
+  ignores an input device without `ID_INPUT=1`.
+- Plan: a `pc-udev-shim.service` inside Ubuntu writes `/run/udev/data/c<maj>:<min>` for each
+  passed node. The input properties come from `udevadm test-builtin input_id`, and the tags are
+  written by hand. `/sys` is read-only but readable, which is all libudev's enumeration needs.
+- The GNOME session runs as a system unit with `User=amar`, `PAMName=login`, `XDG_SEAT=seat0`
+  and `XDG_SESSION_TYPE=wayland`, so pam_systemd registers a logind session on seat0. That seat
+  has no VTs, so the session is activated with `loginctl activate`.
+- logind opens `card0` and sets DRM master for the active session. mutter takes its devices
+  through `TakeDevice`.
+- For M2 only, Android's compositor must not hold master. The simplest test is booting with
+  `ro.vendor.hwc.drop_drm_master=1`, which drm_hwcomposer already supports
+  (`drm/DrmDevice.cpp:179`): it drops master after init. That is enough to see GNOME on the
+  panel. Android's own commits then fail, which is accepted on a test entry.
+
+**M3. The hand-off.**
+- **Display.** drm_hwcomposer takes master once, at init (`drm/DrmDevice.cpp:116`), and only
+  ever drops it at init. A patch adds a runtime release and retake. On release it stops
+  committing and calls `drmDropMaster`. On retake it calls `drmSetMaster`, does a full modeset,
+  and asks SurfaceFlinger for a refresh. The trigger is a vendor property watched with
+  `__system_property_wait`.
+- **Ubuntu's side of the screen** is logind's. With two sessions on seat0, the GNOME one and a
+  placeholder "android" session, activating one or the other makes logind set or drop master and
+  pause or resume mutter's input devices. That is the same mechanism desktop Linux uses between a
+  login screen and a session.
+- **Input.** Android's InputFlinger reads every evdev node, so while Ubuntu has the screen each
+  key would reach both systems. `IInputManager.disableInputDevice(id)` (InputManagerService:1165)
+  closes the device's fd in EventHub (`EventHub::Device::disable()` calls `close()`). It needs
+  the signature permission `DISABLE_INPUT_DEVICE`, and pclauncher is platform-signed, so
+  pclauncher can switch Android's keyboard and touchpad off and on with no InputFlinger patch.
+- **Switching to Ubuntu:**
+  1. A pclauncher key combo or tile disables Android's input devices.
+  2. hwc releases master.
+  3. `loginctl activate <gnome>` runs inside Ubuntu.
+- **Switching back:** a GNOME shortcut activates the placeholder session, so logind drops master
+  and revokes input. The launcher hears about it on a socket bind-mounted into Ubuntu's
+  `/run/pc-android`, hwc retakes master, and pclauncher re-enables input.
+- **Open: the control path from pclauncher (system_app) to vendor code.** pclauncher cannot set a
+  `vendor_` property (coredomain), and it cannot reach a vendor socket. The choice is between a
+  system-owned property type that vendor may read, and a small vendor AIDL service. It is
+  decided at the start of M3.
+
+**M4. Sound bridge.**
+- PipeWire in Ubuntu sends its mix over a socket to an Android-side service that plays it
+  through AAudio, so both systems are heard together.
+- The open Android audio boot race (silent until audioserver restarts) is fixed first.
 
 ### Step 4, optional: Ubuntu windows on the Android desktop (5 to 8 weeks)
 
@@ -386,7 +466,7 @@ Acceptance status after this run:
   either the QEMU regression fixed or the T7 on the laptop. (They were done on hardware the
   same day; see below.)
 
-**On hardware, 2026-11-03: HP laptop (Intel Meteor Lake), booted from the T7.** The T7 was
+**On hardware, 2026-11-03: the HP laptop at 192.168.0.100, booted from the T7.** On 2026-11-04 DMI identified it as the HP ZBook Firefly 14 G11 A (AMD Ryzen 9 PRO 8945HS, Radeon 780M, amdgpu), the project's "AMD laptop". This section first said Intel Meteor Lake, which was an assumption, not a reading. Same address, same 31 GiB RAM. The T7 was
 written with a keep-data write of partitions 1 to 3. Then partition 6 (`ubuntu`, 16 GiB) was
 added in the free space after userdata with `sgdisk -n 6:0:+16GiB`, the image was dd'd into
 it, and `resize2fs` grew it, so userdata survived. The test image had the Ubuntu entry as the

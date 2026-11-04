@@ -94,6 +94,12 @@ int ub_cgroup_setup(const char *cgroot, const char *name, long long mem_max, lon
     snprintf(path, sizeof(path), "%s/%s", cgroot, name);
     if (mkdir(path, 0755) < 0 && errno != EEXIST)
         return -errno;
+    /* This directory is Ubuntu's /sys/fs/cgroup. Under init's umask it would
+     * be 0700, and every non-root user -- systemd's user@.service among them
+     * -- would be locked out of the whole tree ("Failed to create .../init.scope
+     * control group: Permission denied" on the laptop). */
+    if (chmod(path, 0755) < 0)
+        return -errno;
 
     if (mem_max > 0) {
         snprintf(path, sizeof(path), "%s/%s/memory.max", cgroot, name);
@@ -190,6 +196,56 @@ int ub_default_gateway(const void *buf, size_t len, char *out, size_t outlen)
         }
     }
     return -1;
+}
+
+static int valid_device(const char *e)
+{
+    static const char *const dirs[] = { "dri/", "input/", "snd/" };
+    const char *p;
+    size_t i, comp = 0;
+    int ok_dir = 0;
+
+    if (!*e || strlen(e) >= UB_DEV_LEN)
+        return 0;
+    for (i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
+        if (!strncmp(e, dirs[i], strlen(dirs[i])))
+            ok_dir = 1;
+    if (!ok_dir)
+        return 0;
+    for (p = e; ; p++) {
+        if (*p == '/' || !*p) {
+            if (comp == 0)
+                return 0;                       /* empty component: "dri//x", "dri/" */
+            if (!*p)
+                return 1;
+            comp = 0;
+            continue;
+        }
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '_' || *p == '-'))
+            return 0;                           /* also rules out "." and ".." */
+        comp++;
+    }
+}
+
+int ub_parse_devices(const char *spec, char out[][UB_DEV_LEN], int max, int *rejected)
+{
+    char copy[512], *tok, *save = NULL;
+    int n = 0, bad = 0;
+
+    if (!spec)
+        spec = "";
+    snprintf(copy, sizeof(copy), "%s", spec);
+    for (tok = strtok_r(copy, " ,", &save); tok; tok = strtok_r(NULL, " ,", &save)) {
+        if (!valid_device(tok) || n >= max) {
+            bad++;
+            continue;
+        }
+        snprintf(out[n++], UB_DEV_LEN, "%s", tok);
+    }
+    if (rejected)
+        *rejected = bad;
+    return n;
 }
 
 enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written)

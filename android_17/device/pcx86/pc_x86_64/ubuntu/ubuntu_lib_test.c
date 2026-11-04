@@ -97,6 +97,16 @@ static void test_cgroup(void)
     read_text(path, buf, sizeof(buf));
     CHECK(strcmp(buf, "+pids") == 0);
 
+    /* Made under init's umask (077), the cgroup must still be 0755. */
+    {
+        struct stat st;
+        mode_t old = umask(077);
+        CHECK(ub_cgroup_setup(tmpdir, "umasked", 0, 0) == 0);
+        umask(old);
+        snprintf(path, sizeof(path), "%s/umasked", tmpdir);
+        CHECK(stat(path, &st) == 0 && (st.st_mode & 0777) == 0755);
+    }
+
     /* Again: the directory already existing is fine. */
     CHECK(ub_cgroup_setup(tmpdir, "ubuntu", 0, 0) == 0);
 
@@ -251,6 +261,38 @@ static void test_dns_next(void)
     CHECK(ub_dns_next("9.9.9.9", NULL, 1) == UB_DNS_FINAL);
 }
 
+static void test_parse_devices(void)
+{
+    char out[4][UB_DEV_LEN];
+    int bad;
+
+    CHECK(ub_parse_devices(UB_DEV_DEFAULT, out, 4, &bad) == 1 && bad == 0);
+    CHECK(strcmp(out[0], "dri/renderD128") == 0);
+
+    CHECK(ub_parse_devices("dri/card0, input/event3 snd/pcmC0D0p", out, 4, &bad) == 3 && bad == 0);
+    CHECK(strcmp(out[1], "input/event3") == 0 && strcmp(out[2], "snd/pcmC0D0p") == 0);
+
+    /* Never a disk, never out of /dev, never an empty component. */
+    CHECK(ub_parse_devices("block/sda", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("nvme0n1", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("dri/../block/sda6", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("dri/./card0", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("/dev/dri/card0", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("dri/", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("dri//card0", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("dri/card0;rm", out, 4, &bad) == 0 && bad == 1);
+    CHECK(ub_parse_devices("drix/card0", out, 4, &bad) == 0 && bad == 1);
+
+    /* Good entries survive bad neighbours; the cap is respected. */
+    CHECK(ub_parse_devices("block/sda,dri/card0", out, 4, &bad) == 1 && bad == 1);
+    CHECK(strcmp(out[0], "dri/card0") == 0);
+    CHECK(ub_parse_devices("input/event0 input/event1 input/event2", out, 2, &bad) == 2 && bad == 1);
+
+    /* Empty or missing: nothing, no error. */
+    CHECK(ub_parse_devices("", out, 4, &bad) == 0 && bad == 0);
+    CHECK(ub_parse_devices(NULL, out, 4, NULL) == 0);
+}
+
 static void test_write_resolv(void)
 {
     char path[256], buf[1024];
@@ -322,6 +364,7 @@ int main(void)
     test_cgroup_reset();
     test_default_gateway();
     test_dns_next();
+    test_parse_devices();
     test_write_resolv();
 
     if (failures) {

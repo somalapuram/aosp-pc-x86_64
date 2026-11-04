@@ -80,13 +80,22 @@ MASK=(
     systemd-remount-fs.service fstrim.timer e2scrub_all.timer e2scrub_reap.service
     # SELinux kernel: no AppArmor, so no snaps (see the deck's toolchain slide).
     apparmor.service snapd.service snapd.socket snapd.seeded.service
-    # Display is step 3.
+    # Display is step 3: GNOME is started by a session unit, not by gdm,
+    # because the container has no VTs (doc/10, step 3 M2).
     gdm3.service gdm.service
+    # Needs udev, which the container does not run.
+    tpm-udev.path tpm-udev.service
+    # rtkit's cap_set_proc() asks for CAP_DAC_READ_SEARCH, which the launcher
+    # drops on purpose (open_by_handle_at escapes a mount namespace). It only
+    # gives PipeWire real-time priority, and PipeWire works without it.
+    rtkit-daemon.service
 )
 
 PACKAGES=(systemd systemd-sysv dbus openssh-server sudo less iproute2 iputils-ping
           ca-certificates apt-utils bash-completion nano procps)
-(( DESKTOP )) && PACKAGES+=(ubuntu-desktop-minimal)
+# --desktop: GNOME, plus Mesa userspace for the GPU render node the launcher
+# passes in (vendor.ubuntu.devices). eglinfo/vulkaninfo are the M1 check.
+(( DESKTOP )) && PACKAGES+=(ubuntu-desktop-minimal mesa-utils vulkan-tools mesa-vulkan-drivers)
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/mkubuntu.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT

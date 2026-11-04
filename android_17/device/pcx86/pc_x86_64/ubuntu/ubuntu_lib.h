@@ -102,4 +102,19 @@ enum ub_dns { UB_DNS_FINAL, UB_DNS_FALLBACK, UB_DNS_WAIT };
 enum ub_dns ub_dns_next(const char *servers, const char *gateway, int fallback_written);
 int ub_write_resolv(const char *path, const char *servers, const char *gateway);
 
+/*
+ * Device pass-through: the vendor.ubuntu.devices property names Android
+ * device nodes to recreate in Ubuntu's /dev, e.g. "dri/renderD128" (the
+ * default: the GPU render node, which the kernel shares between any number of
+ * users) or, for the display work, "dri/card0,input/event3". Entries are
+ * separated by commas or spaces and must be a path under dri/, input/ or snd/
+ * made of [A-Za-z0-9_-] components, no "." or ".." component, so a property
+ * can never name a disk or escape /dev. Fills out[] with up to `max` valid
+ * entries (each < UB_DEV_LEN) and returns how many; invalid ones are skipped
+ * and counted in *rejected when it is not NULL.
+ */
+#define UB_DEV_LEN 48
+#define UB_DEV_DEFAULT "dri/renderD128"
+int ub_parse_devices(const char *spec, char out[][UB_DEV_LEN], int max, int *rejected);
+
 #endif
