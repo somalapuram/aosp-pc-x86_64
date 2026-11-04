@@ -387,6 +387,33 @@ The design as planned:
   system-owned property type that vendor may read, and a small vendor AIDL service. It is
   decided at the start of M3.
 
+**M3 on the ZBook, 2026-11-04, after Ubuntu was upgraded to 26.04.1 (systemd 259, GNOME 50.1).**
+- The launcher made `pc-ubuntu-input-0..2` (event15 to 17) from event5, event13 and event14.
+  Android logged `EventHub: ignoring event id /dev/input/event15 driver pc-ubuntu-input-0` for
+  each, and gnome-shell holds only the copies.
+- `setprop vendor.ubuntu.screen ubuntu` logged `screen: switching to Ubuntu`, then `Released DRM
+  master`, then `pc-seat ubuntu: done`, all within 250 ms. The GNOME session is active on
+  seat0.
+- When `pc-seat` failed, the fail-safe gave the screen straight back to Android (`Retook DRM
+  master … cleared 6 planes`).
+
+Four problems found on the way:
+1. **GNOME 50's `gnome-session`** only starts `gnome-session@ubuntu.target` and exits. The
+   session monitor then ends the session, because its leader is gone. `pc-gnome.service` now
+   keeps a leader alive (`gnome-session …; exec sleep infinity`).
+2. **systemd 25x** moves a PAM session's processes into `session-<id>.scope`, so the leader's
+   cgroup no longer names the unit. `pc-seat` finds sessions by type instead: GNOME is
+   `wayland`, the placeholder `unspecified`.
+3. **`pc-seat` run from Android's PID namespace** failed in about 50 ms and logged nothing.
+   `loginctl` talks to Ubuntu's D-Bus and logind, which identify the caller by PID. The
+   launcher now also joins Ubuntu's PID namespace (setns, then a second fork), and logs the
+   script's exit code and output.
+4. **A GNOME started while Android held master** got `EBUSY` on card0 and died, leaving an
+   empty session alive. `pc-seat ubuntu` now restarts pc-gnome when gnome-shell is not running.
+
+Also masked: `netplan-configure.service`, which is new in 26.04, fails here, and would
+configure Android's interfaces.
+
 **M4. Sound bridge.**
 - PipeWire in Ubuntu sends its mix over a socket to an Android-side service that plays it
   through AAudio, so both systems are heard together.

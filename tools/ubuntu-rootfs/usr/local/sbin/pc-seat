@@ -17,12 +17,14 @@
 # launcher's; it calls this after releasing the screen and before taking it.
 set -eu
 
-# The seat0 session whose leader runs in the given unit.
+# The seat0 session of the given type: GNOME's is "wayland", the
+# placeholder's "unspecified". By type, not by unit: since systemd 25x logind
+# moves a PAM session's processes into its own session-<id>.scope, so the
+# leader's cgroup no longer names pc-gnome.service (Ubuntu 26.04 on the ZBook).
 session_of() {
     loginctl list-sessions --no-legend | while read -r id _uid _user seat _rest; do
         [ "$seat" = seat0 ] || continue
-        leader=$(loginctl show-session "$id" -p Leader --value)
-        if grep -q "/$1\$" "/proc/$leader/cgroup" 2>/dev/null; then
+        if [ "$(loginctl show-session "$id" -p Type --value)" = "$1" ]; then
             echo "$id"
             return
         fi
@@ -43,13 +45,19 @@ wait_session() {
 case "${1:-}" in
 ubuntu)
     systemctl is-active -q pc-android-seat.service || systemctl start pc-android-seat.service
+    # A session whose shell died (it cannot start while Android still holds the
+    # screen: "Failed to open gpu '/dev/dri/card0': EBUSY") is kept alive by
+    # pc-gnome's waiting leader; restart it rather than activate an empty one.
+    if systemctl is-active -q pc-gnome.service && ! pgrep -u amar -x gnome-shell >/dev/null; then
+        systemctl stop pc-gnome.service
+    fi
     systemctl is-active -q pc-gnome.service || systemctl start pc-gnome.service
-    s=$(wait_session pc-gnome.service) || { echo "pc-seat: no GNOME session" >&2; exit 1; }
+    s=$(wait_session wayland) || { echo "pc-seat: no GNOME session" >&2; exit 1; }
     loginctl activate "$s"
     ;;
 android)
     systemctl is-active -q pc-android-seat.service || systemctl start pc-android-seat.service
-    s=$(wait_session pc-android-seat.service) || { echo "pc-seat: no placeholder session" >&2; exit 1; }
+    s=$(wait_session unspecified) || { echo "pc-seat: no placeholder session" >&2; exit 1; }
     loginctl activate "$s"
     ;;
 *)

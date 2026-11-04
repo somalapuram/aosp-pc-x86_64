@@ -175,46 +175,95 @@ int ui_setup(char out[][UB_DEV_LEN], int max)
 
 /* ------------------------------------------------------------ switching ---- */
 
-/* Run /usr/local/sbin/pc-seat <arg> inside Ubuntu: its mount namespace and
- * root, so loginctl talks to Ubuntu's logind over Ubuntu's D-Bus socket. */
+/* Run /usr/local/sbin/pc-seat <arg> inside Ubuntu: its PID and mount
+ * namespaces and its root. The PID namespace matters: loginctl talks to
+ * Ubuntu's D-Bus and logind, which identify their caller by PID, and a process
+ * left in Android's namespace has none they can see -- it failed in ~50 ms
+ * with nothing logged, while the same script run from an ssh shell inside
+ * Ubuntu worked. setns(CLONE_NEWPID) applies to children only, hence the
+ * second fork. The script's output and exit status go to the log. */
 static int run_seat(const char *arg)
 {
-    char path[64];
+    char path[64], out[512];
     pid_t sd = g_systemd ? *g_systemd : 0, pid;
-    int status, i, mnt, root;
+    int status = -1, i, mnt, pidns, root, pfd[2];
+    ssize_t n, len = 0;
 
     if (sd <= 0)
         return -1;
     snprintf(path, sizeof(path), "/proc/%d/ns/mnt", (int)sd);
-    if ((mnt = open(path, O_RDONLY | O_CLOEXEC)) < 0)
-        return -1;
+    mnt = open(path, O_RDONLY | O_CLOEXEC);
+    snprintf(path, sizeof(path), "/proc/%d/ns/pid", (int)sd);
+    pidns = open(path, O_RDONLY | O_CLOEXEC);
     snprintf(path, sizeof(path), "/proc/%d/root", (int)sd);
-    if ((root = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)) < 0) {
-        close(mnt);
+    root = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (mnt < 0 || pidns < 0 || root < 0 || pipe2(pfd, O_CLOEXEC) < 0) {
+        ALOGE("pc-seat %s: cannot open Ubuntu's namespaces: %s", arg, strerror(errno));
+        if (mnt >= 0) close(mnt);
+        if (pidns >= 0) close(pidns);
+        if (root >= 0) close(root);
         return -1;
     }
     pid = fork();
     if (pid == 0) {
         static char *const env[] = { "PATH=/usr/sbin:/usr/bin:/sbin:/bin", NULL };
         char *const argv[] = { "pc-seat", (char *)arg, NULL };
-        if (setns(mnt, CLONE_NEWNS) < 0 || fchdir(root) < 0 || chroot(".") < 0 || chdir("/") < 0)
+        pid_t inner;
+        int st;
+
+        dup2(pfd[1], 1);
+        dup2(pfd[1], 2);
+        if (setns(pidns, CLONE_NEWPID) < 0 || setns(mnt, CLONE_NEWNS) < 0 ||
+            fchdir(root) < 0 || chroot(".") < 0 || chdir("/") < 0) {
+            dprintf(2, "enter Ubuntu: %s\n", strerror(errno));
             _exit(126);
-        execve("/usr/local/sbin/pc-seat", argv, env);
-        _exit(127);
+        }
+        inner = fork();         /* the first process in Ubuntu's PID namespace */
+        if (inner == 0) {
+            execve("/usr/local/sbin/pc-seat", argv, env);
+            dprintf(2, "exec pc-seat: %s\n", strerror(errno));
+            _exit(127);
+        }
+        if (inner < 0 || waitpid(inner, &st, 0) != inner)
+            _exit(125);
+        _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 124);
     }
+    close(pfd[1]);
     close(mnt);
+    close(pidns);
     close(root);
-    if (pid < 0)
+    if (pid < 0) {
+        close(pfd[0]);
         return -1;
-    for (i = 0; i < 300; i++) {         /* GNOME's first start takes a few s */
-        if (waitpid(pid, &status, WNOHANG) == pid)
-            return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-        usleep(50 * 1000);
     }
-    kill(pid, SIGKILL);
-    waitpid(pid, &status, 0);
-    ALOGE("pc-seat %s: timed out", arg);
-    return -1;
+    fcntl(pfd[0], F_SETFL, O_NONBLOCK);
+    for (i = 0; i < 300; i++) {         /* GNOME's first start takes a few s */
+        while (len < (ssize_t)sizeof(out) - 1 &&
+               (n = read(pfd[0], out + len, sizeof(out) - 1 - (size_t)len)) > 0)
+            len += n;
+        if (waitpid(pid, &status, WNOHANG) == pid)
+            break;
+        usleep(50 * 1000);
+        status = -1;
+    }
+    if (status == -1) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+        ALOGE("pc-seat %s: timed out", arg);
+        close(pfd[0]);
+        return -1;
+    }
+    while (len < (ssize_t)sizeof(out) - 1 &&
+           (n = read(pfd[0], out + len, sizeof(out) - 1 - (size_t)len)) > 0)
+        len += n;
+    close(pfd[0]);
+    out[len] = '\0';
+    status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (status != 0)
+        ALOGE("pc-seat %s: exit %d: %s", arg, status, len ? out : "(no output)");
+    else
+        ALOGI("pc-seat %s: done", arg);
+    return status;
 }
 
 static void grab(int on)

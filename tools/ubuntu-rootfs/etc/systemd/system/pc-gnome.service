@@ -17,6 +17,13 @@ User=amar
 PAMName=login
 Environment=XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user XDG_SEAT=seat0
 Environment=XDG_SESSION_DESKTOP=ubuntu XDG_CURRENT_DESKTOP=ubuntu:GNOME DESKTOP_SESSION=ubuntu
-ExecStart=/usr/bin/gnome-session --session=ubuntu
+# Since GNOME 49 gnome-session only starts gnome-session@<name>.target in the
+# user's systemd and exits, and gnome-session-monitor tears the session down
+# as soon as the session's leader is gone (under gdm the leader is gdm's
+# session worker, which stays). So the leader has to stay: after
+# gnome-session returns, this process waits for good. Stopping the unit ends
+# it, and with it the session. Seen on the ZBook after the 26.04 upgrade
+# (GNOME 50.1): "pc-gnome.service: Deactivated successfully" one second in.
+ExecStart=/bin/sh -c '/usr/bin/gnome-session --session=ubuntu; exec /bin/sleep infinity'
 StandardOutput=journal
 StandardError=journal

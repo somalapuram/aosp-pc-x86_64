@@ -67,6 +67,9 @@ MASK=(
     systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service
     systemd-resolved.service NetworkManager.service NetworkManager-wait-online.service
     wpa_supplicant.service ModemManager.service
+    # Ubuntu 26.04 adds a netplan generator unit; it fails here and would
+    # configure interfaces that are Android's.
+    netplan-configure.service
     # Android owns the clock, Bluetooth and the console.
     systemd-timesyncd.service bluetooth.service
     getty@.service serial-getty@.service console-getty.service
