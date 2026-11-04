@@ -201,14 +201,18 @@ HOOK
 chmod +x "$WORK/customize.sh"
 
 info "bootstrapping Ubuntu $SUITE ($( (( DESKTOP )) && echo desktop || echo base)) from $MIRROR"
-mmdebstrap --mode=unshare --variant=minbase \
-    --components=main,restricted,universe \
+# --architectures: i386 as a foreign architecture from the start. Steam needs
+# 32-bit libraries and lives in multiverse; without both, a user's
+# "apt install steam-launcher" half-installs and then blocks every later apt
+# run with an unmet dependency (seen on the ZBook).
+mmdebstrap --mode=unshare --variant=minbase --architectures=amd64,i386 \
+    --components=main,restricted,universe,multiverse \
     --include="$(IFS=,; echo "${PACKAGES[*]}")" \
     --customize-hook="$WORK/customize.sh \"\$1\" $WORK" \
     "$SUITE" "$WORK/rootfs.tar" \
-    "deb $MIRROR $SUITE main restricted universe" \
-    "deb $MIRROR $SUITE-updates main restricted universe" \
-    "deb http://security.ubuntu.com/ubuntu $SUITE-security main restricted universe"
+    "deb $MIRROR $SUITE main restricted universe multiverse" \
+    "deb $MIRROR $SUITE-updates main restricted universe multiverse" \
+    "deb http://security.ubuntu.com/ubuntu $SUITE-security main restricted universe multiverse"
 ok "rootfs $(du -h "$WORK/rootfs.tar" | cut -f1) tarball"
 
 info "making ext4, ${SIZE_MB} MiB"
