@@ -69,6 +69,15 @@ CONFIG_MEMCG_V1=y
 CONFIG_FHANDLE=y
 CONFIG_USER_NS=y
 
+# System V IPC (semget/shmget/msgget). android-base.config turns it off, and
+# Android does not use it. Ubuntu does: Steam's client asserts at start-up
+# ("semaphore creation failed Invalid argument", "Function not implemented")
+# and never opens a window -- semget and shmget return ENOSYS without this.
+# Wine/Proton, X11 MIT-SHM and PostgreSQL need it too. Android apps cannot
+# reach these syscalls (the app seccomp filter does not allow them), and
+# Ubuntu's IPC objects stay its own: it has its own IPC namespace.
+CONFIG_SYSVIPC=y
+
 # --- Filesystems -----------------------------------------------------------
 # Android 17 system/vendor images are erofs; /data is ext4 or f2fs.
 CONFIG_EROFS_FS=y
