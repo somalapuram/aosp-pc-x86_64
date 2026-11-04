@@ -1,0 +1,67 @@
+#!/bin/sh
+#
+# pc-udev-shim -- write the udev database entries that logind, mutter and
+# libinput need, for the device nodes pc_ubuntu_launch passed into this
+# container (vendor.ubuntu.devices).
+#
+# There is no udev here: Android's ueventd owns /dev, /sys is read-only, and
+# udevd cannot trigger. But libudev reads its database from plain files, and
+# the consumers only need a little of it:
+#   - logind assigns devices to seat0 by the "seat" tag, and makes a seat
+#     graphical by a DRM device tagged "master-of-seat";
+#   - "uaccess" makes logind grant the active session's user access;
+#   - libinput ignores any input device without ID_INPUT=1, and picks a
+#     keyboard or touchpad by the other ID_INPUT_* properties.
+# input_id computes those from /sys, read-only is enough. See
+# doc/10-ubuntu-alongside-android.md, step 3 M2.
+set -eu
+
+db=/run/udev/data
+mkdir -p "$db"
+
+entry() {
+    node=$1 props=$2
+    shift 2
+    maj=$(( 0x$(stat -c %t "$node") ))
+    min=$(( 0x$(stat -c %T "$node") ))
+    id="c$maj:$min"
+    {
+        printf 'I:%s\n' "$(awk '{ printf "%d", $1 * 1000000 }' /proc/uptime)"
+        printf '%s\n' "$props" | sed -n 's/^\(ID_[A-Z0-9_]*=.*\)$/E:\1/p'
+        for t in "$@"; do printf 'G:%s\n' "$t"; done
+        for t in "$@"; do printf 'Q:%s\n' "$t"; done
+        printf 'V:1\n'
+    } > "$db/$id"
+    for t in "$@"; do
+        mkdir -p "/run/udev/tags/$t"
+        : > "/run/udev/tags/$t/$id"
+    done
+    echo "pc-udev-shim: $node -> $id ($*)"
+}
+
+for n in /dev/dri/card*; do
+    [ -c "$n" ] && entry "$n" "" seat master-of-seat uaccess
+done
+for n in /dev/dri/renderD*; do
+    [ -c "$n" ] && entry "$n" "" uaccess
+done
+# Ubuntu's 71-seat.rules tags the PARENT input device (inputN) with "seat",
+# not the event node, and logind's TakeDevice looks there: with the tag only on
+# eventN it answers ENODEV (seen on the laptop: "Could not open device
+# /dev/input/event5: ... ENODEV"). A device with no node is keyed
+# "+<subsystem>:<sysname>" in the database.
+parent_entry() {
+    id="+input:$1"
+    printf 'I:%s\nG:seat\nQ:seat\nV:1\n' "$(awk '{ printf "%d", $1 * 1000000 }' /proc/uptime)" > "$db/$id"
+    mkdir -p /run/udev/tags/seat
+    : > "/run/udev/tags/seat/$id"
+    echo "pc-udev-shim: $1 -> $id (seat)"
+}
+
+for n in /dev/input/event*; do
+    [ -c "$n" ] || continue
+    ev=${n##*/}
+    entry "$n" "$(udevadm test-builtin input_id "/sys/class/input/$ev" 2>/dev/null || true)" seat uaccess
+    parent_entry "$(basename "$(readlink -f "/sys/class/input/$ev/device")")"
+done
+exit 0

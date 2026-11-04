@@ -316,7 +316,33 @@ The design as planned:
 - Accept: `eglinfo -B` and `vulkaninfo --summary` inside Ubuntu, over ssh, name the Intel GPU
   rather than llvmpipe.
 
-**M2. GNOME on the panel, while Android is told nothing (test entry only).**
+**M2. GNOME on the panel. Running 2026-11-04 on the ZBook, with input; visual check by the
+user pending.**
+
+Done, measured:
+1. `setprop vendor.ubuntu.devices "dri/renderD128,dri/card0,input/event5,input/event13,input/event14"`
+   passes the keyboard (event5), the touchpad (event14) and the mouse (event13).
+2. `pc-udev-shim` writes the database: seat0 goes from `CanGraphical=no` to `yes`, and
+   `loginctl seat-status` lists `[MASTER] drm:card0` and the three input devices.
+3. `setprop vendor.hwc.master ubuntu` makes drm_hwcomposer (patch 0001) log `Released DRM master
+   on amdgpu`.
+4. `systemctl start pc-gnome` gives logind session 9 on seat0, active. gnome-shell logs `Added
+   device '/dev/dri/card0' (amdgpu) using atomic mode setting` and `GPU /dev/dri/card0 selected
+   primary from builtin panel presence`, and holds fds on card0, event5, event13 and event14.
+5. `setprop vendor.hwc.master android` logs `Retook DRM master on amdgpu, cleared 6 planes`. The
+   composer and SurfaceFlinger kept their PIDs throughout.
+
+Found on the way:
+- logind's `TakeDevice` answered `ENODEV` for every input device until the parent `inputN`
+  carried the `seat` tag too. Ubuntu's `71-seat.rules` tags the parent, not `eventN`. The shim
+  now writes `+input:inputN` entries.
+- The remaining gnome-shell errors are expected: there is no RTKit, because it is masked, and
+  no GDM to register with.
+
+Still open in M2: Android keeps reading the same keyboard and touchpad, so keys reach both
+systems. Disabling Android's input devices is M3.
+
+The design as planned:
 - Pass `dri/card0` and the keyboard and touchpad `input/event*` nodes.
 - **No VTs and no udev in the container.** logind, mutter and libinput all find devices through
   udev: tags `seat`, `master-of-seat` and `uaccess`, plus `ID_INPUT*` properties. libinput

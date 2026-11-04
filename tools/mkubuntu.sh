@@ -103,6 +103,10 @@ trap 'rm -rf "$WORK"' EXIT
 # not us: mktemp's 0700 would leave it unable to enter the directory at all.
 chmod 755 "$WORK"
 install -m 644 "$SSH_KEY" "$WORK/authorized_keys"
+# Files this project adds to Ubuntu (udev shim, GNOME session unit): see
+# tools/ubuntu-rootfs/ and doc/10 step 3.
+cp -a "$X86_ROOT/tools/ubuntu-rootfs" "$WORK/overlay"
+chmod -R a+rX "$WORK/overlay"
 printf '%s\n' "${MASK[@]}" > "$WORK/mask"
 
 # Runs inside the new root ($1) after packages are installed.
@@ -177,6 +181,14 @@ done
 # Keep the journal bounded; it lives on the ubuntu partition.
 mkdir -p "$root/etc/systemd/journald.conf.d"
 printf '[Journal]\nSystemMaxUse=200M\n' > "$root/etc/systemd/journald.conf.d/size.conf"
+
+# This project's own files, and the udev shim enabled (it only acts on the
+# device nodes the launcher passed in, so it is harmless without a display).
+cp -a "$work/overlay/." "$root/"
+chown -R 0:0 "$root/usr/local/sbin/pc-udev-shim" "$root/etc/systemd/system/pc-udev-shim.service" \
+    "$root/etc/systemd/system/pc-gnome.service"
+mkdir -p "$root/etc/systemd/system/sysinit.target.wants"
+ln -sf ../pc-udev-shim.service "$root/etc/systemd/system/sysinit.target.wants/pc-udev-shim.service"
 
 echo "built $(date -u +%FT%TZ) by tools/mkubuntu.sh" > "$root/etc/pc-android-ubuntu"
 HOOK

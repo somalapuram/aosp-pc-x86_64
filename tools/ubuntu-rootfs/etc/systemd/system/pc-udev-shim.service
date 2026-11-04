@@ -1,0 +1,14 @@
+[Unit]
+Description=udev database for the devices Android passed in (no udev in this container)
+Documentation=file:/usr/local/sbin/pc-udev-shim
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service
+Before=systemd-logind.service sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pc-udev-shim
+
+[Install]
+WantedBy=sysinit.target

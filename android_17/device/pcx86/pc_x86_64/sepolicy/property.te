@@ -27,3 +27,10 @@
 # below, which is where the values come from.
 vendor_public_prop(vendor_pc_gpu_prop)
 get_prop(domain, vendor_pc_gpu_prop)
+
+# vendor.hwc.master = "ubuntu" | "android": who owns the screen. drm_hwcomposer
+# drops and retakes DRM master on it (patches/android/external/drm_hwcomposer
+# 0001, doc/10 step 3). The launcher's seat broker sets it; the composer reads it.
+vendor_internal_prop(vendor_pc_hwc_master_prop)
+get_prop(hal_graphics_composer_default, vendor_pc_hwc_master_prop)
+set_prop(ubuntu_launch, vendor_pc_hwc_master_prop)
